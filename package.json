@@ -15,6 +15,7 @@
     "db:generate": "npm run db:generate:notification-worker && npm run db:generate:catalog-service",
     "db:generate:catalog-service": "npm run db:generate --workspace @mileshop/catalog-service",
     "db:generate:notification-worker": "npm run db:generate --workspace @mileshop/notification-worker",
+    "db:seed:catalog": "npm run db:seed --workspace @mileshop/catalog-service",
     "build:notification-worker": "npm run build --workspace @mileshop/notification-worker",
     "build:web": "npm run build --workspace apps/web",
     "lint": "npm run lint:web",

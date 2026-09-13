@@ -5,7 +5,9 @@
   "type": "module",
   "scripts": {
     "build": "tsc -p tsconfig.json",
+    "db:deploy": "prisma migrate deploy --schema prisma/schema.prisma",
     "db:generate": "prisma generate --schema prisma/schema.prisma",
+    "db:seed": "tsx prisma/seed.ts",
     "start": "node dist/main.js",
     "test": "node --import tsx --test test/**/*.test.ts",
     "typecheck": "tsc -p tsconfig.json --noEmit"
