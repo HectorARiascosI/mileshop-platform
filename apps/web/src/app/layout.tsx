@@ -4,7 +4,12 @@ import "./globals.css";
 
 export const metadata: Metadata = {
   title: "MileShop | Catalogo",
-  description: "Catalogo de productos de MileShop",
+  description: "Catálogo de productos de MileShop",
+  icons: {
+    icon: "/favicon.svg",
+    shortcut: "/favicon.svg",
+    apple: "/favicon.svg",
+  },
 };
 
 type RootLayoutProps = Readonly<{

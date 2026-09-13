@@ -3,15 +3,12 @@ import "reflect-metadata";
 import helmet from "@fastify/helmet";
 import rateLimit from "@fastify/rate-limit";
 import { NestFactory } from "@nestjs/core";
-import {
-  FastifyAdapter,
-  type NestFastifyApplication,
-} from "@nestjs/platform-fastify";
+import { FastifyAdapter, type NestFastifyApplication } from "@nestjs/platform-fastify";
 import type { FastifyRequest } from "fastify";
 
 import { AppModule } from "./app.module.js";
 
-const port = Number(process.env.PORT ?? 3000);
+const port = Number(process.env.PORT ?? 3030);
 const allowedOrigins = (process.env.ALLOWED_ORIGINS ?? "http://localhost:3000")
   .split(",")
   .map((origin) => origin.trim())
@@ -50,7 +47,7 @@ async function bootstrap(): Promise<void> {
   });
 
   await app.listen(port, "0.0.0.0");
-  console.info(`api-gateway listening on ${port}`);
+  console.info(`orders-service listening on ${port}`);
 }
 
 void bootstrap();

@@ -29,4 +29,4 @@ Nueva plataforma distribuida para MileShop. El repositorio Django anterior se co
 
 ## Estado
 
-El frontend, `api-gateway`, `notification-worker` y `catalog-service` compilan y tienen pruebas. El gateway expone `/healthz` y `/catalog/products`, y consulta el catálogo mediante HTTP con timeout y manejo de indisponibilidad. Los servicios con persistencia tienen PostgreSQL propio, migraciones Prisma y health checks. El siguiente slice es carrito, seguido por pedidos. La infraestructura se añade por servicio y no se comparten tablas entre dominios.
+El frontend, `api-gateway`, `notification-worker`, `catalog-service` y `orders-service` compilan y tienen pruebas. El gateway expone `/healthz`, `/catalog/products` y `/orders`, y consulta el catálogo mediante HTTP con timeout y manejo de indisponibilidad. Los servicios con persistencia tienen PostgreSQL propio, migraciones Prisma y health checks. El siguiente slice real es la persistencia y consulta de órdenes con identidad estable, idempotencia y outbox; la infraestructura se añade por servicio y no se comparten tablas entre dominios.

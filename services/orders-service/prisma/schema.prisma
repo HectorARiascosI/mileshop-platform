@@ -1,0 +1,35 @@
+generator client {
+  provider = "prisma-client-js"
+  output   = "../generated/orders-client"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model Order {
+  id        String      @id @default(cuid())
+  orderId   String      @unique
+  customerId String
+  totalCop  Int
+  status    String      @default("PENDING")
+  createdAt DateTime    @default(now())
+  updatedAt DateTime    @updatedAt
+  lines     OrderLine[]
+
+  @@index([customerId, createdAt])
+}
+
+model OrderLine {
+  id          String @id @default(cuid())
+  productId   String
+  sku         String
+  name        String
+  quantity    Int
+  unitPriceCop Int
+  order       Order  @relation(fields: [orderId], references: [id])
+  orderId     String
+
+  @@index([orderId, productId])
+}
