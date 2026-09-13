@@ -14,6 +14,8 @@ Nueva plataforma distribuida para MileShop. El repositorio Django anterior se co
 
 - [CONTRIBUTING.md](CONTRIBUTING.md) — ramas, commits, PRs y reglas SOLID.
 - [docs/REPOSITORY.md](docs/REPOSITORY.md) — alcance, repositorios y criterios de separacion.
+- [docs/DELIVERY_HISTORY.md](docs/DELIVERY_HISTORY.md) — orden de entregas, commits y dependencias entre ramas.
+- [docs/adr/](docs/adr/) — decisiones de arquitectura con consecuencias, validacion y rollback.
 - [SECURITY.md](SECURITY.md) — secretos, dependencias y reportes de seguridad.
 - `.github/workflows/ci.yml` — auditoria, typecheck, lint, tests, build y Compose.
 
