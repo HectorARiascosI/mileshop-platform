@@ -1,0 +1,25 @@
+{
+  "name": "mileshop-platform",
+  "private": true,
+  "version": "0.1.0",
+  "packageManager": "npm@11.17.0",
+  "workspaces": [
+    "apps/*",
+    "services/*",
+    "packages/*"
+  ],
+  "scripts": {
+    "build": "npm run build:web && npm run build:notification-worker && npm run build:catalog-service",
+    "build:catalog-service": "npm run build --workspace @mileshop/catalog-service",
+    "build:notification-worker": "npm run build --workspace @mileshop/notification-worker",
+    "build:web": "npm run build --workspace apps/web",
+    "lint": "npm run lint:web",
+    "lint:web": "npm run lint --workspace apps/web",
+    "test": "npm run test:notification-worker && npm run test:catalog-service",
+    "test:catalog-service": "npm run test --workspace @mileshop/catalog-service",
+    "test:notification-worker": "npm run test --workspace @mileshop/notification-worker",
+    "typecheck": "npm run typecheck:web && npm run typecheck:services",
+    "typecheck:services": "npm run typecheck --workspace @mileshop/notification-worker && npm run typecheck --workspace @mileshop/catalog-service",
+    "typecheck:web": "npm run typecheck --workspace apps/web"
+  }
+}

@@ -1,0 +1,34 @@
+services:
+  notification-postgres:
+    image: postgres:17-alpine
+    container_name: mileshop-notification-postgres
+    environment:
+      POSTGRES_DB: notifications
+      POSTGRES_USER: notifications
+      POSTGRES_PASSWORD: notifications
+    ports:
+      - "5433:5432"
+    volumes:
+      - ./.data/notification-postgres:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U notifications -d notifications"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  catalog-postgres:
+    image: postgres:17-alpine
+    container_name: mileshop-catalog-postgres
+    environment:
+      POSTGRES_DB: catalog
+      POSTGRES_USER: catalog
+      POSTGRES_PASSWORD: catalog
+    ports:
+      - "5434:5432"
+    volumes:
+      - ./.data/catalog-postgres:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U catalog -d catalog"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
