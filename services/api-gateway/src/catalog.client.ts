@@ -1,4 +1,4 @@
-import { Injectable, ServiceUnavailableException } from "@nestjs/common";
+import { Inject, Injectable, ServiceUnavailableException } from "@nestjs/common";
 
 export type GatewayProduct = {
   id: string;
@@ -17,7 +17,7 @@ export class CatalogClient {
   private readonly baseUrl = process.env.CATALOG_SERVICE_URL ?? "http://localhost:3020";
   private readonly fetcher: FetchLike;
 
-  public constructor(fetcher: FetchLike = fetch) {
+  public constructor(@Inject("CATALOG_FETCH") fetcher: FetchLike = fetch) {
     this.fetcher = fetcher;
   }
 
