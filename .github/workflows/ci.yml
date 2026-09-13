@@ -28,6 +28,9 @@ jobs:
       - name: Audit dependencies
         run: npm audit --audit-level=high
 
+      - name: Generate Prisma clients
+        run: npm run db:generate
+
       - name: Typecheck
         run: npm run typecheck
 
