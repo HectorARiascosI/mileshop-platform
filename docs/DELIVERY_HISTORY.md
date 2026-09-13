@@ -11,19 +11,20 @@ Este documento resume el orden de trabajo de la plataforma nueva. Cada bloque se
 ## Gateway
 
 - `c040254 feat(gateway): expose catalog products through public API`
-- `ff43a06 fix(gateway): register fetch adapter with Nest`
-- Ramas: `feat/api-gateway-catalog`, despues `feat/catalog-development-data`.
+- `9847ceb fix(gateway): register fetch adapter with Nest`
+- Ramas: `feat/api-gateway-catalog` y sus ramas dependientes.
 - Resultado: healthcheck, composicion del catalogo, timeout, errores `503` y pruebas.
 
 ## Storefront
 
-- `f0af4b9 feat(web): add catalog storefront shell`
+- `42dc65d feat(web): add catalog storefront shell`
+- `9bcf6a4 docs(web): document storefront runtime behavior`
 - Rama: `feat/web-catalog`.
 - Resultado: portada MileShop, estados de carga funcionales y responsive.
 
 ## Persistencia del catalogo
 
-- `a88e9ed feat(catalog): add idempotent development seed`
+- `529e399 feat(catalog): add idempotent development seed`
 - Rama: `feat/catalog-development-data`.
 - Resultado: seed por `sku`, comandos Prisma, documentacion operativa y validacion end-to-end.
 
