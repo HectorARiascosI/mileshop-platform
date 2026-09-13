@@ -7,6 +7,7 @@ Nueva plataforma distribuida para MileShop. El repositorio Django anterior se co
 - `apps/web` — frontend Next.js + TypeScript.
 - `packages/contracts` — contratos de eventos y APIs versionados.
 - `services/` — servicios desplegables de forma independiente.
+- `services/api-gateway` — entrada HTTP pública y composición de APIs.
 - `infra/` — PostgreSQL local y configuracion reproducible.
 
 ## Gobernanza
@@ -26,4 +27,4 @@ Nueva plataforma distribuida para MileShop. El repositorio Django anterior se co
 
 ## Estado
 
-El frontend, `notification-worker` y `catalog-service` compilan y tienen pruebas. Ambos servicios tienen PostgreSQL propio, migraciones Prisma y health checks. El siguiente slice es el gateway, seguido por carrito y pedidos. La infraestructura se añade por servicio y no se comparten tablas entre dominios.
+El frontend, `api-gateway`, `notification-worker` y `catalog-service` compilan y tienen pruebas. El gateway expone `/healthz` y `/catalog/products`, y consulta el catálogo mediante HTTP con timeout y manejo de indisponibilidad. Los servicios con persistencia tienen PostgreSQL propio, migraciones Prisma y health checks. El siguiente slice es carrito, seguido por pedidos. La infraestructura se añade por servicio y no se comparten tablas entre dominios.
