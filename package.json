@@ -9,17 +9,24 @@
     "packages/*"
   ],
   "scripts": {
-    "build": "npm run build:web && npm run build:notification-worker && npm run build:catalog-service",
+    "build": "npm run build:web && npm run build:api-gateway && npm run build:notification-worker && npm run build:catalog-service",
+    "build:api-gateway": "npm run build --workspace @mileshop/api-gateway",
     "build:catalog-service": "npm run build --workspace @mileshop/catalog-service",
+    "db:generate": "npm run db:generate:notification-worker && npm run db:generate:catalog-service",
+    "db:generate:catalog-service": "npm run db:generate --workspace @mileshop/catalog-service",
+    "db:generate:notification-worker": "npm run db:generate --workspace @mileshop/notification-worker",
+    "db:seed:catalog": "npm run db:seed --workspace @mileshop/catalog-service",
     "build:notification-worker": "npm run build --workspace @mileshop/notification-worker",
     "build:web": "npm run build --workspace apps/web",
     "lint": "npm run lint:web",
     "lint:web": "npm run lint --workspace apps/web",
-    "test": "npm run test:notification-worker && npm run test:catalog-service",
+    "test": "npm run test:api-gateway && npm run test:notification-worker && npm run test:catalog-service",
+    "test:api-gateway": "npm run test --workspace @mileshop/api-gateway",
     "test:catalog-service": "npm run test --workspace @mileshop/catalog-service",
     "test:notification-worker": "npm run test --workspace @mileshop/notification-worker",
     "typecheck": "npm run typecheck:web && npm run typecheck:services",
-    "typecheck:services": "npm run typecheck --workspace @mileshop/notification-worker && npm run typecheck --workspace @mileshop/catalog-service",
+    "typecheck:services": "npm run typecheck:api-gateway && npm run typecheck --workspace @mileshop/notification-worker && npm run typecheck --workspace @mileshop/catalog-service",
+    "typecheck:api-gateway": "npm run typecheck --workspace @mileshop/api-gateway",
     "typecheck:web": "npm run typecheck --workspace apps/web"
   }
 }

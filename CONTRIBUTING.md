@@ -63,6 +63,7 @@ Desde la raiz:
 
 ```powershell
 npm ci
+npm run db:generate
 npm run typecheck
 npm run lint
 npm run test
