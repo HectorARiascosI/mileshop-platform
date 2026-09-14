@@ -2,110 +2,149 @@
 
 ## 1. Objetivo
 
-Este playbook define el flujo de trabajo profesional para desarrollar, validar, empujar y fusionar cambios en MileShop sin dejar huecos de calidad, seguridad o reproducibilidad.
+Este playbook define el flujo profesional de desarrollo, validación, lanzamiento y recuperación para MileShop en 2026. El objetivo es garantizar que cada cambio sea trazable, revisable, verificable y mantenible.
 
 ## 2. Principios de entrega
 
-- Cada dominio es propietario de su infraestructura: catálogo, notificaciones y pedidos no comparten tablas ni esquemas.
-- Cada cambio debe pasar validación de tests, typecheck y build antes del merge.
-- No se usan secretos en repositorio ni archivos `.env` con credenciales reales.
-- Todo release debe ser verificable con comandos reproducibles desde la raíz del monorepo.
+- cada dominio es propietario de su infraestructura y datos;
+- cada cambio pasa por validación de calidad antes de merge;
+- no se trabaja directamente sobre `main` ni `develop`;
+- cada release se documenta con riesgo, evidencia y rollback;
+- los secretos nunca se versionan;
+- la trazabilidad debe permitir debuguear un problema en minutos.
 
-## 3. Ramas recomendadas
+## 3. Estructura de ramas
 
-- `main`: rama de producción.
-- `develop`: integración de características.
-- `feature/<nombre>`: trabajo de funcionalidad.
-- `hotfix/<nombre>`: corrección urgente.
+- `main`: producción, ramas protegidas y despliegue autorizado.
+- `develop`: integración de características que ya passed CI.
+- `feature/<dominio>-<descripcion>`: nueva funcionalidad.
+- `fix/<dominio>-<problema>`: corrección continua.
+- `hotfix/<dominio>-<problema>`: corrección urgente sobre producción.
+- `release/<version>`: preparación de un release estable.
 
-Regla: no hacer push directo a `main` ni a `develop` sin revisión.
+Regla: una rama debe resolver una sola intención y tener una vida corta.
 
-## 4. Antes de abrir el PR
+## 4. Flujo correcto de trabajo
 
-Ejecutar desde la raíz del repo:
-
-```bash
-npm install
-npm run db:generate
-npm test --workspace @mileshop/orders-service
-npm run typecheck --workspace @mileshop/orders-service
-npm run build --workspace @mileshop/orders-service
-npm test --workspace @mileshop/api-gateway
-npm run typecheck --workspace @mileshop/api-gateway
-npm run build --workspace @mileshop/api-gateway
-```
-
-Además:
-
-- validar que el cambio no deja `.env` ni credenciales reales en el repo
-- confirmar que el service ownership sigue correcto por dominio
-- revisar que la documentación refleja el comportamiento real y no un starter genérico
-
-## 5. Revisión y merge
-
-Flujo recomendado:
+### A. Desarrollo
 
 ```bash
 git checkout develop
 git pull --ff-only origin develop
-git checkout -b feature/<nombre>
-# trabajo
- git add .
-git commit -m "feat(scope): descripcion del cambio"
-git push -u origin feature/<nombre>
+git checkout -b feature/catalog-product-list
+git add .
+git commit -m "feat(catalog): add product listing"
+git push -u origin feature/catalog-product-list
 ```
 
-Luego crear PR con:
+### B. PR hacia develop
 
-- resumen del negocio afectado
-- impacto técnico
-- pruebas ejecutadas
-- riesgo y rollback
-- documentación actualizada
+- abrir PR con resumen del problema;
+- añadir impacto técnico y de negocio;
+- adjuntar resultado de CI;
+- documentar migraciones y riesgos;
+- no mezclar cambios de documentación, producto y refactor sin necesidad.
 
-Requisitos para merge:
+### C. Validación antes del merge
 
-- revisión aprobada por al menos una persona
-- checks verdes
-- sin secretos ni artefactos locales
-- evidencia de pruebas adjunta
+```bash
+npm ci
+npm run db:generate
+npm run typecheck
+npm run lint
+npm run test
+npm run build
+npm audit --audit-level=high
+docker compose -f infra/docker-compose.yml config
+```
 
-## 6. Merge a main
+Si falla cualquiera de estas etapas, la PR no puede mergearse.
+
+## 5. Release flow
+
+```bash
+git checkout develop
+git pull --ff-only origin develop
+git checkout -b release/2026.09.13
+git push -u origin release/2026.09.13
+```
+
+Durante la rama `release/*`:
+
+- ejecutar smoke tests del stack local;
+- comprobar health checks y endpoints críticos;
+- confirmar documentación actualizada;
+- confirmar que no hay artefactos sensibles;
+- preparar evidencia para la promoción a `main`.
+
+## 6. Promoción a main
 
 ```bash
 git checkout main
 git pull --ff-only origin main
-git merge --no-ff develop
+git merge --no-ff release/2026.09.13
 git push origin main
 ```
 
-Solo usar merge directo cuando se haya validado el release completo y no haya riesgo de regresión.
+`main` debe tener evidencia limpia, release validado y revisión aprobada.
 
-## 7. Seguridad
+## 7. Hotfix flow
 
-- usar variables de entorno y never hardcodearlas
-- mantener .env fuera del control de versiones
-- revisar `npm audit --audit-level=high` antes de release
-- no subir dumps de base de datos, conexiones locales ni archivos generados sensibles
+```bash
+git checkout main
+git pull --ff-only origin main
+git checkout -b hotfix/gateway-catalog-timeout
+git add .
+git commit -m "fix(gateway): restore catalog timeout fallback"
+git push -u origin hotfix/gateway-catalog-timeout
+```
 
-## 8. Rollback
+Luego:
 
-Si un release falla:
+- abrir PR hacia `main`;
+- validar el escenario exacto que falló;
+- backport a `develop` cuando sea apropiado;
+- documentar la causa y la corrección.
 
-1. revert del merge / PR
-2. reestabilizar rama de release
-3. confirmar origen del problema
-4. volver a ejecutar validación de la rama corregida
-5. relanzar con evidencia limpia
+## 8. Checklists operativos
 
-## 9. Checklist final de release
+### Antes de merge
 
-- [ ] tests pasan
-- [ ] typecheck pasa
 - [ ] build pasa
-- [ ] migraciones Prisma están definidas y reproducibles
-- [ ] no hay secretos ni `.env` versionados
-- [ ] seguridad HTTP y CORS revisados
-- [ ] documentación actualizada para el cambio
-- [ ] PR con resumen de negocio y riesgo
-- [ ] merge ejecutado con historial claro
+- [ ] typecheck pasa
+- [ ] tests pasan
+- [ ] lint pasa
+- [ ] auditoría de dependencias pasa
+- [ ] docker compose valida
+- [ ] no hay secretos ni `.env` en repo
+- [ ] documentación refleja el estado real
+
+### Antes de release
+
+- [ ] smoke tests funcionando
+- [ ] health checks verdes
+- [ ] rollback identificado
+- [ ] evidencia de validación guardada
+- [ ] ownership por dominio conservado
+
+## 9. Rollback y recuperación
+
+Si un cambio rompe producción:
+
+1. aislar la causa con evidencia real;
+2. revert del merge o PR;
+3. preparar fix en rama corta;
+4. ejecutar validación nuevamente;
+5. re-promocionar solo cuando el sistema esté estable.
+
+## 10. Mantenibilidad
+
+Un repositorio profesional debe ser:
+
+- claro en su estructura;
+- auditable en su historial;
+- reproducible en sus validaciones;
+- seguro en su tratamiento de secretos;
+- rápido para diagnósticar fallos.
+
+La trazabilidad no es burocracia: es cómo se evita perder el contexto de una caída o un defecto.

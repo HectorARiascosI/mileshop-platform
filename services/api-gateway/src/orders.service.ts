@@ -1,3 +1,8 @@
+import { Inject, Injectable, Optional } from "@nestjs/common";
+
+export const ORDER_FETCH = "ORDER_FETCH";
+export const NOTIFICATION_WORKER_URL = "NOTIFICATION_WORKER_URL";
+
 export type OrderLineInput = {
   productId: string;
   sku: string;
@@ -36,9 +41,12 @@ export type CreatedOrderResult = {
   event: OrderEvent;
 };
 
+@Injectable()
 export class OrderService {
   public constructor(
-    private readonly fetcher: typeof fetch = fetch,
+    @Inject(ORDER_FETCH) private readonly fetcher: typeof fetch,
+    @Optional()
+    @Inject(NOTIFICATION_WORKER_URL)
     private readonly notificationWorkerUrl: string = process.env.NOTIFICATION_WORKER_URL ?? "http://localhost:3010",
   ) {}
 
