@@ -1,67 +1,104 @@
-# Wiki de MileShop Platform
+# Wiki técnica de MileShop Platform
 
-## Propósito
+## 1. Propósito
 
-Esta wiki documenta la arquitectura, la operación, el flujo de trabajo y la calidad requerida para construir y sostener MileShop Platform como un sistema profesional, reproducible y mantenible.
+Esta wiki documenta la realidad técnica y funcional del sistema que estamos construyendo: una plataforma de catálogo comercial con flujo de compra, registro obligatorio, administración editorial y atención comercial por WhatsApp.
 
-No es una guía genérica. Está pensada para reflejar la realidad del proyecto y convertir decisiones técnicas en conocimiento compartido.
+No es una wiki de estilo genérico ni un repositorio de frases vacías. Su función es dejar documentado el modelo de negocio, la estructura del sistema, las decisiones de arquitectura y los estándares que sostienen la plataforma en producción.
 
-## ¿Cuál es la función de esta wiki?
+## 2. Qué responde esta wiki
 
-La wiki responde a cuatro preguntas fundamentales:
+Esta wiki responde a estas preguntas:
 
-1. ¿Qué sistema estamos construyendo?
-2. ¿Cómo está organizado por dominios y servicios?
-3. ¿Qué estándares técnicos y operativos exige cada cambio?
-4. ¿Cómo se entrega, valida y sostiene la aplicación en producción?
+1. ¿Qué negocio está soportando la plataforma?
+2. ¿Qué actores intervienen y qué hacen?
+3. ¿Cómo funciona el flujo de catálogo, registro y compra?
+4. ¿Cómo está organizada la arquitectura por dominios y servicios?
+5. ¿Qué estándares técnicos, de calidad y operación deben cumplirse?
+6. ¿Qué decisiones no pueden cambiarse sin afectar el modelo del negocio?
 
-## Mapa rápido del contenido
+## 3. Cobertura del conocimiento
 
-- [Arquitectura y diseño](architecture-overview.md)
-- [Estándares de ingeniería](engineering-standards.md)
-- [Plan de versión 1.0.0](../PLAN-V1-2026.md)
-- [Release playbook](../RELEASE-PLAYBOOK.md)
-- [Operación del stack](../STACK_OPERATIONS.md)
+- [architecture-overview.md](architecture-overview.md) — arquitectura del sistema, flujos del negocio y diagrama de dominio
+- [engineering-standards.md](engineering-standards.md) — principios SOLID, quality gates y estándares de ingeniería
+- [../PLAN-V1-2026.md](../PLAN-V1-2026.md) — roadmap y criterios de entrega para la v1
+- [../RELEASE-PLAYBOOK.md](../RELEASE-PLAYBOOK.md) — release, hotfix y rollback
+- [../STACK_OPERATIONS.md](../STACK_OPERATIONS.md) — runtime, ownership y operación del stack
+- [../LOCAL_STACK_RUNBOOK.md](../LOCAL_STACK_RUNBOOK.md) — ejecución local y smoke tests
 
-## Visión general del sistema
+## 4. Sistema a construir
 
 ```mermaid
 flowchart LR
-    U[Usuario] --> W[Web App\nNext.js]
+    C[Cliente] --> W[Web Storefront]
+    A[Administrador] --> ADM[Admin Console]
     W --> G[API Gateway]
-    G --> C[Catalog Service]
-    G --> O[Orders Service]
-    G --> N[Notification Worker]
-    C --> DB1[(Catalog DB)]
-    O --> DB2[(Orders DB)]
-    N --> DB3[(Notification DB)]
-    N --> M[Mensajería / Notificación]
+    ADM --> G
+    G --> CAT[Catalog Service]
+    G --> ORD[Orders Service]
+    G --> AUTH[Identity / Auth]
+    G --> NOT[Notification Worker]
+    CAT --> DC[(Catalog DB)]
+    ORD --> DO[(Orders DB)]
+    AUTH --> DU[(Users DB)]
+    NOT --> DN[(Notifications DB)]
+    ORD --> EV[OrderCreated Event]
+    EV --> NOT
+    NOT --> WA[WhatsApp / Sales Channel]
 ```
 
-## Principios de diseño
+## 5. Diagramas que forman la base del proyecto
 
-- cada servicio posee su propio dominio y su propia responsabilidad;
-- la integración ocurre por contratos explícitos y versionados;
-- la base de datos no se comparte entre dominios;
-- la calidad se valida antes del merge;
-- la operación debe ser reproducible y auditable;
-- el código debe poder ser soportado por otra persona sin dependencia de la memoria del autor.
+La wiki debe mantener explícitamente estos diagramas y modelos:
 
-## Cómo usar esta wiki
+- diagrama de actores y casos de uso;
+- diagrama de flujo del cliente;
+- diagrama de flujo del administrador;
+- diagrama de secuencia de compra;
+- diagrama de componentes;
+- diagrama de entidades y relaciones;
+- diagrama de estado del pedido;
+- diagrama de dependencias por servicio;
+- diagrama de contexto del sistema.
 
-- comenzar por la arquitectura;
-- luego revisar la calidad y estándares;
-- luego revisar el proceso de release y operaciones;
-- usar el plan de v1 como referencia para entregas reales.
+## 6. Regla de mantenimiento
 
-## Regla de mantenimiento
+Cada cambio de negocio, flujo, servicio o contrato debe reflejarse aquí.
 
-Cada cambio importante del sistema debe reflejarse aquí:
+Esto incluye:
 
-- nueva decisión de arquitectura;
-- cambio de dominio o contrato;
-- cambio de flujo operativo;
-- ajuste de quality gates;
-- cambio de release procedure.
+- nuevas categorías o reglas de merchandising;
+- cambios en datos del cliente requeridos para compra;
+- nuevas promociones, descuentos o destacables;
+- cambios en el estado del pedido;
+- nueva integración con WhatsApp u otros canales;
+- cambios de contrato entre servicios;
+- cambios de runtime, release o operación.
 
-Si un proceso no está documentado, no se puede considerar robusto.
+Si la decisión no está documentada, no se puede considerar resuelta.
+
+## 7. Principios del proyecto
+
+- cada dominio tiene ownership claro;
+- el catálogo no comparte estado con el pedido;
+- la compra requiere contexto real del cliente;
+- los precios visibles deben ser los precios pactados;
+- la administración editorial y comercial son parte del sistema;
+- la notificación por WhatsApp es un canal operativo y no un detalle secundario;
+- el código debe describir el negocio, no al revés;
+- la documentación es parte del producto, no un apéndice.
+
+## 8. Criterio de uso
+
+Esta wiki debe leerse en este orden:
+
+1. arquitectura general;
+2. flujos del negocio;
+3. estándares y principios;
+4. roadmap y entregables v1;
+5. operación y release;
+6. decisiones técnicas a medida que el proyecto madura.
+
+## 9. Conclusión
+
+MileShop Platform no es una tienda trivial. Es un sistema que combina catálogo, ventas, identidad del cliente, autoridad editorial y atención comercial. La wiki existe para dejar esos límites, flujos y decisiones explícitos y para que el proyecto pueda crecer sin perder claridad ni calidad.
