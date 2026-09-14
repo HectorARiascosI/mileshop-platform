@@ -1,12 +1,12 @@
 "use client";
 
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import { useEffect, useMemo, useState } from "react";
 
 import {
   addProductToCart,
   getCartItemCount,
-  getCartSubtotal,
   removeProductFromCart,
   updateProductQuantity,
   type CartLine,
@@ -38,33 +38,33 @@ function formatPrice(priceCop: number): string {
 }
 
 export function CatalogShell({ products, unavailable }: CatalogShellProps) {
-  const [cart, setCart] = useState<CartLine[]>([]);
-  const [isCartOpen, setIsCartOpen] = useState(false);
-  const [orderConfirmed, setOrderConfirmed] = useState(false);
+  const router = useRouter();
+  const [cart, setCart] = useState<CartLine[]>(() => {
+    if (typeof window === "undefined") {
+      return [];
+    }
 
-  useEffect(() => {
     const rawCart = window.localStorage.getItem(STORAGE_KEY);
-
     if (!rawCart) {
-      return;
+      return [];
     }
 
     try {
       const parsed = JSON.parse(rawCart) as CartLine[];
-      if (Array.isArray(parsed)) {
-        setCart(parsed);
-      }
+      return Array.isArray(parsed) ? parsed : [];
     } catch {
       window.localStorage.removeItem(STORAGE_KEY);
+      return [];
     }
-  }, []);
+  });
+  const [isCartOpen, setIsCartOpen] = useState(false);
+  const [orderConfirmed, setOrderConfirmed] = useState(false);
 
   useEffect(() => {
     window.localStorage.setItem(STORAGE_KEY, JSON.stringify(cart));
   }, [cart]);
 
   const cartCount = useMemo(() => getCartItemCount(cart), [cart]);
-  const subtotal = useMemo(() => getCartSubtotal(cart), [cart]);
   const checkoutSummary = useMemo(() => buildCheckoutSummary(cart), [cart]);
 
   const handleAddToCart = (product: Product) => {
@@ -114,7 +114,7 @@ export function CatalogShell({ products, unavailable }: CatalogShellProps) {
     setOrderConfirmed(true);
     setCart([]);
     setIsCartOpen(true);
-    window.location.assign("/checkout");
+    router.push("/checkout");
   };
 
   return (
