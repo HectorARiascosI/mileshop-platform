@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useMemo, useState } from "react";
 
 import { buildCheckoutSummary } from "@/lib/order";
 import type { CartLine } from "@/lib/cart";
@@ -16,7 +16,7 @@ function formatPrice(priceCop: number): string {
 }
 
 export default function CheckoutPage() {
-  const [order, setOrder] = useState<{
+  const [order] = useState<{
     aggregateId: string;
     payload: {
       customerId: string;
@@ -30,12 +30,14 @@ export default function CheckoutPage() {
         unitPriceCop: number;
       }>;
     };
-  } | null>(null);
+  } | null>(() => {
+    if (typeof window === "undefined") {
+      return null;
+    }
 
-  useEffect(() => {
     const rawOrder = window.localStorage.getItem(STORAGE_KEY);
     if (!rawOrder) {
-      return;
+      return null;
     }
 
     try {
@@ -54,11 +56,12 @@ export default function CheckoutPage() {
           }>;
         };
       };
-      setOrder(parsed);
+      return parsed;
     } catch {
       window.localStorage.removeItem(STORAGE_KEY);
+      return null;
     }
-  }, []);
+  });
 
   const lines = useMemo<CartLine[]>(() => {
     if (!order) {
