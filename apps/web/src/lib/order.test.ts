@@ -47,3 +47,22 @@ test("construye el evento de pedido con datos del cliente y líneas de compra", 
   assert.equal(event.payload.lines.length, 1);
   assert.equal(event.payload.lines[0]?.sku, "SKU-01");
 });
+
+test("rechaza la creación del evento si no hay cliente identificado", () => {
+  assert.throws(
+    () =>
+      buildOrderCreatedEvent(
+        [
+          {
+            productId: "p-1",
+            sku: "SKU-01",
+            name: "Botella térmica",
+            priceCop: 65000,
+            quantity: 1,
+          },
+        ],
+        "",
+      ),
+    /customerId/i,
+  );
+});
