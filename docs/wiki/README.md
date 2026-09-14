@@ -19,8 +19,9 @@ La wiki responde a cuatro preguntas fundamentales:
 
 - [Arquitectura y diseño](architecture-overview.md)
 - [Estándares de ingeniería](engineering-standards.md)
-- [Release y operaciones](release-and-operations.md)
 - [Plan de versión 1.0.0](../PLAN-V1-2026.md)
+- [Release playbook](../RELEASE-PLAYBOOK.md)
+- [Operación del stack](../STACK_OPERATIONS.md)
 
 ## Visión general del sistema
 

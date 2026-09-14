@@ -17,7 +17,7 @@ Nueva plataforma distribuida para MileShop. El repositorio Django anterior se co
 - [docs/DELIVERY_HISTORY.md](docs/DELIVERY_HISTORY.md) — orden de entregas, commits y dependencias entre ramas.
 - [docs/PLAN-V1-2026.md](docs/PLAN-V1-2026.md) — plan objetivo, milestones y Definition of Done de la primera version estable.
 - [docs/RELEASE-PLAYBOOK.md](docs/RELEASE-PLAYBOOK.md) — flujo de release, hotfix, rollback y promocion a produccion.
-- [docs/wiki/README.md](docs/wiki/README.md) — wiki operativa del proyecto: arquitectura, calidad, release y sostenimiento.
+- [docs/wiki/README.md](docs/wiki/README.md) — wiki operativa del proyecto: arquitectura, calidad y sostenimiento técnico.
 - [docs/adr/](docs/adr/) — decisiones de arquitectura con consecuencias, validacion y rollback.
 - [SECURITY.md](SECURITY.md) — secretos, dependencias y reportes de seguridad.
 - `.github/workflows/ci.yml` — auditoria, typecheck, lint, tests, build y Compose.
