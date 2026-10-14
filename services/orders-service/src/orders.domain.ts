@@ -32,18 +32,18 @@ export class OrderDomain {
       0,
     );
 
-    const orderId = `order-${now.getTime()}`;
+    const orderId = `order-${crypto.randomUUID()}`;
 
     return {
-      id: `order-record-${now.getTime()}`,
+      id: crypto.randomUUID(),
       orderId,
       customerId: command.customerId,
       totalCop,
       status: "PENDING",
       createdAt: now,
       updatedAt: now,
-      lines: normalizedLines.map((line: CreateOrderCommand["lines"][number], index: number) => ({
-        id: `${orderId}-line-${index + 1}`,
+      lines: normalizedLines.map((line: CreateOrderCommand["lines"][number]) => ({
+        id: crypto.randomUUID(),
         productId: line.productId,
         sku: line.sku,
         name: line.name,
