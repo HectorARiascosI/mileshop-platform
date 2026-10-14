@@ -1,5 +1,16 @@
-import { Body, Controller, Get, Inject, Param, Post } from "@nestjs/common";
+import {
+  BadRequestException,
+  Body,
+  Controller,
+  Get,
+  Inject,
+  NotFoundException,
+  Param,
+  Post,
+  ServiceUnavailableException,
+} from "@nestjs/common";
 
+import { CatalogUnavailableError } from "./catalog.reader.js";
 import { OrdersService } from "./orders.service.js";
 import type { CreateOrderInput } from "./orders.types.js";
 
@@ -16,11 +27,25 @@ export class OrdersController {
 
   @Post("orders")
   public async createOrder(@Body() body: CreateOrderInput): Promise<{ data: Awaited<ReturnType<OrdersService["createOrder"]>> }> {
-    return { data: await this.orders.createOrder(body) };
+    try {
+      return { data: await this.orders.createOrder(body) };
+    } catch (error) {
+      if (error instanceof CatalogUnavailableError) {
+        throw new ServiceUnavailableException(error.message);
+      }
+
+      throw new BadRequestException(error instanceof Error ? error.message : "Invalid order payload");
+    }
   }
 
   @Get("orders/:orderId")
-  public async getOrder(@Param("orderId") orderId: string): Promise<{ data: Awaited<ReturnType<OrdersService["getOrderById"]>> }> {
-    return { data: await this.orders.getOrderById(orderId) };
+  public async getOrder(@Param("orderId") orderId: string): Promise<{ data: NonNullable<Awaited<ReturnType<OrdersService["getOrderById"]>>> }> {
+    const result = await this.orders.getOrderById(orderId);
+
+    if (result === null) {
+      throw new NotFoundException(`Order ${orderId} not found`);
+    }
+
+    return { data: result };
   }
 }
