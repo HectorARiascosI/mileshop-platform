@@ -13,7 +13,7 @@ npm run db:seed --workspace @mileshop/catalog-service
 npm run start:dev --workspace @mileshop/catalog-service
 ```
 
-El seed es idempotente: usa `sku` como identidad natural y se puede ejecutar varias veces sin duplicar productos.
+El seed es idempotente: usa `sku` como identidad natural, reactiva los productos declarados y desactiva los SKUs retirados sin duplicar productos.
 
 Variables:
 

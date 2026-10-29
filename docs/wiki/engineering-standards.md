@@ -150,7 +150,7 @@ Valida el flujo principal del negocio en un entorno realista.
 ### Testing de negocio
 Debe comprobar reglas críticas del negocio, como:
 
-- cliente registrado antes de compra;
+- contexto de cliente capturado antes de compra; la identidad persistente y autenticación siguen pendientes;
 - precios visibles acordes al catálogo;
 - pedido se crea con contexto del usuario;
 - notificación enviada con datos suficientes;

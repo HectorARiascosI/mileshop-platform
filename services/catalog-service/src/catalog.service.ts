@@ -40,18 +40,12 @@ export class InMemoryCatalogStore implements CatalogStore {
       priceCop: 19000,
       stock: 38,
     },
-    {
-      id: "prod-bottle-001",
-      sku: "MILE-BTL-001",
-      name: "Botella térmica",
-      description: "Mantén tus bebidas a temperatura ideal durante todo el día.",
-      priceCop: 52000,
-      stock: 17,
-    },
   ];
 
   public async listActiveProducts(): Promise<Product[]> {
-    return this.products.map((product) => ({ ...product }));
+    return this.products
+      .map((product) => ({ ...product }))
+      .sort((left, right) => left.name.localeCompare(right.name, "es"));
   }
 }
 

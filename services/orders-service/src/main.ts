@@ -9,6 +9,7 @@ import type { FastifyRequest } from "fastify";
 import { AppModule } from "./app.module.js";
 
 const port = Number(process.env.PORT ?? 3030);
+const catalogServiceUrl = process.env.CATALOG_SERVICE_URL ?? "http://localhost:3020";
 const allowedOrigins = (process.env.ALLOWED_ORIGINS ?? "http://localhost:3000")
   .split(",")
   .map((origin) => origin.trim())
@@ -47,7 +48,7 @@ async function bootstrap(): Promise<void> {
   });
 
   await app.listen(port, "0.0.0.0");
-  console.info(`orders-service listening on ${port}`);
+  console.info(`orders-service listening on ${port}; catalog=${catalogServiceUrl}`);
 }
 
 void bootstrap();

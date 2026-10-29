@@ -5,7 +5,7 @@ Nueva plataforma distribuida para MileShop. El repositorio Django anterior se co
 ## Estructura
 
 - `apps/web` — frontend Next.js + TypeScript.
-- `packages/contracts` — contratos de eventos y APIs versionados.
+- `packages/contracts` — contrato de evento compartido; los contratos HTTP actuales viven en los controllers y clientes de cada servicio.
 - `services/` — servicios desplegables de forma independiente.
 - `services/api-gateway` — entrada HTTP pública y composición de APIs.
 - `infra/` — PostgreSQL local y configuracion reproducible.
@@ -26,13 +26,25 @@ Nueva plataforma distribuida para MileShop. El repositorio Django anterior se co
 
 - Cada servicio sera dueño de su base de datos.
 - Ningun servicio consultara tablas de otro servicio.
-- La comunicacion sera HTTP mediante contratos OpenAPI o eventos versionados.
-- Los eventos tendran idempotencia y outbox transaccional.
-- La migracion desde Django se hara por strangler, con reconciliacion y rollback.
+- La comunicación entre los servicios implementados usa HTTP; `OrderCreated.v1` es el evento versionado actual.
+- El worker implementa deduplicación por `eventId`; un outbox transaccional y un broker siguen pendientes.
+- La migración desde Django es una estrategia futura; todavía no hay cortes de tráfico ni reconciliación automatizada implementados.
+- El alcance del repositorio se define por negocio real del proyecto y no por experimentos o ideas no priorizadas.
+- La documentacion es fuente de verdad para decisiones de producto, arquitectura y operacion; no se duplica ni se repite sin necesidad.
+
+## Filtros de calidad y alcance
+
+Este repositorio aplica un criterio estricto:
+
+- no se admite trabajo genérico o de plantilla sin ligadura directa a MileShop;
+- no se mezclan decisiones de negocio con marketing o aspiraciones abstractas;
+- cada documento debe responder a una pregunta concreta del sistema o de la operacion;
+- cada flujo documentado debe corresponder a un servicio, evento o regla del producto que existe o esta planeado con claridad;
+- cualquier cambio que no mejore catalogo, pedido, identidad, notificacion o operacion no es prioridad de esta fase.
 
 ## Estado
 
-El frontend, `api-gateway`, `notification-worker`, `catalog-service` y `orders-service` compilan y tienen pruebas. El gateway expone `/healthz`, `/catalog/products` y `/orders`, y consulta el catálogo mediante HTTP con timeout y manejo de indisponibilidad. Los servicios con persistencia tienen PostgreSQL propio, migraciones Prisma y health checks.
+El frontend, `api-gateway`, `notification-worker`, `catalog-service` y `orders-service` compilan y tienen pruebas. El gateway expone `/healthz`, `/catalog/products` y `/orders`, consulta el catálogo mediante HTTP con timeout y persiste pedidos mediante `orders-service` antes de publicar `OrderCreated.v1`. Los servicios con persistencia tienen PostgreSQL propio, migraciones Prisma y health checks.
 
 La primera version estable de la plataforma no se etiqueta ni se considera cerrada hasta cumplir el plan contenido en [docs/PLAN-V1-2026.md](docs/PLAN-V1-2026.md), que incluye alcance, milestones, calidad, preproduccion, pruebas unitarias e integracion, versionado semantico y evidencia de release.
 

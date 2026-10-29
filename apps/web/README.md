@@ -20,9 +20,10 @@ npm run typecheck
 
 ```bash
 API_GATEWAY_URL=http://localhost:3000
+NEXT_PUBLIC_API_GATEWAY_URL=http://localhost:3000
 ```
 
-En local, la app usa el gateway público para consultar `/catalog/products`.
+En local, el servidor usa `API_GATEWAY_URL` para consultar `/catalog/products` y el checkout del navegador usa `NEXT_PUBLIC_API_GATEWAY_URL` para crear pedidos.
 
 ## Estructura principal
 
