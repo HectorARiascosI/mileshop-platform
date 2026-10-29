@@ -15,13 +15,15 @@ This repo is the runtime source of truth for the MileShop distributed platform. 
 
 | Component | Port | Purpose | Dependency |
 | --- | ---: | --- | --- |
-| API Gateway | 3000 | public facade | catalog + notifications |
+| API Gateway | 3000 | public facade | identity + catalog + orders + notifications |
 | Notification Worker | 3010 | event receiver and notifier | PostgreSQL |
 | Catalog Service | 3020 | product catalog | PostgreSQL |
-| Orders Service | 3030 | order creation | PostgreSQL |
+| Orders Service | 3030 | order creation and catalog validation | PostgreSQL + catalog service |
+| Identity Service | 3040 | authentication and customer identity | PostgreSQL |
 | Catalog Postgres | 5434 | catalog domain database | Docker |
 | Notification Postgres | 5433 | notification domain database | Docker |
 | Orders Postgres | 5435 | orders domain database | Docker |
+| Identity Postgres | 5436 | identity domain database | Docker |
 
 ## 3. Ownership model
 
@@ -36,13 +38,13 @@ This is not a generic monolith. The design follows domain ownership.
 ### Orders domain
 
 - owns the order aggregate and validation rules
-- accepts the order payload and emits `OrderCreated.v1`
+- accepts the order payload and persists the order; the API gateway publishes `OrderCreated.v1` after persistence
 - keeps its database isolated from the catalog domain
 
 ### Notification domain
 
 - owns notification processing for downstream delivery
-- listens for events produced by orders
+- receives the `OrderCreated.v1` request published by the API gateway after order persistence
 - does not read catalog tables directly
 
 ### API gateway
@@ -50,6 +52,14 @@ This is not a generic monolith. The design follows domain ownership.
 - is a composition boundary for public consumers
 - does not own the database
 - exposes safe HTTP routes and enforces service availability semantics
+- delegates token verification to identity-service via `AuthMiddleware` on protected routes
+
+### Identity domain
+
+- owns customer accounts, password hashes and session refresh tokens
+- exposes `POST /auth/register`, `POST /auth/login`, `POST /auth/refresh`, `POST /auth/logout`, `GET /auth/me` and `POST /auth/verify-token`
+- issues JWT HS256 access tokens (15 min) and opaque refresh tokens (30 days) stored in its own database
+- no other service reads identity tables directly
 
 ## 4. Required environment variables
 
@@ -82,6 +92,19 @@ $env:DATABASE_URL='postgresql://orders:orders@localhost:5435/orders?schema=publi
 $env:PORT='3000'
 $env:CATALOG_SERVICE_URL='http://127.0.0.1:3020'
 $env:NOTIFICATION_WORKER_URL='http://127.0.0.1:3010'
+$env:ORDERS_SERVICE_URL='http://127.0.0.1:3030'
+$env:IDENTITY_SERVICE_URL='http://127.0.0.1:3040'
+```
+
+### Identity service
+
+```powershell
+$env:PORT='3040'
+$env:DATABASE_URL='postgresql://identity:identity@localhost:5436/identity?schema=public'
+$env:JWT_SECRET='<random-secret-min-32-chars>'
+$env:JWT_EXPIRES_IN='15m'
+$env:REFRESH_TOKEN_EXPIRES_DAYS='30'
+$env:ALLOWED_ORIGINS='http://localhost:3001'
 ```
 
 ## 5. Startup sequence
@@ -97,10 +120,13 @@ Set-Location "C:\Users\hecto\OneDrive\Desktop\MileShop\mileshop-platform"
 3. The script performs the following in order:
    - validates Docker availability
    - starts the Postgres compose stack
-   - clears stale listeners on ports 3000, 3010, 3020 and 3030
-   - launches the four application services with their env-specific variables
+   - applies Prisma migrations for the four service databases
+   - clears stale listeners on ports 3000, 3010, 3020, 3030 and 3040
+   - launches the five application services as independent processes with env-specific variables
    - waits until each service health endpoint is available
    - executes smoke checks against the gateway and catalog flow
+
+The migration command is centralized in `scripts/deploy-local-databases.ps1`, which assigns the catalog, notification, and orders database URL separately. This prevents a shell-level `DATABASE_URL` from applying a migration to the wrong domain.
 
 ## 6. Health and operational checks
 
@@ -117,6 +143,7 @@ Expected checks:
 - `http://localhost:3010/healthz`
 - `http://localhost:3020/healthz`
 - `http://localhost:3030/healthz`
+- `http://localhost:3040/healthz`
 
 All should respond with an HTTP 200 and a JSON payload like `{"status":"ok"}`.
 
@@ -127,7 +154,7 @@ All should respond with an HTTP 200 and a JSON payload like `{"status":"ok"}`.
 Symptom: port already in use or startup fails immediately.
 
 Cause:
-- an old Node process is still bound to 3000, 3010, 3020 or 3030.
+- an old Node process is still bound to 3000, 3010, 3020, 3030 or 3040.
 
 Resolution:
 - run the stop script or clear the owning process with PowerShell.
