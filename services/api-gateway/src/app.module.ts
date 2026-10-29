@@ -1,8 +1,14 @@
-import { Module } from "@nestjs/common";
+import { MiddlewareConsumer, Module, NestModule, RequestMethod } from "@nestjs/common";
 
+import { AuthMiddleware, IDENTITY_SERVICE_URL } from "./auth.middleware.js";
 import { CATALOG_FETCH, CatalogClient } from "./catalog.client.js";
 import { GatewayController } from "./gateway.controller.js";
-import { NOTIFICATION_WORKER_URL, ORDER_FETCH, OrderService } from "./orders.service.js";
+import {
+  NOTIFICATION_WORKER_URL,
+  ORDER_FETCH,
+  ORDERS_SERVICE_URL,
+  OrderService,
+} from "./orders.service.js";
 
 @Module({
   controllers: [GatewayController],
@@ -19,8 +25,19 @@ import { NOTIFICATION_WORKER_URL, ORDER_FETCH, OrderService } from "./orders.ser
       provide: NOTIFICATION_WORKER_URL,
       useValue: process.env.NOTIFICATION_WORKER_URL ?? "http://localhost:3010",
     },
+    {
+      provide: ORDERS_SERVICE_URL,
+      useValue: process.env.ORDERS_SERVICE_URL ?? "http://localhost:3030",
+    },
+    { provide: "AUTH_FETCH", useValue: fetch },
+    { provide: IDENTITY_SERVICE_URL, useValue: process.env.IDENTITY_SERVICE_URL ?? "http://localhost:3040" },
+    AuthMiddleware,
     CatalogClient,
     OrderService,
   ],
 })
-export class AppModule {}
+export class AppModule implements NestModule {
+  configure(consumer: MiddlewareConsumer): void {
+    consumer.apply(AuthMiddleware).forRoutes({ path: "orders", method: RequestMethod.POST });
+  }
+}
