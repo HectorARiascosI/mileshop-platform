@@ -9,27 +9,42 @@
     "packages/*"
   ],
   "scripts": {
-    "build": "npm run build:web && npm run build:api-gateway && npm run build:notification-worker && npm run build:catalog-service && npm run build:orders-service",
+    "build": "npm run build:web && npm run build:api-gateway && npm run build:notification-worker && npm run build:catalog-service && npm run build:orders-service && npm run build:identity-service",
     "build:api-gateway": "npm run build --workspace @mileshop/api-gateway",
     "build:catalog-service": "npm run build --workspace @mileshop/catalog-service",
+    "build:identity-service": "npm run build --workspace @mileshop/identity-service",
     "build:notification-worker": "npm run build --workspace @mileshop/notification-worker",
     "build:orders-service": "npm run build --workspace @mileshop/orders-service",
     "build:web": "npm run build --workspace apps/web",
-    "db:generate": "npm run db:generate:notification-worker && npm run db:generate:catalog-service && npm run db:generate:orders-service",
+    "db:deploy": "powershell -ExecutionPolicy Bypass -File ./scripts/deploy-local-databases.ps1",
+    "db:generate": "npm run db:generate:notification-worker && npm run db:generate:catalog-service && npm run db:generate:orders-service && npm run db:generate:identity-service",
     "db:generate:catalog-service": "npm run db:generate --workspace @mileshop/catalog-service",
+    "db:generate:identity-service": "npm run db:generate --workspace @mileshop/identity-service",
     "db:generate:notification-worker": "npm run db:generate --workspace @mileshop/notification-worker",
     "db:generate:orders-service": "npm run db:generate --workspace @mileshop/orders-service",
+    "db:deploy:catalog-service": "npm run db:deploy --workspace @mileshop/catalog-service",
+    "db:deploy:identity-service": "npm run db:deploy --workspace @mileshop/identity-service",
+    "db:deploy:notification-worker": "npm run db:deploy --workspace @mileshop/notification-worker",
+    "db:deploy:orders-service": "npm run db:deploy --workspace @mileshop/orders-service",
     "db:seed:catalog": "npm run db:seed --workspace @mileshop/catalog-service",
     "lint": "npm run lint:web",
     "lint:web": "npm run lint --workspace apps/web",
-    "test": "npm run test:api-gateway && npm run test:notification-worker && npm run test:catalog-service && npm run test:orders-service",
+    "test": "npm run test:api-gateway && npm run test:notification-worker && npm run test:catalog-service && npm run test:orders-service && npm run test:identity-service",
     "test:api-gateway": "npm run test --workspace @mileshop/api-gateway",
     "test:catalog-service": "npm run test --workspace @mileshop/catalog-service",
+    "test:identity-service": "npm run test --workspace @mileshop/identity-service",
     "test:notification-worker": "npm run test --workspace @mileshop/notification-worker",
     "test:orders-service": "npm run test --workspace @mileshop/orders-service",
     "typecheck": "npm run typecheck:web && npm run typecheck:services",
-    "typecheck:services": "npm run typecheck:api-gateway && npm run typecheck --workspace @mileshop/notification-worker && npm run typecheck --workspace @mileshop/catalog-service && npm run typecheck --workspace @mileshop/orders-service",
+    "typecheck:services": "npm run typecheck:api-gateway && npm run typecheck --workspace @mileshop/notification-worker && npm run typecheck --workspace @mileshop/catalog-service && npm run typecheck --workspace @mileshop/orders-service && npm run typecheck --workspace @mileshop/identity-service",
     "typecheck:api-gateway": "npm run typecheck --workspace @mileshop/api-gateway",
-    "typecheck:web": "npm run typecheck --workspace apps/web"
+    "typecheck:web": "npm run typecheck --workspace apps/web",
+    "verify:local-purchase": "powershell -ExecutionPolicy Bypass -File ./scripts/verify-local-purchase.ps1"
+  },
+  "allowScripts": {
+    "prisma@6.12.0": true,
+    "@prisma/client@6.12.0": true,
+    "@prisma/engines@6.12.0": true,
+    "esbuild@0.28.2": true
   }
 }
