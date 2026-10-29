@@ -1,4 +1,4 @@
-import { Body, Controller, Get, Post } from "@nestjs/common";
+import { Body, Controller, Get, Post, Req } from "@nestjs/common";
 
 import { CatalogClient } from "./catalog.client.js";
 import { OrderService, type CreateOrderInput } from "./orders.service.js";
@@ -21,7 +21,8 @@ export class GatewayController {
   }
 
   @Post("orders")
-  public async createOrder(@Body() input: CreateOrderInput): Promise<{ data: Awaited<ReturnType<OrderService["createOrder"]>> }> {
+  public async createOrder(@Body() input: CreateOrderInput, @Req() req: { customerId?: string }): Promise<{ data: Awaited<ReturnType<OrderService["createOrder"]>> }> {
+    input.customerId = req.customerId ?? input.customerId;
     return { data: await this.orders.createOrder(input) };
   }
 }
