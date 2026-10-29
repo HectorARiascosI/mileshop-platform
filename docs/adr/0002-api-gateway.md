@@ -14,7 +14,9 @@ El API Gateway expone una superficie HTTP publica y compone respuestas de servic
 
 - `GET /healthz` valida disponibilidad del gateway.
 - `GET /catalog/products` consulta `catalog-service`.
+- `POST /orders` persiste el pedido mediante `orders-service` y publica `OrderCreated.v1` hacia `notification-worker`.
 - `CATALOG_SERVICE_URL` configura la dependencia interna.
+- `ORDERS_SERVICE_URL` y `NOTIFICATION_WORKER_URL` configuran las dependencias de compra.
 - El cliente aplica timeout de 3 segundos.
 - Fallos de red o respuestas no exitosas se traducen a `503 Service Unavailable`.
 - El gateway no posee tablas ni reglas de inventario.

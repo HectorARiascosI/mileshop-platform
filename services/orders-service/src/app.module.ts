@@ -1,5 +1,6 @@
 import { Module } from "@nestjs/common";
 
+import { HttpCatalogReader } from "./catalog.reader.js";
 import { OrdersController } from "./orders.controller.js";
 import { OrdersService } from "./orders.service.js";
 import { PrismaOrdersRepository } from "./prisma.orders.repository.js";
@@ -16,8 +17,16 @@ import { PrismaService } from "./prisma.service.js";
     },
     {
       provide: "ORDERS_SERVICE",
-      useFactory: (repository: PrismaOrdersRepository) => new OrdersService(repository),
-      inject: ["ORDERS_REPOSITORY"],
+      useFactory: (repository: PrismaOrdersRepository, catalog: HttpCatalogReader) =>
+        new OrdersService(repository, catalog),
+      inject: ["ORDERS_REPOSITORY", "CATALOG_READER"],
+    },
+    {
+      provide: "CATALOG_READER",
+      useFactory: () => new HttpCatalogReader(
+        fetch,
+        process.env.CATALOG_SERVICE_URL ?? "http://localhost:3020",
+      ),
     },
   ],
 })

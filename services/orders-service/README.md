@@ -47,6 +47,8 @@ npm run db:deploy --workspace @mileshop/orders-service
 - El total se calcula como suma de `unitPriceCop * quantity`.
 - La identidad de pedido es estable por `orderId`.
 - Los datos de entrada se validan con Zod y el servicio no acepta payloads vacíos ni inválidos.
+- Cada línea se contrasta contra el catálogo activo por `productId`, SKU, precio y stock; el nombre persistido se canonicaliza desde catálogo.
+- Si el catálogo no está disponible, la creación responde como dependencia no disponible y no persiste el pedido.
 
 ## Seguridad
 

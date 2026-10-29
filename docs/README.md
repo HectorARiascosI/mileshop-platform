@@ -43,15 +43,26 @@ La documentación se divide en 5 capas:
 - Esta carpeta debe contener la referencia detallada.
 - Cada documento debe responder a un propósito específico y no duplicar otra guía general.
 - Si un tema cambia, el documento que lo define debe actualizarse, no duplicarse.
+- La documentación debe mantenerse estrictamente alineada con el modelo real de MileShop: catálogo, registro, compra, pedido, identidad y notificación.
 
-## 4. Regla de no redundancia
+## 4. Regla de no redundancia y de filtrado
 
-No se debe repetir la misma información en varios archivos con objetivos similares.
+La documentación no se escribe para “llenar espacio”; se escribe para preservar claridad operativa, propiedad del dominio y criterio de entrega.
 
-Ejemplo:
-- la política de branches y PR vive en [../CONTRIBUTING.md](../CONTRIBUTING.md) y se amplía en [WORKFLOW-2026.md](WORKFLOW-2026.md);
+Reglas obligatorias:
+
+- una decisión de negocio vive en el documento que define el dominio o el proceso; no se replica en varios archivos con el mismo objetivo;
+- la rama de documentación no sustituye la evidencia del código ni del flujo operativo;
+- cualquier cosa que no se pueda verificar en producto, servicio, contrato o proceso real no entra en la referencia oficial;
+- la wiki, los readmes y los playbooks deben mantener la misma base semántica: catálogo, checkout, identidad, pedidos y notificaciones.
+
+Las fuentes canónicas son estas:
+
+- la estructura y el alcance del repositorio viven en [REPOSITORY.md](REPOSITORY.md);
+- el gobierno del desarrollo vive en [../CONTRIBUTING.md](../CONTRIBUTING.md) y [WORKFLOW-2026.md](WORKFLOW-2026.md);
+- el roadmap y la definición de entregable de la v1 viven en [PLAN-V1-2026.md](PLAN-V1-2026.md);
 - el arranque local vive en [LOCAL_STACK_RUNBOOK.md](LOCAL_STACK_RUNBOOK.md);
-- la operación del stack en producción y runtime vive en [STACK_OPERATIONS.md](STACK_OPERATIONS.md);
-- la versión y el roadmap viven en [PLAN-V1-2026.md](PLAN-V1-2026.md).
+- la operación del stack vive en [STACK_OPERATIONS.md](STACK_OPERATIONS.md);
+- la arquitectura y los flujos reales del negocio viven en [wiki/README.md](wiki/README.md) y sus documentos asociados.
 
 La división es intencional y debe mantenerse así.

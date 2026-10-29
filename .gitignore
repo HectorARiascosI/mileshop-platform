@@ -4,6 +4,7 @@ dist/
 coverage/
 services/*/generated/
 .data/
+.local-stack/
 .env
 .env.*
 !.env.example
