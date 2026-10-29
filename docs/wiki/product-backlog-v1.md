@@ -1,321 +1,199 @@
-# Backlog funcional v1 — MileShop Platform
+# Backlog v1 de MileShop Platform
 
-## 1. Propósito del documento
+## 1. Regla de alcance
 
-Este documento define el backlog mínimo de la primera versión operativa del sistema. No es una lista genérica de features. Es una priorización real del negocio y de la ingeniería, con responsables lógicos, dependencias y criterios de aceptación concretos.
+Este backlog distingue el runtime demostrado de las capacidades pendientes. Ningún item se considera terminado por tener documentación: necesita código, prueba y evidencia de ejecución cuando corresponda.
 
-La v1 no se define como “todo lo que podría existir”, sino como las capacidades necesarias para que el negocio pueda:
+La v1 actual está construida alrededor de cuatro procesos ejecutables: storefront web, API Gateway, Catalog Service, Orders Service y Notification Worker. `Proyecto_ventas` es legacy y no forma parte de este backlog.
 
-- vender a través de catálogo;
-- registrar clientes;
-- gestionar promociones y merchandising;
-- crear órdenes con trazabilidad;
-- comunicar ventas al negocio mediante WhatsApp;
-- operar la plataforma con control y observabilidad.
+## 2. Estados
 
-## 2. Principios del backlog
+- **Implementado:** existe código, prueba y evidencia suficiente para el alcance declarado.
+- **Parcial:** existe una parte funcional, pero falta una dependencia o criterio importante.
+- **Pendiente P0:** bloquea una venta o una validación operativa confiable.
+- **Objetivo posterior:** no se implementa hasta que se apruebe su alcance y ownership.
 
-- cada item debe resolver una necesidad de negocio o de operación;
-- cada item debe tener criterio de aceptación claro;
-- cada item debe mapearse a un dominio técnico o servicio;
-- cada item debe tener evidencia de validación antes de cerrar;
-- el backlog se prioriza por impacto en venta y trazabilidad del negocio.
+## 3. Estado actual por capacidad
 
-## 3. Estructura por módulos
+### BL-01 — Catálogo activo
 
-### Módulo 1 — Catálogo público
-### Módulo 2 — Registro y clientes
-### Módulo 3 — Carrito y checkout
-### Módulo 4 — Orden y notificación
-### Módulo 5 — Administración del negocio
-### Módulo 6 — Operación y calidad
+**Estado:** Implementado para catálogo textual y disponibilidad.
 
-## 4. Módulo 1 — Catálogo público
+**Evidencia:** `services/catalog-service`, schema Prisma, seed y `GET /products`; `apps/web` consume `GET /catalog/products`.
 
-### EP-01 — Listado de productos activos
-**Objetivo:** exponer un catálogo claro y organizado al cliente.
+**Incluye hoy:** SKU, nombre, descripción, precio COP, stock, `isActive` y ordenamiento por nombre.
 
-**Criterios de aceptación:**
+**No incluye:** imágenes, categorías, variantes, promociones, destacados ni paginación.
 
-- el cliente puede ver productos activos;
-- cada producto muestra nombre, imagen, precio y categoría;
-- productos no activos no aparecen;
-- se pueden listar de forma natural por páginas o bloques visuales.
+### BL-02 — Navegación y carrito
 
-**Dominio responsable:** catalog service, web storefront.
+**Estado:** Implementado en `apps/web`.
 
-**Dependencias:**
+**Evidencia:** `CatalogShell`, `cart.ts`, pruebas de carrito y flujo documentado.
 
-- product data model;
-- category model;
-- pricing source;
-- product visibility rules.
+**Incluye hoy:** agregar, quitar, cambiar cantidad, persistir carrito localmente, subtotal, costo de entrega y umbral de envío gratis.
 
-### EP-02 — Detalle de producto
-**Objetivo:** que el cliente tenga información suficiente para decidir comprar.
+**Limitación:** el carrito no consulta stock nuevamente antes de confirmar y no existe reserva de inventario.
 
-**Criterios de aceptación:**
+### BL-03 — Contexto de cliente antes del checkout
 
-- se muestra nombre, descripción, precio actual, imágenes y disponibilidad;
-- la información de promoción o descuento se ve claramente;
-- variantes o stock se reflejan en la UI si existen;
-- la experiencia no depende de la memoria del cliente.
+**Estado:** Implementado.
 
-**Dominio responsable:** catalog service, storefront.
+**Evidencia:** `services/identity-service`, flujo JWT con access token HS256 (15 min) y refresh token opaco (30 días), sesión con `httpOnly cookies` vía API routes de Next.js, `apps/web/src/app/login`, `apps/web/src/app/register`.
 
-### EP-03 — Productos destacados y promocionados
-**Objetivo:** apoyar estrategias comerciales de merchandising.
+**Incluye hoy:** nombre, teléfono, correo, contraseña hasheada con `bcryptjs`, `customerId` persistente en base de datos propia, unicidad de correo validada en servidor y sesión segura mediante cookies.
 
-**Criterios de aceptación:**
+**No incluye:** recuperación de cuenta por correo, OAuth social ni perfil de dirección.
 
-- el sistema distingue productos destacados, promocionados y normales;
-- la página principal o catalogo puede mostrar bloque de relevancia;
-- cada elemento promocionado tiene un origen claro y un estado activo.
+### BL-04 — Creación y persistencia de pedido
 
-**Dominio responsable:** catalog service, admin merchandising.
+**Estado:** Implementado para el pedido inicial.
 
----
+**Evidencia:** `orders-service`, schema `Order`/`OrderLine`, migración, tests y lectura `GET /orders/:orderId`.
 
-## 5. Módulo 2 — Registro y clientes
+**Criterios cerrados:**
 
-### EP-04 — Registro de cliente requerido
-**Objetivo:** garantizar identidad antes de la compra.
+- valida `customerId` y líneas no vacías;
+- exige cantidades positivas y precios enteros no negativos;
+- calcula `totalCop` desde las líneas recibidas;
+- persiste pedido y líneas en PostgreSQL propio;
+- devuelve estado inicial `PENDING` y `orderId` único.
 
-**Criterios de aceptación:**
+**Limitación:** valida precio, identidad de línea y stock disponible contra el catálogo activo, pero todavía no reserva ni decrementa stock y no tiene transiciones de estado operativas.
 
-- el cliente no puede confirmar un pedido sin registro válido;
-- el sistema exige datos mínimos obligatorios;
-- el flujo de compra bloquea el intento si falla la validación.
+### BL-05 — Evento de pedido creado
 
-**Dominio responsable:** identity / auth service, gateway, checkout.
+**Estado:** Parcial implementado.
 
-**Dependencias:**
+**Evidencia:** `packages/contracts`, `api-gateway/src/orders.service.ts`, prueba del gateway y `POST /events/order-created`.
 
-- customer model;
-- validation rules;
-- authentication flow.
+**Incluye hoy:** evento `OrderCreated.v1` construido después de persistir el pedido y enviado por HTTP al worker.
 
-### EP-05 — Perfil del cliente
-**Objetivo:** conservar contexto del consumidor para compras futuras.
+**Limitaciones:** el productor es el gateway, no `orders-service`; no existe outbox transaccional, broker ni reintento durable del productor.
 
-**Criterios de aceptación:**
+### BL-06 — Deduplicación de notificaciones
 
-- el cliente puede actualizar datos básicos;
-- la información se asocia al pedido;
-- los datos necesarios para la toma de contacto quedan disponibles para el negocio.
+**Estado:** Parcial implementado.
 
-**Dominio responsable:** identity service, user profile domain.
+**Evidencia:** `notification-worker`, `NotificationDelivery`, índice único por `eventId` y test de retry.
 
----
+**Incluye hoy:** claim idempotente, estados `PROCESSING`, `SENT`, `FAILED` y contador de intentos.
 
-## 6. Módulo 3 — Carrito y checkout
+**No incluye:** adaptador externo real, entrega por WhatsApp, cola durable ni métricas.
 
-### EP-06 — Agregar al carrito
-**Objetivo:** soportar la selección del cliente.
+### BL-07 — Runtime local reproducible
+
+**Estado:** Implementado para desarrollo local.
+
+**Evidencia:** `infra/docker-compose.yml`, migraciones Prisma, `start-local-stack.ps1`, `status-local-stack.ps1`, `stop-local-stack.ps1` y runbook.
+
+**Incluye hoy:** tres PostgreSQL, migraciones automáticas, cuatro procesos independientes, health checks y smoke test de catálogo.
+
+**Limitación:** no es un despliegue productivo ni una configuración cloud.
+
+### BL-08 — Quality gates
+
+**Estado:** Implementado para CI técnica.
+
+**Evidencia:** `.github/workflows/ci.yml`.
+
+**Incluye hoy:** `npm ci`, auditoría de dependencias, generación Prisma, typecheck, lint, tests, build y validación Compose.
+
+**Limitación:** no existe CD, promoción automática, preproducción ni prueba de restauración.
+
+## 4. Trabajo P0 pendiente
+
+### P0-01 — Prueba de integración del checkout completo
+
+**Estado:** Implementado.
+
+**Objetivo:** demostrar en una sola prueba el flujo storefront/contexto local → gateway → orders-service → worker.
+
+**Evidencia:** `scripts/verify-local-purchase.ps1`, `npm run verify:local-purchase` y ejecución validada contra la stack local.
 
 **Criterios de aceptación:**
 
-- se puede añadir un producto o variante al carrito;
-- cantidad, precio y total se actualizan correctamente;
-- no se acepta item no disponible.
+- crea un pedido contra el stack local;
+- recupera el pedido por `orderId`;
+- verifica el mismo `eventId` en notification-worker;
+- comprueba que una repetición no duplica la entrega;
+- cubre fallo del worker después de persistir y documenta el comportamiento.
 
-**Dominio responsable:** storefront, gateway, order domain.
+**Ownership:** web, gateway, orders-service y notification-worker.
 
-### EP-07 — Resumen del pedido
-**Objetivo:** revisar antes de confirmar la compra.
+### P0-02 — Validación de precio y disponibilidad
 
-**Criterios de aceptación:**
+**Estado:** Parcial implementado.
 
-- el cliente ve subtotal, descuento y total final;
-- se muestran los productos seleccionados con cantidades;
-- se confirma la identidad del cliente antes del cierre del pedido.
+**Objetivo:** impedir que el cliente envíe precios o productos incoherentes con el catálogo vigente.
 
-**Dominio responsable:** gateway, orders service, frontend.
-
-### EP-08 — Confirmación de compra
-**Objetivo:** cerrar la venta con evidencia y trazabilidad.
+**Evidencia:** `orders-service/src/catalog.reader.ts`, validación en `OrdersService`, 7 tests del servicio y `npm run verify:local-purchase` ejecutado contra la stack local.
 
 **Criterios de aceptación:**
 
-- la orden se crea con estado inicial válido;
-- el cliente recibe confirmación visual;
-- la orden queda persistida con relación al cliente;
-- el proceso falla con validación clara si faltan datos o líneas inválidas.
+- orders-service valida cada producto activo contra catálogo y canonicaliza el nombre de línea;
+- el precio persistido se toma de la respuesta autorizada del catálogo;
+- stock insuficiente produce rechazo claro;
+- la decisión de reserva o decremento de stock queda documentada;
+- existen pruebas de precio manipulado, producto inactivo y stock insuficiente.
 
-**Dominio responsable:** orders service.
+**Pendiente para cerrar:** reserva o decremento transaccional de stock; actualmente solo se valida la disponibilidad observada.
 
----
+**Ownership:** catálogo, pedidos y gateway; requiere decidir el contrato de consulta.
 
-## 7. Módulo 4 — Orden y notificación
+### P0-03 — Contrato de error y recuperación de compra
 
-### EP-09 — Creación de orden
-**Objetivo:** registrar la operación comercial con estructura clara.
-
-**Criterios de aceptación:**
-
-- cada orden tiene identificador único;
-- cada línea incluye producto, cantidad y precio;
-- el total es consistente con los datos finales;
-- el estado inicial es correcto y auditable.
-
-**Dominio responsable:** orders service.
-
-### EP-10 — Evento de orden creada
-**Objetivo:** permitir integración con el canal de ventas y atención comercial.
+**Objetivo:** que el storefront no confirme falsamente un pedido cuando falla persistencia o notificación.
 
 **Criterios de aceptación:**
 
-- se publica un evento versionado al crear la orden;
-- el payload incluye datos suficientes del cliente y del pedido;
-- el evento tiene contrato definido y verificable;
-- el sistema acepta y maneja reintentos sin duplicidad.
+- el frontend muestra estado específico para fallo de orders-service;
+- el pedido creado con fallo posterior de notificación queda trazable;
+- existe estrategia explícita de reintento del evento;
+- la respuesta pública no expone detalles internos ni produce duplicados.
 
-**Dominio responsable:** orders service, notification worker, contracts package.
+**Ownership:** gateway, web y worker.
 
-### EP-11 — Notificación por WhatsApp
-**Objetivo:** entregar una notificación útil al negocio.
+### P0-04 — Identidad mínima de servidor
 
-**Criterios de aceptación:**
-
-- el mensaje incluye cliente, pedido y resumen;
-- la información del cliente es suficiente para atender la venta;
-- el worker deduplica y emite solo una notificación válida por evento.
-
-**Dominio responsable:** notification worker.
-
----
-
-## 8. Módulo 5 — Administración del negocio
-
-### EP-12 — Gestión de catálogo
-**Objetivo:** permitir al negocio mantener la oferta actualizada.
+**Objetivo:** decidir si la v1 acepta contexto local o exige identidad persistente real.
 
 **Criterios de aceptación:**
 
-- el administrador puede crear, editar y desactivar productos;
-- puede actualizar precio, descripción, imagen y categoría;
-- las reglas de visibilidad se aplican inmediatamente.
+- decisión documentada por negocio y seguridad;
+- si se exige identidad, existe customer model, endpoint y almacenamiento propio;
+- el pedido referencia una identidad validada por servidor;
+- se eliminan claims de “registro” si solo existe `localStorage`.
 
-**Dominio responsable:** admin console, catalog service.
+**Ownership:** identidad, gateway, web y pedidos. Es una decisión de release, no una mejora cosmética.
 
-### EP-13 — Gestión de promociones
-**Objetivo:** permitir control comercial.
+## 5. Objetivos posteriores, fuera del P0 actual
 
-**Criterios de aceptación:**
+### P1 — Operación comercial
 
-- el administrador crea promociones activas/inactivas;
-- las promociones se aplican a productos o categorías;
-- el cliente ve el descuento en el storefront.
+- adaptador real de notificación y canal WhatsApp aprobado;
+- panel administrativo para catálogo y pedidos;
+- consulta de pedidos por cliente y fecha;
+- transiciones de estado con permisos y auditoría;
+- promociones, categorías, imágenes, variantes y destacados.
 
-**Dominio responsable:** catalog service, pricing domain, admin console.
+### P2 — Plataforma productiva
 
-### EP-14 — Gestión de banners y publicaciones
-**Objetivo:** sostener contenido visual y merchandising editorial.
+- outbox transaccional y transporte asíncrono durable;
+- observabilidad con métricas, trazas y alertas;
+- despliegue cloud, secretos, backups y restore probado;
+- threat model, autorización administrativa y auditoría;
+- CD y promoción controlada entre entornos.
 
-**Criterios de aceptación:**
+## 6. Regla de cierre
 
-- el administrador puede crear y publicar banners y notas;
-- cada contenido tiene estado y prioridad;
-- contenido inactivo no aparece en el storefront.
+Una capacidad solo pasa a **Implementado** cuando tiene:
 
-**Dominio responsable:** catalog + content admin domain.
+1. código en el workspace dueño;
+2. contrato o interfaz verificable;
+3. prueba automatizada relevante;
+4. smoke o evidencia de runtime si cruza procesos;
+5. documentación alineada;
+6. limitaciones y rollback conocidos.
 
-### EP-15 — Gestión de pedidos
-**Objetivo:** apoyar la operación comercial del negocio.
-
-**Criterios de aceptación:**
-
-- el administrador puede consultar el pedido por cliente o fecha;
-- puede ver el estado, el total y la información relevante;
-- puede actualizar el estado de la orden cuando se avance en atención.
-
-**Dominio responsable:** orders service, admin console.
-
----
-
-## 9. Módulo 6 — Operación y calidad
-
-### EP-16 — Health checks y observabilidad
-**Objetivo:** garantizar soporte operativo.
-
-**Criterios de aceptación:**
-
-- cada servicio expone health checks;
-- el gateway expone estado de dependencia principal;
-- hay trazabilidad mínima para diagnóstico y soporte.
-
-**Dominio responsable:** gateway, services, infra.
-
-### EP-17 — Validación del stack local
-**Objetivo:** reproducir el sistema correctamente.
-
-**Criterios de aceptación:**
-
-- el stack local puede levantarse con scripts o compose reproducibles;
-- los servicios arrancan con configuraciones adecuadas;
-- las pruebas del flujo principal se ejecutan con entorno realista.
-
-**Dominio responsable:** infra + runbook + CI.
-
-### EP-18 — Release y rollback
-**Objetivo:** permitir entrega segura y reversión controlada.
-
-**Criterios de aceptación:**
-
-- cada release tiene pruebas públicas y evidencia;
-- se documenta rollback cuando aplica;
-- cambios grandes no se aceptan sin revisión y validación.
-
-**Dominio responsable:** release process, engineering governance.
-
-## 10. Prioridad de entrega
-
-### Prioridad P0 — bloque de venta
-
-- catálogo activo
-- registro del cliente
-- carrito y checkout
-- orden
-- notificación
-
-### Prioridad P1 — control opertativo del negocio
-
-- promociones
-- mejoras de merchandising
-- banners y notas
-- gestión de pedidos por admin
-
-### Prioridad P2 — refinamiento y crecimiento
-
-- analytics
-- mejoras de experiencia
-- optimización editorial
-- automatización operativa
-
-## 11. Entregables v1 esperados
-
-La v1 debe incluir los siguientes entregables funcionales:
-
-1. catálogo público completo y operativo;
-2. registro obligatorio con identidad del cliente;
-3. carrito y resumen de compra;
-4. creación de pedido con validación real;
-5. notificación comercial al negocio;
-6. administración básica del catálogo y contenido;
-7. trazabilidad y observabilidad mínima.
-
-## 12. Criterio de cierre del backlog v1
-
-El backlog de la v1 queda cerrado cuando:
-
-- todos los items P0 están implementados y validados;
-- todos los items P1 necesarios para la operación están activos;
-- cada feature tiene evidencia de prueba;
-- cada flujo principal tiene smoke test;
-- cada dominio tiene operación y rollback documentados.
-
-## 13. Conclusión
-
-Este backlog no tiene la intención de “abrir muchas posibilidades”. Tiene la intención de definir la mínima plataforma útil, operable y comercialmente viable para MileShop.
-
-La prioridad no es construir una tienda bonita, sino un sistema capaz de sostener venta, registro, administración y atención comercial de forma reproducible y profesional.
+El backlog no autoriza crear diagramas, servicios o infraestructura que todavía no tengan una necesidad aprobada y evidencia de implementación.
