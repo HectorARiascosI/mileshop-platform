@@ -3,15 +3,13 @@
 import { useRouter } from "next/navigation";
 import { useState } from "react";
 
-const CUSTOMER_ID_KEY = "mileshop-customer-id-v1";
-const CUSTOMER_PROFILE_KEY = "mileshop-customer-profile-v1";
-
 export default function RegisterPage() {
   const router = useRouter();
   const [form, setForm] = useState({
     name: "",
     phone: "",
     email: "",
+    password: "",
   });
   const [error, setError] = useState("");
 
@@ -20,25 +18,40 @@ export default function RegisterPage() {
     setError("");
   };
 
-  const handleSubmit = (event: React.FormEvent<HTMLFormElement>) => {
+  const handleSubmit = async (event: React.FormEvent<HTMLFormElement>) => {
     event.preventDefault();
 
     const name = form.name.trim();
     const phone = form.phone.trim();
     const email = form.email.trim();
+    const password = form.password;
 
-    if (!name || !phone || !email) {
-      setError("Necesitamos nombre, teléfono y correo para validar la compra.");
+    if (!name || !phone || !email || !password) {
+      setError("Necesitamos nombre, teléfono, correo y contraseña para completar el registro.");
       return;
     }
 
-    const customerId = email.toLowerCase();
-    const profile = { name, phone, email, customerId, registeredAt: new Date().toISOString() };
+    try {
+      const response = await fetch("/api/auth/register", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ email, password, name, phone }),
+      });
 
-    window.localStorage.setItem(CUSTOMER_ID_KEY, customerId);
-    window.localStorage.setItem(CUSTOMER_PROFILE_KEY, JSON.stringify(profile));
+      if (response.status === 201) {
+        router.push("/");
+        return;
+      }
 
-    router.push("/");
+      if (response.status === 409) {
+        setError("Este correo ya está registrado.");
+        return;
+      }
+
+      setError("No pudimos completar el registro. Intenta de nuevo.");
+    } catch {
+      setError("No pudimos completar el registro. Intenta de nuevo.");
+    }
   };
 
   return (
@@ -80,6 +93,17 @@ export default function RegisterPage() {
               value={form.email}
               onChange={(event) => handleChange("email", event.target.value)}
               placeholder="correo@ejemplo.com"
+              style={{ padding: 12, border: "1px solid #d8d5cc", borderRadius: 8 }}
+            />
+          </label>
+
+          <label style={{ display: "grid", gap: 8 }}>
+            <span>Contraseña</span>
+            <input
+              type="password"
+              value={form.password}
+              onChange={(event) => handleChange("password", event.target.value)}
+              placeholder="Mínimo 8 caracteres"
               style={{ padding: 12, border: "1px solid #d8d5cc", borderRadius: 8 }}
             />
           </label>

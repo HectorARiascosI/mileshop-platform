@@ -11,7 +11,7 @@ import {
   updateProductQuantity,
   type CartLine,
 } from "@/lib/cart";
-import { buildCheckoutSummary, buildOrderCreatedEvent } from "@/lib/order";
+import { buildCheckoutSummary } from "@/lib/order";
 
 type Product = {
   id: string;
@@ -104,23 +104,72 @@ export function CatalogShell({ products, unavailable }: CatalogShellProps) {
     setCart((currentCart) => removeProductFromCart(currentCart, productId));
   };
 
-  const handleCheckout = () => {
+  const handleCheckout = async () => {
     if (cart.length === 0) {
       return;
     }
 
-    const customerId = window.localStorage.getItem("mileshop-customer-id-v1")?.trim();
-    if (!customerId) {
-      router.push("/register");
+    const session = await fetch("/api/auth/me").then((r) => (r.ok ? r.json() : null));
+    if (!session) {
+      router.push("/login");
       return;
     }
 
-    const order = buildOrderCreatedEvent(cart, customerId);
-    window.localStorage.setItem("mileshop-last-order-v1", JSON.stringify(order));
-    setOrderConfirmed(true);
-    setCart([]);
-    setIsCartOpen(true);
-    router.push("/checkout");
+    try {
+      const gatewayUrl = process.env.NEXT_PUBLIC_API_GATEWAY_URL ?? "http://localhost:3000";
+      const response = await fetch(`${gatewayUrl}/orders`, {
+        method: "POST",
+        credentials: "include",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          lines: cart.map((line) => ({
+            productId: line.productId,
+            sku: line.sku,
+            name: line.name,
+            quantity: line.quantity,
+            unitPriceCop: line.priceCop,
+          })),
+        }),
+      });
+
+      if (!response.ok) {
+        throw new Error("No se pudo confirmar la orden");
+      }
+
+      const payload = (await response.json()) as {
+        data: {
+          orderId: string;
+          totalCop: number;
+          event: {
+            payload: {
+              customerId: string;
+              totalCop: number;
+              currency: "COP";
+              lines: Array<{
+                productId: string;
+                sku: string;
+                name: string;
+                quantity: number;
+                unitPriceCop: number;
+              }>;
+            };
+          };
+        };
+      };
+
+      const order = {
+        aggregateId: payload.data.orderId,
+        payload: payload.data.event.payload,
+      };
+
+      window.localStorage.setItem("mileshop-last-order-v1", JSON.stringify(order));
+      setOrderConfirmed(true);
+      setCart([]);
+      setIsCartOpen(true);
+      router.push("/checkout");
+    } catch {
+      window.alert("No pudimos confirmar tu pedido en este momento. Inténtalo de nuevo.");
+    }
   };
 
   return (
