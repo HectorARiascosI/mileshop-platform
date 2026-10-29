@@ -557,3 +557,57 @@ h1 {
     padding-bottom: 22px;
   }
 }
+
+/* --- Auth form utilities --------------------------------------------------- */
+.auth-form {
+  display: grid;
+  gap: 18px;
+}
+
+.form-field {
+  display: grid;
+  gap: 8px;
+}
+
+.form-field input {
+  padding: 12px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  font-size: 1rem;
+  background: var(--cream);
+  color: var(--foreground);
+  width: 100%;
+  box-sizing: border-box;
+}
+
+.form-field input:focus {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+.form-error {
+  color: var(--accent-dark);
+  margin: 0;
+  font-size: 0.875rem;
+}
+
+.auth-hint {
+  margin-top: 20px;
+  color: var(--ink-muted);
+  text-align: center;
+  font-size: 0.9rem;
+}
+
+.auth-hint a {
+  color: #2d6a4f;
+  text-decoration: underline;
+}
+
+.auth-card {
+  max-width: 640px;
+}
+
+.auth-subtitle {
+  color: var(--ink-muted);
+  margin-bottom: 24px;
+}

@@ -2,7 +2,6 @@ import {
   BadRequestException,
   Inject,
   Injectable,
-  Optional,
   ServiceUnavailableException,
 } from "@nestjs/common";
 
@@ -52,12 +51,8 @@ export type CreatedOrderResult = {
 export class OrderService {
   public constructor(
     @Inject(ORDER_FETCH) private readonly fetcher: typeof fetch,
-    @Optional()
-    @Inject(NOTIFICATION_WORKER_URL)
-    private readonly notificationWorkerUrl: string = process.env.NOTIFICATION_WORKER_URL ?? "http://localhost:3010",
-    @Optional()
-    @Inject(ORDERS_SERVICE_URL)
-    private readonly ordersServiceUrl: string = process.env.ORDERS_SERVICE_URL ?? "http://localhost:3030",
+    @Inject(NOTIFICATION_WORKER_URL) private readonly notificationWorkerUrl: string,
+    @Inject(ORDERS_SERVICE_URL) private readonly ordersServiceUrl: string,
   ) {}
 
   public async createOrder(input: CreateOrderInput): Promise<CreatedOrderResult> {

@@ -1,17 +1,14 @@
 "use client";
 
+import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useState } from "react";
 
 export default function RegisterPage() {
   const router = useRouter();
-  const [form, setForm] = useState({
-    name: "",
-    phone: "",
-    email: "",
-    password: "",
-  });
+  const [form, setForm] = useState({ name: "", phone: "", email: "", password: "" });
   const [error, setError] = useState("");
+  const [pending, setPending] = useState(false);
 
   const handleChange = (field: keyof typeof form, value: string) => {
     setForm((current) => ({ ...current, [field]: value }));
@@ -31,6 +28,7 @@ export default function RegisterPage() {
       return;
     }
 
+    setPending(true);
     try {
       const response = await fetch("/api/auth/register", {
         method: "POST",
@@ -51,73 +49,89 @@ export default function RegisterPage() {
       setError("No pudimos completar el registro. Intenta de nuevo.");
     } catch {
       setError("No pudimos completar el registro. Intenta de nuevo.");
+    } finally {
+      setPending(false);
     }
   };
 
   return (
     <main className="checkout-page">
-      <section className="checkout-card" style={{ maxWidth: 640 }}>
+      <section className="checkout-card auth-card">
         <p className="eyebrow">Registro requerido</p>
         <h1>Completa tu perfil para comprar</h1>
-        <p style={{ color: "#6e7770", marginBottom: 24 }}>
+        <p className="auth-subtitle">
           La compra en MileShop requiere identidad válida antes de confirmar la orden.
         </p>
 
-        <form onSubmit={handleSubmit} style={{ display: "grid", gap: 18 }}>
-          <label style={{ display: "grid", gap: 8 }}>
+        <form className="auth-form" onSubmit={handleSubmit} noValidate>
+          <label className="form-field">
             <span>Nombre completo</span>
             <input
               type="text"
               value={form.name}
-              onChange={(event) => handleChange("name", event.target.value)}
+              onChange={(e) => handleChange("name", e.target.value)}
               placeholder="Tu nombre"
-              style={{ padding: 12, border: "1px solid #d8d5cc", borderRadius: 8 }}
+              autoComplete="name"
+              required
             />
           </label>
 
-          <label style={{ display: "grid", gap: 8 }}>
+          <label className="form-field">
             <span>Teléfono</span>
             <input
               type="tel"
               value={form.phone}
-              onChange={(event) => handleChange("phone", event.target.value)}
+              onChange={(e) => handleChange("phone", e.target.value)}
               placeholder="300 123 4567"
-              style={{ padding: 12, border: "1px solid #d8d5cc", borderRadius: 8 }}
+              autoComplete="tel"
             />
           </label>
 
-          <label style={{ display: "grid", gap: 8 }}>
+          <label className="form-field">
             <span>Correo electrónico</span>
             <input
               type="email"
               value={form.email}
-              onChange={(event) => handleChange("email", event.target.value)}
+              onChange={(e) => handleChange("email", e.target.value)}
               placeholder="correo@ejemplo.com"
-              style={{ padding: 12, border: "1px solid #d8d5cc", borderRadius: 8 }}
+              autoComplete="email"
+              required
             />
           </label>
 
-          <label style={{ display: "grid", gap: 8 }}>
+          <label className="form-field">
             <span>Contraseña</span>
             <input
               type="password"
               value={form.password}
-              onChange={(event) => handleChange("password", event.target.value)}
+              onChange={(e) => handleChange("password", e.target.value)}
               placeholder="Mínimo 8 caracteres"
-              style={{ padding: 12, border: "1px solid #d8d5cc", borderRadius: 8 }}
+              autoComplete="new-password"
+              minLength={8}
+              required
             />
           </label>
 
           {error ? (
-            <p role="alert" style={{ color: "#bc4c2c", margin: 0 }}>
+            <p role="alert" className="form-error">
               {error}
             </p>
           ) : null}
 
-          <button type="submit" className="checkout-button" style={{ width: "100%" }}>
-            Continuar con la compra
+          <button
+            type="submit"
+            className="checkout-button"
+            disabled={pending}
+            aria-busy={pending}
+          >
+            {pending ? "Registrando…" : "Continuar con la compra"}
           </button>
         </form>
+
+        <p className="auth-hint">
+          ¿Ya tienes cuenta?{" "}
+          <Link href="/login">Inicia sesión aquí</Link>
+        </p>
       </section>
     </main>
   );

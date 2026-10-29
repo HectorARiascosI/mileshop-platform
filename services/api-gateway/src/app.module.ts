@@ -3,6 +3,7 @@ import { MiddlewareConsumer, Module, NestModule, RequestMethod } from "@nestjs/c
 import { AuthMiddleware, IDENTITY_SERVICE_URL } from "./auth.middleware.js";
 import { CATALOG_FETCH, CatalogClient } from "./catalog.client.js";
 import { GatewayController } from "./gateway.controller.js";
+import { IDENTITY_FETCH, IdentityClient } from "./identity.client.js";
 import {
   NOTIFICATION_WORKER_URL,
   ORDER_FETCH,
@@ -13,14 +14,10 @@ import {
 @Module({
   controllers: [GatewayController],
   providers: [
-    {
-      provide: CATALOG_FETCH,
-      useValue: fetch,
-    },
-    {
-      provide: ORDER_FETCH,
-      useValue: fetch,
-    },
+    { provide: CATALOG_FETCH, useValue: fetch },
+    { provide: ORDER_FETCH, useValue: fetch },
+    { provide: IDENTITY_FETCH, useValue: fetch },
+    { provide: "AUTH_FETCH", useValue: fetch },
     {
       provide: NOTIFICATION_WORKER_URL,
       useValue: process.env.NOTIFICATION_WORKER_URL ?? "http://localhost:3010",
@@ -29,10 +26,13 @@ import {
       provide: ORDERS_SERVICE_URL,
       useValue: process.env.ORDERS_SERVICE_URL ?? "http://localhost:3030",
     },
-    { provide: "AUTH_FETCH", useValue: fetch },
-    { provide: IDENTITY_SERVICE_URL, useValue: process.env.IDENTITY_SERVICE_URL ?? "http://localhost:3040" },
+    {
+      provide: IDENTITY_SERVICE_URL,
+      useValue: process.env.IDENTITY_SERVICE_URL ?? "http://localhost:3040",
+    },
     AuthMiddleware,
     CatalogClient,
+    IdentityClient,
     OrderService,
   ],
 })

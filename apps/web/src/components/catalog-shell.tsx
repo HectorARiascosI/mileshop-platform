@@ -116,10 +116,11 @@ export function CatalogShell({ products, unavailable }: CatalogShellProps) {
     }
 
     try {
-      const gatewayUrl = process.env.NEXT_PUBLIC_API_GATEWAY_URL ?? "http://localhost:3000";
-      const response = await fetch(`${gatewayUrl}/orders`, {
+      // POST goes through the Next.js API route so the server can attach
+      // the httpOnly accessToken cookie as an Authorization header.
+      // The client never touches the token directly.
+      const response = await fetch("/api/orders", {
         method: "POST",
-        credentials: "include",
         headers: { "content-type": "application/json" },
         body: JSON.stringify({
           lines: cart.map((line) => ({
