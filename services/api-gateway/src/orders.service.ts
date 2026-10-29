@@ -88,7 +88,7 @@ export class OrderService {
       occurredAt: new Date().toISOString(),
       aggregateId: orderId,
       payload: {
-        customerId: input.customerId,
+        customerId: persistedOrder.customerId,
         totalCop,
         currency: "COP",
         lines: persistedOrder.lines.map((line) => ({

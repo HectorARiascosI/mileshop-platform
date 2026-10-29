@@ -71,12 +71,13 @@ export class GatewayController {
   @Post("orders")
   public async createOrder(
     @Body() input: CreateOrderInput,
-    @Req() req: { customerId?: string },
+    @Req() req: { customerId?: string; raw?: { customerId?: string } },
   ): Promise<{ data: Awaited<ReturnType<OrderService["createOrder"]>> }> {
-    // customerId is overwritten with the verified value injected by AuthMiddleware.
-    // The client-supplied value is intentionally discarded when a verified identity exists.
+    // AuthMiddleware writes customerId to the raw Node.js request.
+    // In Fastify, @Req() gives the Fastify wrapper; the raw request is at req.raw.
+    const verifiedCustomerId = req.customerId ?? req.raw?.customerId;
     const order = await this.orders.createOrder({
-      customerId: req.customerId ?? input.customerId,
+      customerId: verifiedCustomerId ?? input.customerId,
       lines: input.lines,
     });
     return { data: order };
