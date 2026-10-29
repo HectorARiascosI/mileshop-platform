@@ -109,7 +109,13 @@ export function CatalogShell({ products, unavailable }: CatalogShellProps) {
       return;
     }
 
-    const order = buildOrderCreatedEvent(cart, "guest-user");
+    const customerId = window.localStorage.getItem("mileshop-customer-id-v1")?.trim();
+    if (!customerId) {
+      router.push("/register");
+      return;
+    }
+
+    const order = buildOrderCreatedEvent(cart, customerId);
     window.localStorage.setItem("mileshop-last-order-v1", JSON.stringify(order));
     setOrderConfirmed(true);
     setCart([]);

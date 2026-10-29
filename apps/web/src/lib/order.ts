@@ -36,6 +36,15 @@ export function buildCheckoutSummary(lines: CartLine[]): CheckoutSummary {
 
 export function buildOrderCreatedEvent(lines: CartLine[], customerId = "guest-user"): OrderCreatedV1 {
   const normalizedLines = lines.filter((line) => line.quantity > 0);
+
+  if (!customerId || !customerId.trim()) {
+    throw new Error("customerId is required to create an order");
+  }
+
+  if (normalizedLines.length === 0) {
+    throw new Error("At least one order line is required");
+  }
+
   const summary = buildCheckoutSummary(normalizedLines);
 
   const occurredAt = new Date().toISOString();
