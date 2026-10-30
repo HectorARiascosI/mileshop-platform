@@ -42,6 +42,33 @@ function Start-ServiceProcess {
     Start-Process -FilePath 'cmd.exe' -ArgumentList '/d', '/c', $command -WorkingDirectory $repoRoot -WindowStyle Hidden | Out-Null
 }
 
+function Assert-AppPortsAvailable {
+    $ports = @(3000, 3010, 3020, 3030, 3040)
+    $listeners = @(Get-NetTCPConnection -State Listen -LocalPort $ports -ErrorAction SilentlyContinue)
+    if ($listeners.Count -eq 0) {
+        return
+    }
+
+    $conflicts = foreach ($listener in ($listeners | Sort-Object LocalPort, OwningProcess -Unique)) {
+        $processName = try {
+            (Get-Process -Id $listener.OwningProcess -ErrorAction Stop).ProcessName
+        }
+        catch {
+            'unknown process'
+        }
+
+        "Port $($listener.LocalPort): PID $($listener.OwningProcess) ($processName)"
+    }
+
+    throw @"
+MileShop cannot start because one or more application ports are already in use:
+$($conflicts -join [Environment]::NewLine)
+Inspect the owner with .\scripts\status-local-stack.ps1. Stop a process only after confirming it belongs to MileShop.
+"@
+}
+
+Assert-AppPortsAvailable
+
 Write-Host '==> Checking Docker...'
 $dockerOk = Get-Command docker -ErrorAction SilentlyContinue
 if (-not $dockerOk) {
@@ -60,14 +87,6 @@ $notificationDatabaseUrl = 'postgresql://notifications:notifications@localhost:5
 $ordersDatabaseUrl = 'postgresql://orders:orders@localhost:5435/orders?schema=public'
 $identityDatabaseUrl = 'postgresql://identity:identity@localhost:5436/identity?schema=public'
 npm run db:deploy | Out-Host
-
-Write-Host '==> Clearing stale Node listeners on app ports...'
-Get-NetTCPConnection -LocalPort 3000,3010,3020,3030,3040 -ErrorAction SilentlyContinue | ForEach-Object {
-    $procId = $_.OwningProcess
-    if ($procId) {
-        Stop-Process -Id $procId -Force -ErrorAction SilentlyContinue
-    }
-}
 
 Write-Host '==> Preparing detached service logs...'
 $logDirectory = Join-Path $repoRoot '.local-stack\logs'
