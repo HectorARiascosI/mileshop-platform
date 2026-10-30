@@ -48,16 +48,18 @@ npm run db:deploy:identity-service
 The migration is also applied automatically by `scripts/start-local-stack.ps1` via `scripts/deploy-local-databases.ps1`.
 
 ## Gateway smoke tests
+
 ```powershell
 Invoke-WebRequest -Uri http://localhost:3000/catalog/products -UseBasicParsing
 ```
 
-```powershell
-$body = '{"customerId":"customer-smoke-1","lines":[{"productId":"prod-mug-001","sku":"MILE-MUG-001","name":"Taza de cerámica","quantity":1,"unitPriceCop":28000},{"productId":"prod-bag-001","sku":"MILE-BAG-001","name":"Bolso de lona","quantity":2,"unitPriceCop":76000}]}'
-Invoke-RestMethod -Uri 'http://localhost:3000/orders' -Method Post -ContentType 'application/json' -Body $body
-```
+For an empty local catalog, seed the sample products once:
 
-Este smoke test prueba la API directamente con un `customerId` de prueba; no reemplaza el paso de contexto de cliente que exige el storefront antes de enviar el pedido.
+```powershell
+$env:DATABASE_URL = "******localhost:5434/catalog?schema=public"
+npm run db:seed:catalog
+Remove-Item Env:DATABASE_URL
+```
 
 ## Verificación completa de compra
 
@@ -67,7 +69,7 @@ Con la stack levantada, desde la raíz del repositorio:
 npm run verify:local-purchase
 ```
 
-El script crea un pedido por el gateway, lo recupera desde `orders-service` y reenvía el mismo `OrderCreated.v1` al worker. Falla si el pedido no persiste, si el total o el cliente cambian, o si el worker no responde `duplicate` ante el mismo `eventId`.
+El script registra un cliente sintético, autentica la solicitud del pedido ante el gateway, recupera el pedido desde `orders-service` y reenvía el mismo `OrderCreated.v1` al worker. Falla si el pedido no persiste, si el total o el cliente cambian, o si el worker no responde `duplicate` ante el mismo `eventId`.
 
 ## Important notes
 - Always run commands from the repo root, not from the parent folder.

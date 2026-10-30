@@ -47,3 +47,35 @@ jobs:
 
       - name: Validate Compose
         run: docker compose -f infra/docker-compose.yml config
+
+      - name: Start local stack for smoke validation
+        shell: bash
+        run: |
+          docker compose -f infra/docker-compose.yml up -d --wait --wait-timeout 120
+          pwsh -File ./scripts/deploy-local-databases.ps1
+          DATABASE_URL='postgresql://catalog:catalog@localhost:5434/catalog?schema=public' npm run db:seed:catalog
+
+          PORT=3040 DATABASE_URL='postgresql://identity:identity@localhost:5436/identity?schema=public' JWT_SECRET='ci-local-dev-secret-change-in-prod' JWT_EXPIRES_IN='15m' REFRESH_TOKEN_EXPIRES_DAYS='30' ALLOWED_ORIGINS='http://localhost:3001' npm run start --workspace @mileshop/identity-service > /tmp/mileshop-identity.log 2>&1 &
+          PORT=3020 DATABASE_URL='postgresql://catalog:catalog@localhost:5434/catalog?schema=public' npm run start --workspace @mileshop/catalog-service > /tmp/mileshop-catalog.log 2>&1 &
+          PORT=3010 DATABASE_URL='postgresql://notifications:notifications@localhost:5433/notifications?schema=public' NOTIFICATION_SENDER_MODE='log' npm run start --workspace @mileshop/notification-worker > /tmp/mileshop-notification.log 2>&1 &
+          PORT=3030 DATABASE_URL='postgresql://orders:orders@localhost:5435/orders?schema=public' CATALOG_SERVICE_URL='http://127.0.0.1:3020' npm run start --workspace @mileshop/orders-service > /tmp/mileshop-orders.log 2>&1 &
+          PORT=3000 CATALOG_SERVICE_URL='http://127.0.0.1:3020' NOTIFICATION_WORKER_URL='http://127.0.0.1:3010' ORDERS_SERVICE_URL='http://127.0.0.1:3030' IDENTITY_SERVICE_URL='http://127.0.0.1:3040' npm run start --workspace @mileshop/api-gateway > /tmp/mileshop-gateway.log 2>&1 &
+
+          wait_for_service() {
+            local url="$1"
+            for attempt in $(seq 1 60); do
+              if curl --fail --silent "$url"; then
+                return 0
+              fi
+              sleep 2
+            done
+            echo "::error::Timed out waiting for $url"
+            return 1
+          }
+
+          for url in http://localhost:3040/healthz http://localhost:3020/healthz http://localhost:3010/healthz http://localhost:3030/healthz http://localhost:3000/healthz; do
+            wait_for_service "$url" || exit 1
+          done
+
+      - name: Verify local purchase flow
+        run: pwsh -File ./scripts/verify-local-purchase.ps1
