@@ -62,7 +62,7 @@ $auth = Get-JsonResponse -Uri 'http://localhost:3000/auth/register' -Method Post
 if ([string]::IsNullOrWhiteSpace($auth.customerId) -or [string]::IsNullOrWhiteSpace($auth.accessToken)) {
     throw 'Identity service did not return a customer id and access token.'
 }
-$authorizationHeaders = @{ Authorization = "******" }
+$authorizationHeaders = @{ Authorization = "Bearer $($auth.accessToken)" }
 
 $catalog = Get-JsonResponse -Uri 'http://localhost:3000/catalog/products'
 $product = $catalog.data | Where-Object { $_.sku -eq 'MILE-MUG-001' } | Select-Object -First 1
