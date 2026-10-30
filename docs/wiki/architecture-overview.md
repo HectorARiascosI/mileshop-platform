@@ -302,10 +302,12 @@ flowchart LR
     Lint --> Test[npm run test]
     Test --> Build[npm run build]
     Build --> Compose[docker compose config]
-    Compose --> Green[release-quality verde]
+    Compose --> Stack[Compose + migraciones + seed]
+    Stack --> Smoke[servicios + compra autenticada + deduplicación]
+    Smoke --> Green[release-quality verde]
 ```
 
-La pipeline real está en `.github/workflows/ci.yml`. Valida calidad y compilación, pero todavía no despliega a cloud ni promueve automáticamente una release.
+La pipeline real está en `.github/workflows/ci.yml`. Además de calidad y compilación, levanta una stack efímera y verifica el flujo de compra autenticado con un cliente sintético. No despliega a cloud ni promueve automáticamente una release.
 
 ## 3. Diseño objetivo pendiente
 
