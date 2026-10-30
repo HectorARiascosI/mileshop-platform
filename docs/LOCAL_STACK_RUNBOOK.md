@@ -12,9 +12,11 @@ Bring up the full local monorepo stack in a stable and repeatable way.
 From the repo root:
 
 ```powershell
-Set-Location "C:\Users\hecto\OneDrive\Desktop\MileShop\mileshop-platform"
+Set-Location (git rev-parse --show-toplevel)
 .\scripts\start-local-stack.ps1
 ```
+
+The startup script checks ports 3000, 3010, 3020, 3030, and 3040 before starting containers or applying migrations. If a port is already in use, it reports the owning process and exits without stopping it. Inspect the stack with `.\scripts\status-local-stack.ps1`; stop a process only after confirming it belongs to MileShop.
 
 ## Port map
 - API gateway: http://localhost:3000
@@ -71,8 +73,10 @@ npm run verify:local-purchase
 
 El script registra un cliente sintético, autentica la solicitud del pedido ante el gateway, recupera el pedido desde `orders-service` y reenvía el mismo `OrderCreated.v1` al worker. Falla si el pedido no persiste, si el total o el cliente cambian, o si el worker no responde `duplicate` ante el mismo `eventId`.
 
+GitHub Actions conserva esta misma validación como smoke de CI: espera que Postgres esté saludable, aplica migraciones, siembra el producto sintético, arranca los servicios (el worker en modo `log`) y falla si alguno no responde antes del timeout. El paso final ejecuta `scripts/verify-local-purchase.ps1`; no se debe reemplazar por una comprobación más débil de solo salud.
+
 ## Important notes
 - Always run commands from the repo root, not from the parent folder.
-- If a port is already occupied, stop the stale Node process before retrying.
+- If an application port is already occupied, inspect `scripts/status-local-stack.ps1` and identify the owning process before taking action; the startup script never stops processes automatically.
 - Docker must be live before the Postgres services are started.
 - `npm run db:deploy` applies each Prisma migration with its explicit domain `DATABASE_URL`; do not export one shared `DATABASE_URL` when running migrations manually.
