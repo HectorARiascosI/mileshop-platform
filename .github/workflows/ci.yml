@@ -51,6 +51,7 @@ jobs:
       - name: Start local stack for smoke validation
         shell: bash
         run: |
+          export NOTIFICATION_WORKER_URL='http://127.0.0.1:3010'
           docker compose -f infra/docker-compose.yml up -d --wait --wait-timeout 120
           pwsh -File ./scripts/deploy-local-databases.ps1
           DATABASE_URL='postgresql://catalog:catalog@localhost:5434/catalog?schema=public' npm run db:seed:catalog
@@ -59,7 +60,7 @@ jobs:
           PORT=3020 DATABASE_URL='postgresql://catalog:catalog@localhost:5434/catalog?schema=public' npm run start --workspace @mileshop/catalog-service > /tmp/mileshop-catalog.log 2>&1 &
           PORT=3010 DATABASE_URL='postgresql://notifications:notifications@localhost:5433/notifications?schema=public' NOTIFICATION_SENDER_MODE='log' npm run start --workspace @mileshop/notification-worker > /tmp/mileshop-notification.log 2>&1 &
           PORT=3030 DATABASE_URL='postgresql://orders:orders@localhost:5435/orders?schema=public' CATALOG_SERVICE_URL='http://127.0.0.1:3020' npm run start --workspace @mileshop/orders-service > /tmp/mileshop-orders.log 2>&1 &
-          PORT=3000 CATALOG_SERVICE_URL='http://127.0.0.1:3020' NOTIFICATION_WORKER_URL='http://127.0.0.1:3010' ORDERS_SERVICE_URL='http://127.0.0.1:3030' IDENTITY_SERVICE_URL='http://127.0.0.1:3040' npm run start --workspace @mileshop/api-gateway > /tmp/mileshop-gateway.log 2>&1 &
+          PORT=3000 CATALOG_SERVICE_URL='http://127.0.0.1:3020' ORDERS_SERVICE_URL='http://127.0.0.1:3030' IDENTITY_SERVICE_URL='http://127.0.0.1:3040' npm run start --workspace @mileshop/api-gateway > /tmp/mileshop-gateway.log 2>&1 &
 
           wait_for_service() {
             local url="$1"

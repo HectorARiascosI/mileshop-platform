@@ -26,7 +26,7 @@ flowchart LR
     Gateway --> Identity[Identity Service\n:3040]
     Gateway --> Catalog[Catalog Service\n:3020]
     Gateway --> Orders[Orders Service\n:3030]
-    Gateway --> Worker[Notification Worker\n:3010]
+    Orders --> Worker[Notification Worker\n:3010]
     Identity --> IdentityDb[(Identity PostgreSQL\n:5436)]
     Catalog --> CatalogDb[(Catalog PostgreSQL\n:5434)]
     Orders --> OrdersDb[(Orders PostgreSQL\n:5435)]
@@ -42,14 +42,14 @@ flowchart LR
     Customer[Cliente autenticado\ncontexto de identidad]
     IdentityCtx[Identidad\nautenticación y sesión]
     CatalogCtx[Catálogo\nproductos y stock]
-    OrdersCtx[Pedidos\nvalidación, total y persistencia]
+    OrdersCtx[Pedidos\nvalidación, total, persistencia y outbox]
     NotificationCtx[Notificaciones\neventId y entrega]
 
     Customer -->|registro y login| IdentityCtx
     Customer -->|consulta y checkout| CatalogCtx
     Customer -->|customerId verificado + líneas| OrdersCtx
     IdentityCtx -->|verifica token JWT| OrdersCtx
-    OrdersCtx -->|OrderCreated.v1 por HTTP| NotificationCtx
+    OrdersCtx -->|OrderCreated.v1 por HTTP desde outbox| NotificationCtx
     OrdersCtx -.->|productId y snapshot de línea| CatalogCtx
 ```
 
@@ -68,14 +68,14 @@ flowchart TB
     Contracts[packages/contracts]
     IdentityDb[(Customer + RefreshToken)]
     CatalogDb[(Product)]
-    OrdersDb[(Order + OrderLine)]
+    OrdersDb[(Order + OrderLine + OrderEventOutbox)]
     NotificationDb[(NotificationDelivery)]
 
     Web -->|POST /auth/register\nPOST /auth/login\nGET /catalog/products\nPOST /orders| Gateway
     Gateway -->|POST /auth/register\nPOST /auth/login\nPOST /auth/refresh\nPOST /auth/logout\nGET /auth/me\nPOST /auth/verify-token| Identity
     Gateway -->|GET /products| Catalog
     Gateway -->|POST /orders\nGET /orders/:orderId| Orders
-    Gateway -->|POST /events/order-created| Worker
+    Orders -->|POST /events/order-created| Worker
     Web -.-> Contracts
     Identity --> IdentityDb
     Catalog --> CatalogDb
@@ -89,8 +89,8 @@ Ownership actual:
 | --- | --- | --- |
 | Identidad y sesión | `identity-service` | `services/identity-service/prisma/schema.prisma` |
 | Productos activos | `catalog-service` | `services/catalog-service/prisma/schema.prisma` |
-| Pedido y líneas | `orders-service` | `services/orders-service/prisma/schema.prisma` |
-| Entrega idempotente | `notification-worker` | `NotificationDelivery` y `eventId` único |
+| Pedido, líneas y evento outbox | `orders-service` | `services/orders-service/prisma/schema.prisma` |
+| Entrega idempotente con lease | `notification-worker` | `NotificationDelivery` y `eventId` único |
 | Composición pública | `api-gateway` | `gateway.controller.ts` y `orders.service.ts` |
 | Checkout y autenticación web | `apps/web` | `catalog-shell.tsx`, `login/page.tsx` y `register/page.tsx` |
 
@@ -100,7 +100,7 @@ Ownership actual:
 | --- | --- | --- |
 | Gateway | `GET /healthz` | estado del gateway |
 | Gateway | `GET /catalog/products` | catálogo activo compuesto desde catálogo |
-| Gateway | `POST /orders` | persiste el pedido y publica el evento (requiere JWT) |
+| Gateway | `POST /orders` | valida JWT, exige `Idempotency-Key` y delega la creación |
 | Gateway | `POST /auth/register` | proxy hacia identity-service, crea cuenta |
 | Gateway | `POST /auth/login` | proxy hacia identity-service, devuelve tokens |
 | Gateway | `POST /auth/refresh` | proxy hacia identity-service, renueva access token |
@@ -116,10 +116,10 @@ Ownership actual:
 | Catalog | `GET /healthz` | estado del catálogo |
 | Catalog | `GET /products` | productos activos ordenados por nombre |
 | Orders | `GET /healthz` | estado de pedidos |
-| Orders | `POST /orders` | valida, calcula total y persiste |
+| Orders | `POST /orders` | valida, calcula subtotal/envío/total y persiste pedido + outbox |
 | Orders | `GET /orders/:orderId` | recupera pedido y líneas |
 | Worker | `GET /healthz` | estado de notificaciones |
-| Worker | `POST /events/order-created` | reclama, deduplica y procesa el evento |
+| Worker | `POST /events/order-created` | reclama con lease, deduplica y procesa el evento |
 
 ### 2.3.1 Flujo de navegación implementado
 
@@ -148,6 +148,7 @@ sequenceDiagram
     participant CAT as Catalog :3020
     participant ORD as Orders :3030
     participant N as Worker :3010
+    participant ODB as Orders DB
     participant NDB as Notifications DB
 
     C->>W: abre catálogo
@@ -167,16 +168,33 @@ sequenceDiagram
     G->>ORD: POST /orders (customerId verificado)
     ORD->>CAT: GET /products\nvalida identidad, precio y stock
     CAT-->>ORD: producto activo y disponibilidad
-    ORD->>ORD: valida payload y calcula total
+    ORD->>ORD: valida payload y calcula subtotal, envío y total
+    ORD->>ODB: transacción: pedido, líneas y OrderEventOutbox PENDING
+    ORD->>ODB: reclama evento con lease y token
+    ORD->>N: POST /events/order-created
+    alt worker envía o ya había enviado
+        N->>NDB: crea o reclama eventId con lease
+        N->>NDB: envía y marca SENT
+        N-->>ORD: sent o duplicate
+        ORD->>ODB: marca evento PUBLISHED
+    else worker ocupado, indisponible o timeout
+        N-->>ORD: 202 processing o error
+        ORD->>ODB: libera claim y agenda reintento con backoff
+    end
     ORD-->>G: pedido persistido
-    G->>N: POST /events/order-created
-    N->>NDB: crea eventId único
-    N->>NDB: marca entrega SENT
-    N-->>G: estado de notificación
     G-->>W: orderId, total y evento
+    opt repetición del mismo checkout
+        W->>G: POST /orders con el mismo Idempotency-Key
+        G->>ID: verifica token
+        G->>ORD: reenvía comando autenticado
+        ORD->>ODB: busca cliente + clave
+        ODB-->>ORD: pedido original
+        ORD-->>G: devuelve pedido sin crear otro evento
+        G-->>W: mismo orderId
+    end
 ```
 
-El gateway persiste antes de publicar la notificación. La operación no tiene todavía outbox transaccional; si el worker falla después de persistir, el pedido queda creado y la recuperación depende de reintentar el evento.
+La clave de idempotencia se conserva en `sessionStorage` durante reintentos del mismo carrito. `orders-service` guarda pedido, líneas y evento en la misma transacción; si no se entrega la notificación, la compra sigue creada y el outbox reintenta con backoff. Los leases evitan que dos instancias procesen simultáneamente la misma reclamación. La entrega es al menos una vez, por lo que `notification-worker` deduplica por `eventId`.
 
 ### 2.5 Modelo de datos implementado
 
@@ -214,6 +232,10 @@ erDiagram
         string id PK
         string orderId UK
         string customerId
+        string idempotencyKey
+        string requestFingerprint
+        int subtotalCop
+        int deliveryFeeCop
         int totalCop
         string status
         datetime createdAt
@@ -233,10 +255,23 @@ erDiagram
         string eventId UK
         enum status
         int attempts
+        string claimToken
+        datetime leaseExpiresAt
         string lastError
         datetime processedAt
         datetime createdAt
         datetime updatedAt
+    }
+    ORDER_EVENT_OUTBOX {
+        string eventId PK
+        string eventType
+        string aggregateId
+        json payload
+        enum status
+        int attemptCount
+        datetime nextAttemptAt
+        string claimToken
+        datetime leaseExpiresAt
     }
     CUSTOMER ||--|{ REFRESH_TOKEN : has
     ORDER ||--|{ ORDER_LINE : contains
@@ -258,15 +293,19 @@ El schema permite texto libre y el dominio tipa `PENDING`, `CONFIRMED` y `CANCEL
 
 ```mermaid
 flowchart LR
-    Persisted[Order persistido] --> Event[OrderCreated.v1]
-    Event --> Worker[Notification Worker]
-    Worker --> Claim[eventId único]
-    Claim --> Sent[SENT]
-    Claim --> Failed[FAILED + lastError]
-    Failed --> Retry[reintento incrementa attempts]
+    Persisted[Pedido + evento confirmados en transacción] --> Pending[Outbox PENDING]
+    Pending --> Claim[claimToken + lease]
+    Claim --> Worker[Notification Worker por HTTP]
+    Worker --> Sent[NotificationDelivery SENT]
+    Worker --> Active[202 PROCESSING]
+    Worker --> Failed[fallo de entrega]
+    Active --> Retry[reintento al expirar lease]
+    Failed --> Backoff[backoff exponencial]
+    Backoff --> Pending
+    Claim --> Published[Outbox PUBLISHED]
 ```
 
-El evento se construye en `services/api-gateway/src/orders.service.ts`. El worker deduplica mediante `NotificationDelivery.eventId`. No hay broker externo ni outbox persistente del productor.
+El evento se construye y persiste en `services/orders-service`. El worker deduplica mediante `NotificationDelivery.eventId` y evita reclamar de nuevo mientras exista un lease vigente. El transporte sigue siendo HTTP; no se utiliza un broker externo.
 
 ### 2.8 Despliegue local
 
@@ -317,7 +356,7 @@ Estos elementos pertenecen al producto planificado y no deben aparecer en los di
 - promociones, banners, notas, categorías y variantes;
 - estados avanzados del pedido y sus transiciones;
 - adaptador real de WhatsApp;
-- broker y outbox transaccional;
+- broker externo (el productor ya dispone de outbox transaccional y usa HTTP);
 - despliegue remoto, observabilidad y backup productivos.
 
 ## 4. Matriz de trazabilidad documental

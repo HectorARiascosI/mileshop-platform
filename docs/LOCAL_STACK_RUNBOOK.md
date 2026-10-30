@@ -71,7 +71,7 @@ Con la stack levantada, desde la raíz del repositorio:
 npm run verify:local-purchase
 ```
 
-El script registra un cliente sintético, autentica la solicitud del pedido ante el gateway, recupera el pedido desde `orders-service` y reenvía el mismo `OrderCreated.v1` al worker. Falla si el pedido no persiste, si el total o el cliente cambian, o si el worker no responde `duplicate` ante el mismo `eventId`.
+El script registra un cliente sintético, autentica la solicitud del pedido ante el gateway, envía una clave `Idempotency-Key`, verifica subtotal/envío/total, repite el mismo checkout y confirma que recibe el mismo `orderId`. Después recupera el pedido y reenvía `OrderCreated.v1` al worker para verificar deduplicación por `eventId`. La entrega normal la administra el outbox de `orders-service`; ante fallo del worker el pedido sigue creado y el evento queda programado para reintento.
 
 GitHub Actions conserva esta misma validación como smoke de CI: espera que Postgres esté saludable, aplica migraciones, siembra el producto sintético, arranca los servicios (el worker en modo `log`) y falla si alguno no responde antes del timeout. El paso final ejecuta `scripts/verify-local-purchase.ps1`; no se debe reemplazar por una comprobación más débil de solo salud.
 

@@ -9,27 +9,59 @@ datasource db {
 }
 
 model Order {
-  id        String      @id @default(cuid())
-  orderId   String      @unique
-  customerId String
-  totalCop  Int
-  status    String      @default("PENDING")
-  createdAt DateTime    @default(now())
-  updatedAt DateTime    @updatedAt
-  lines     OrderLine[]
+  id                 String      @id @default(cuid())
+  orderId            String      @unique
+  customerId         String
+  idempotencyKey     String
+  requestFingerprint String
+  subtotalCop        Int
+  deliveryFeeCop     Int
+  totalCop           Int
+  status             String      @default("PENDING")
+  createdAt          DateTime    @default(now())
+  updatedAt          DateTime    @updatedAt
+  lines              OrderLine[]
 
   @@index([customerId, createdAt])
+  @@unique([customerId, idempotencyKey])
 }
 
 model OrderLine {
-  id          String @id @default(cuid())
-  productId   String
-  sku         String
-  name        String
-  quantity    Int
+  id           String @id @default(cuid())
+  productId    String
+  sku          String
+  name         String
+  quantity     Int
   unitPriceCop Int
-  order       Order  @relation(fields: [orderId], references: [id])
-  orderId     String
+  order        Order  @relation(fields: [orderId], references: [id])
+  orderId      String
 
   @@index([orderId, productId])
+}
+
+enum OrderEventOutboxStatus {
+  PENDING
+  PROCESSING
+  PUBLISHED
+  FAILED
+}
+
+model OrderEventOutbox {
+  eventId        String                 @id
+  eventType      String
+  aggregateId    String
+  occurredAt     DateTime
+  payload        Json
+  status         OrderEventOutboxStatus @default(PENDING)
+  attemptCount   Int                    @default(0)
+  nextAttemptAt  DateTime               @default(now())
+  claimToken     String?
+  leaseExpiresAt DateTime?
+  lastError      String?
+  publishedAt    DateTime?
+  createdAt      DateTime               @default(now())
+  updatedAt      DateTime               @updatedAt
+
+  @@index([status, nextAttemptAt])
+  @@index([status, leaseExpiresAt])
 }

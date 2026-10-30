@@ -11,7 +11,11 @@ import {
   updateProductQuantity,
   type CartLine,
 } from "@/lib/cart";
-import { buildCheckoutSummary } from "@/lib/order";
+import {
+  buildCheckoutSummary,
+  clearCheckoutIdempotencyKey,
+  getCheckoutIdempotencyKey,
+} from "@/lib/order";
 
 type Product = {
   id: string;
@@ -129,9 +133,13 @@ export function CatalogShell({ products, unavailable }: CatalogShellProps) {
       // POST goes through the Next.js API route so the server can attach
       // the httpOnly accessToken cookie as an Authorization header.
       // The client never touches the token directly.
+      const idempotencyKey = getCheckoutIdempotencyKey(cart, window.sessionStorage);
       const response = await fetch("/api/orders", {
         method: "POST",
-        headers: { "content-type": "application/json" },
+        headers: {
+          "content-type": "application/json",
+          "idempotency-key": idempotencyKey,
+        },
         body: JSON.stringify({
           lines: cart.map((line) => ({
             productId: line.productId,
@@ -174,6 +182,7 @@ export function CatalogShell({ products, unavailable }: CatalogShellProps) {
       };
 
       window.localStorage.setItem("mileshop-last-order-v1", JSON.stringify(order));
+      clearCheckoutIdempotencyKey(window.sessionStorage);
       setOrderConfirmed(true);
       setCart([]);
       setIsCartOpen(true);

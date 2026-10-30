@@ -31,10 +31,12 @@ export async function POST(request: NextRequest) {
 
   let res: Response;
   try {
+    const idempotencyKey = request.headers.get("idempotency-key");
     res = await fetch(`${gatewayUrl}/orders`, {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
+        ...(idempotencyKey ? { "Idempotency-Key": idempotencyKey } : {}),
         authorization: `Bearer ${accessToken}`,
       },
       body: JSON.stringify(body),

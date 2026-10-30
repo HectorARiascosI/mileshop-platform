@@ -53,23 +53,24 @@ La v1 actual está construida alrededor de cuatro procesos ejecutables: storefro
 
 **Criterios cerrados:**
 
-- valida `customerId` y líneas no vacías;
+- valida `customerId` confirmado por gateway, líneas no vacías e `Idempotency-Key`;
 - exige cantidades positivas y precios enteros no negativos;
-- calcula `totalCop` desde las líneas recibidas;
-- persiste pedido y líneas en PostgreSQL propio;
+- calcula subtotal, costo de entrega y total en el servidor;
+- persiste pedido, líneas y evento outbox en una transacción de PostgreSQL;
+- devuelve el pedido previo ante un reintento idéntico y responde `409` si la misma clave se usa con otro contenido;
 - devuelve estado inicial `PENDING` y `orderId` único.
 
-**Limitación:** valida precio, identidad de línea y stock disponible contra el catálogo activo, pero todavía no reserva ni decrementa stock y no tiene transiciones de estado operativas.
+**Limitación:** valida precio, identidad de línea y stock observado contra el catálogo activo, pero todavía no reserva ni decrementa stock y no tiene transiciones de estado operativas. La lectura de stock no evita sobreventa en compras concurrentes.
 
 ### BL-05 — Evento de pedido creado
 
-**Estado:** Parcial implementado.
+**Estado:** Implementado para persistencia outbox y entrega HTTP con reintentos.
 
-**Evidencia:** `packages/contracts`, `api-gateway/src/orders.service.ts`, prueba del gateway y `POST /events/order-created`.
+**Evidencia:** `packages/contracts`, `orders-service` y su transacción Prisma, `OrderEventOutbox`, pruebas de pedidos y `POST /events/order-created`.
 
-**Incluye hoy:** evento `OrderCreated.v1` construido después de persistir el pedido y enviado por HTTP al worker.
+**Incluye hoy:** evento `OrderCreated.v1` persistido atómicamente con el pedido y entregado por HTTP con lease exclusivo, backoff exponencial y límite de ocho intentos.
 
-**Limitaciones:** el productor es el gateway, no `orders-service`; no existe outbox transaccional, broker ni reintento durable del productor.
+**Limitación:** no existe broker externo; la entrega HTTP es al menos una vez y depende de la deduplicación del consumidor.
 
 ### BL-06 — Deduplicación de notificaciones
 
@@ -77,7 +78,7 @@ La v1 actual está construida alrededor de cuatro procesos ejecutables: storefro
 
 **Evidencia:** `notification-worker`, `NotificationDelivery`, índice único por `eventId` y test de retry.
 
-**Incluye hoy:** claim idempotente, estados `PROCESSING`, `SENT`, `FAILED` y contador de intentos.
+**Incluye hoy:** claim idempotente con lease/token, recuperación tras lease vencido, estados `PROCESSING`, `SENT`, `FAILED` y contador de intentos.
 
 **No incluye:** adaptador externo real, entrega por WhatsApp, cola durable ni métricas.
 
@@ -87,7 +88,7 @@ La v1 actual está construida alrededor de cuatro procesos ejecutables: storefro
 
 **Evidencia:** `infra/docker-compose.yml`, migraciones Prisma, `start-local-stack.ps1`, `status-local-stack.ps1`, `stop-local-stack.ps1` y runbook.
 
-**Incluye hoy:** tres PostgreSQL, migraciones automáticas, cuatro procesos independientes, health checks y smoke test de catálogo.
+**Incluye hoy:** cuatro PostgreSQL, migraciones automáticas, cinco procesos independientes, health checks y smoke test de catálogo.
 
 **Limitación:** no es un despliegue productivo ni una configuración cloud.
 
@@ -117,7 +118,8 @@ La v1 actual está construida alrededor de cuatro procesos ejecutables: storefro
 - recupera el pedido por `orderId`;
 - verifica el mismo `eventId` en notification-worker;
 - comprueba que una repetición no duplica la entrega;
-- cubre fallo del worker después de persistir y documenta el comportamiento.
+- verifica subtotal, envío, total e idempotencia al repetir el mismo checkout;
+- cubre por pruebas automatizadas fallo de notificación y programación de reintento.
 
 **Ownership:** web, gateway, orders-service y notification-worker.
 
@@ -127,7 +129,7 @@ La v1 actual está construida alrededor de cuatro procesos ejecutables: storefro
 
 **Objetivo:** impedir que el cliente envíe precios o productos incoherentes con el catálogo vigente.
 
-**Evidencia:** `orders-service/src/catalog.reader.ts`, validación en `OrdersService`, 7 tests del servicio y `npm run verify:local-purchase` ejecutado contra la stack local.
+**Evidencia:** `orders-service/src/catalog.reader.ts`, validación en `OrdersService`, pruebas en `orders.service.test.ts` y `npm run verify:local-purchase` ejecutado contra la stack local.
 
 **Criterios de aceptación:**
 
@@ -143,14 +145,16 @@ La v1 actual está construida alrededor de cuatro procesos ejecutables: storefro
 
 ### P0-03 — Contrato de error y recuperación de compra
 
+**Estado:** Parcial implementado; persistencia, conflictos y dependencia fuera de línea tienen códigos HTTP diferenciados, y los reintentos no duplican pedidos.
+
 **Objetivo:** que el storefront no confirme falsamente un pedido cuando falla persistencia o notificación.
 
 **Criterios de aceptación:**
 
 - el frontend muestra estado específico para fallo de orders-service;
-- el pedido creado con fallo posterior de notificación queda trazable;
-- existe estrategia explícita de reintento del evento;
-- la respuesta pública no expone detalles internos ni produce duplicados.
+- el pedido creado con fallo posterior de notificación queda trazable en outbox;
+- existe estrategia durable de reintento y deduplicación del evento;
+- falta mejorar la presentación de errores específicos del checkout en el storefront.
 
 **Ownership:** gateway, web y worker.
 
@@ -179,7 +183,7 @@ La v1 actual está construida alrededor de cuatro procesos ejecutables: storefro
 
 ### P2 — Plataforma productiva
 
-- outbox transaccional y transporte asíncrono durable;
+- broker externo (el productor ya dispone de outbox transaccional con entrega HTTP);
 - observabilidad con métricas, trazas y alertas;
 - despliegue cloud, secretos, backups y restore probado;
 - threat model, autorización administrativa y auditoría;
