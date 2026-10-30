@@ -109,9 +109,19 @@ export function CatalogShell({ products, unavailable }: CatalogShellProps) {
       return;
     }
 
-    const session = await fetch("/api/auth/me").then((r) => (r.ok ? r.json() : null));
-    if (!session) {
+    let sessionResponse: Response;
+    try {
+      sessionResponse = await fetch("/api/auth/me");
+    } catch {
+      window.alert("No pudimos verificar tu sesión. Inténtalo de nuevo cuando el servicio esté disponible.");
+      return;
+    }
+    if (sessionResponse.status === 401) {
       router.push("/login");
+      return;
+    }
+    if (!sessionResponse.ok) {
+      window.alert("No pudimos verificar tu sesión. Inténtalo de nuevo cuando el servicio esté disponible.");
       return;
     }
 
