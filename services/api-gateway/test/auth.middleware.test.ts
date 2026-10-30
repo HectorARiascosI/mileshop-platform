@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 
-import { UnauthorizedException } from "@nestjs/common";
+import { ServiceUnavailableException, UnauthorizedException } from "@nestjs/common";
 
 import { AuthMiddleware } from "../src/auth.middleware.js";
 
@@ -43,6 +43,17 @@ test("throws UnauthorizedException when no Bearer header", async () => {
   );
 });
 
+test("throws UnauthorizedException when the bearer token is empty", async () => {
+  const mockFetcher = async (): Promise<Response> => ({ ok: true } as Response);
+  const middleware = new AuthMiddleware(mockFetcher as typeof fetch, BASE_URL);
+  const req = { headers: { authorization: "Bearer   " } };
+
+  await assert.rejects(
+    () => middleware.use(req as any, {} as any, () => {}),
+    (err: unknown) => err instanceof UnauthorizedException,
+  );
+});
+
 test("throws UnauthorizedException when identity service returns 401", async () => {
   const mockFetcher = async (): Promise<Response> =>
     ({ ok: false, status: 401 }) as unknown as Response;
@@ -53,5 +64,48 @@ test("throws UnauthorizedException when identity service returns 401", async () 
   await assert.rejects(
     () => middleware.use(req as any, {} as any, () => {}),
     (err: unknown) => err instanceof UnauthorizedException,
+  );
+});
+
+test("throws ServiceUnavailableException when identity service returns 500", async () => {
+  const mockFetcher = async (): Promise<Response> =>
+    ({ ok: false, status: 500 }) as unknown as Response;
+
+  const middleware = new AuthMiddleware(mockFetcher as typeof fetch, BASE_URL);
+  const req = { headers: { authorization: "Bearer valid-token" } };
+
+  await assert.rejects(
+    () => middleware.use(req as any, {} as any, () => {}),
+    (err: unknown) => err instanceof ServiceUnavailableException,
+  );
+});
+
+test("throws ServiceUnavailableException when identity service is unreachable", async () => {
+  const mockFetcher = async (): Promise<Response> => {
+    throw new TypeError("fetch failed");
+  };
+
+  const middleware = new AuthMiddleware(mockFetcher as typeof fetch, BASE_URL);
+  const req = { headers: { authorization: "Bearer valid-token" } };
+
+  await assert.rejects(
+    () => middleware.use(req as any, {} as any, () => {}),
+    (err: unknown) => err instanceof ServiceUnavailableException,
+  );
+});
+
+test("throws ServiceUnavailableException when identity response is malformed", async () => {
+  const mockFetcher = async (): Promise<Response> =>
+    ({
+      ok: true,
+      json: async () => ({ email: "a@b.com" }),
+    }) as unknown as Response;
+
+  const middleware = new AuthMiddleware(mockFetcher as typeof fetch, BASE_URL);
+  const req = { headers: { authorization: "Bearer valid-token" } };
+
+  await assert.rejects(
+    () => middleware.use(req as any, {} as any, () => {}),
+    (err: unknown) => err instanceof ServiceUnavailableException,
   );
 });

@@ -1,4 +1,10 @@
-import { Injectable, NestMiddleware, UnauthorizedException, Inject } from "@nestjs/common";
+import {
+  Inject,
+  Injectable,
+  NestMiddleware,
+  ServiceUnavailableException,
+  UnauthorizedException,
+} from "@nestjs/common";
 import type { FastifyRequest, FastifyReply } from "fastify";
 
 export const IDENTITY_SERVICE_URL = "IDENTITY_SERVICE_URL";
@@ -21,6 +27,10 @@ export class AuthMiddleware implements NestMiddleware {
     }
 
     const token = authHeader.slice(7).trim();
+    if (!token) {
+      throw new UnauthorizedException("Missing authorization token");
+    }
+
     let response: Response;
 
     try {
@@ -29,18 +39,34 @@ export class AuthMiddleware implements NestMiddleware {
         signal: AbortSignal.timeout(3_000),
       });
     } catch {
-      throw new UnauthorizedException("Identity service unavailable");
+      throw new ServiceUnavailableException("Identity service unavailable");
     }
 
-    if (!response.ok) {
+    if (response.status === 401) {
       throw new UnauthorizedException("Invalid or expired token");
     }
+    if (!response.ok) {
+      throw new ServiceUnavailableException("Identity service unavailable");
+    }
 
-    const body = (await response.json()) as {
-      customerId: string;
-      email: string;
-      name: string;
-    };
+    let body: unknown;
+    try {
+      body = await response.json();
+    } catch {
+      throw new ServiceUnavailableException("Identity service returned an invalid response");
+    }
+
+    if (
+      !body ||
+      typeof body !== "object" ||
+      !("customerId" in body) ||
+      typeof body.customerId !== "string" ||
+      !body.customerId ||
+      !("email" in body) ||
+      typeof body.email !== "string"
+    ) {
+      throw new ServiceUnavailableException("Identity service returned an invalid response");
+    }
 
     req.customerId = body.customerId;
     req.email = body.email;
