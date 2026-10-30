@@ -64,6 +64,7 @@ if ([string]::IsNullOrWhiteSpace($auth.customerId) -or [string]::IsNullOrWhiteSp
 }
 $authorizationHeaders = @{ Authorization = "Bearer $($auth.accessToken)" }
 
+$authorizationHeaders['Idempotency-Key'] = [Guid]::NewGuid().ToString()
 $catalog = Get-JsonResponse -Uri 'http://localhost:3000/catalog/products'
 $product = $catalog.data | Where-Object { $_.sku -eq 'MILE-MUG-001' } | Select-Object -First 1
 if ($null -eq $product) {
@@ -86,9 +87,21 @@ Write-Host '==> Creating order through API gateway...'
 $created = Get-JsonResponse -Uri 'http://localhost:3000/orders' -Method Post -Body $orderInput -Headers $authorizationHeaders
 $order = $created.data
 $event = $order.event
-Assert-Equal -Actual $order.totalCop -Expected $product.priceCop -Message 'Gateway returned an inconsistent order total'
+$expectedDeliveryFee = if ($product.priceCop -ge 150000) {
+    0
+}
+else {
+    [Math]::Max(12000, [Math]::Floor($product.priceCop * 0.08 + 0.5))
+}
+Assert-Equal -Actual $order.subtotalCop -Expected $product.priceCop -Message 'Gateway returned an inconsistent order subtotal'
+Assert-Equal -Actual $order.deliveryFeeCop -Expected $expectedDeliveryFee -Message 'Gateway returned an inconsistent delivery fee'
+Assert-Equal -Actual $order.totalCop -Expected ($product.priceCop + $expectedDeliveryFee) -Message 'Gateway returned an inconsistent order total'
 Assert-Equal -Actual $event.payload.customerId -Expected $auth.customerId -Message 'Gateway returned an inconsistent customer id'
 Assert-Equal -Actual $event.eventType -Expected 'OrderCreated.v1' -Message 'Gateway returned an unexpected event type'
+
+Write-Host '==> Replaying the same checkout request to verify idempotency...'
+$replay = Get-JsonResponse -Uri 'http://localhost:3000/orders' -Method Post -Body $orderInput -Headers $authorizationHeaders
+Assert-Equal -Actual $replay.data.orderId -Expected $order.orderId -Message 'Repeated checkout created a duplicate order'
 
 Write-Host "Created order: $($order.orderId)"
 
@@ -96,7 +109,9 @@ Write-Host '==> Reading persisted order from orders-service...'
 $persisted = Get-JsonResponse -Uri "http://localhost:3030/orders/$($order.orderId)"
 Assert-Equal -Actual $persisted.data.orderId -Expected $order.orderId -Message 'Order was not persisted with the returned orderId'
 Assert-Equal -Actual $persisted.data.customerId -Expected $auth.customerId -Message 'Persisted order has an inconsistent customer id'
-Assert-Equal -Actual $persisted.data.totalCop -Expected $product.priceCop -Message 'Persisted order has an inconsistent total'
+Assert-Equal -Actual $persisted.data.subtotalCop -Expected $product.priceCop -Message 'Persisted order has an inconsistent subtotal'
+Assert-Equal -Actual $persisted.data.deliveryFeeCop -Expected $expectedDeliveryFee -Message 'Persisted order has an inconsistent delivery fee'
+Assert-Equal -Actual $persisted.data.totalCop -Expected ($product.priceCop + $expectedDeliveryFee) -Message 'Persisted order has an inconsistent total'
 
 Write-Host '==> Replaying the same event to verify worker deduplication...'
 $duplicate = Get-JsonResponse -Uri 'http://localhost:3010/events/order-created' -Method Post -Body $event

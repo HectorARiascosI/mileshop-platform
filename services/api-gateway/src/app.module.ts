@@ -5,7 +5,6 @@ import { CATALOG_FETCH, CatalogClient } from "./catalog.client.js";
 import { GatewayController } from "./gateway.controller.js";
 import { IDENTITY_FETCH, IdentityClient } from "./identity.client.js";
 import {
-  NOTIFICATION_WORKER_URL,
   ORDER_FETCH,
   ORDERS_SERVICE_URL,
   OrderService,
@@ -18,10 +17,6 @@ import {
     { provide: ORDER_FETCH, useValue: fetch },
     { provide: IDENTITY_FETCH, useValue: fetch },
     { provide: "AUTH_FETCH", useValue: fetch },
-    {
-      provide: NOTIFICATION_WORKER_URL,
-      useValue: process.env.NOTIFICATION_WORKER_URL ?? "http://localhost:3010",
-    },
     {
       provide: ORDERS_SERVICE_URL,
       useValue: process.env.ORDERS_SERVICE_URL ?? "http://localhost:3030",

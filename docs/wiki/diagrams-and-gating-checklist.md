@@ -13,6 +13,7 @@ Este documento controla que la documentación de MileShop describa el sistema re
 - [x] modelo de datos Prisma;
 - [x] estado actualmente implementado;
 - [x] evento y deduplicación;
+- [x] outbox transaccional, leases y recuperación de entregas;
 - [x] despliegue local;
 - [x] flujo de navegación de catálogo, registro, carrito y checkout;
 - [x] pipeline CI actual;
@@ -29,7 +30,7 @@ Este documento controla que la documentación de MileShop describa el sistema re
 | DFD | No crear aparte | La secuencia y el modelo de datos cubren el flujo sin duplicarlo. |
 | Actividades UML | Mantener después | Útil para errores, validaciones y reintentos del checkout cuando se formalicen. |
 | Clases UML | No incluir en arquitectura | Debe vivir cerca del código solo si un dominio alcanza complejidad relevante. |
-| DER | Mantener | Es obligatorio para las tres bases Prisma actuales. |
+| DER | Mantener | Es obligatorio para las bases Prisma actuales. |
 | NoSQL | Eliminar | El proyecto usa PostgreSQL; no hay documentos NoSQL. |
 | C4 contenedores | Mantener | Representa web, gateway, servicios, worker y bases. |
 | C4 componentes | Mantener | Aclara controllers, dominio, repositorios y stores por servicio. |
@@ -68,7 +69,7 @@ Los diagramas futuros solo se agregan cuando exista la infraestructura, contrato
 - [ ] despliegue productivo con infraestructura aprobada;
 - [ ] seguridad de identidad, autorización y threat model;
 - [ ] observabilidad con métricas, trazas y alertas reales;
-- [ ] outbox, broker y recuperación de eventos;
+- [ ] broker externo (el productor ya dispone de outbox HTTP durable);
 - [ ] dominio de clientes persistente;
 - [ ] administración editorial y comercial;
 - [ ] promociones, banners, variantes y categorías implementadas;

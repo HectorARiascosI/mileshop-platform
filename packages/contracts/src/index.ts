@@ -5,6 +5,8 @@ export type OrderCreatedV1 = {
   aggregateId: string;
   payload: {
     customerId: string;
+    subtotalCop: number;
+    deliveryFeeCop: number;
     totalCop: number;
     currency: "COP";
     lines: Array<{

@@ -94,9 +94,9 @@ New-Item -ItemType Directory -Path $logDirectory -Force | Out-Null
 
 $catalogEnv = @{ DATABASE_URL = $catalogDatabaseUrl }
 $workerEnv = @{ DATABASE_URL = $notificationDatabaseUrl }
-$ordersEnv = @{ DATABASE_URL = $ordersDatabaseUrl; CATALOG_SERVICE_URL = 'http://127.0.0.1:3020' }
+$ordersEnv = @{ DATABASE_URL = $ordersDatabaseUrl; CATALOG_SERVICE_URL = 'http://127.0.0.1:3020'; NOTIFICATION_WORKER_URL = 'http://127.0.0.1:3010' }
 $identityEnv = @{ DATABASE_URL = $identityDatabaseUrl; JWT_SECRET = 'mileshop-local-dev-secret-change-in-prod'; JWT_EXPIRES_IN = '15m'; REFRESH_TOKEN_EXPIRES_DAYS = '30'; ALLOWED_ORIGINS = 'http://localhost:3001' }
-$gatewayEnv = @{ CATALOG_SERVICE_URL = 'http://127.0.0.1:3020'; NOTIFICATION_WORKER_URL = 'http://127.0.0.1:3010'; ORDERS_SERVICE_URL = 'http://127.0.0.1:3030'; IDENTITY_SERVICE_URL = 'http://127.0.0.1:3040' }
+$gatewayEnv = @{ CATALOG_SERVICE_URL = 'http://127.0.0.1:3020'; ORDERS_SERVICE_URL = 'http://127.0.0.1:3030'; IDENTITY_SERVICE_URL = 'http://127.0.0.1:3040' }
 
 $jobs = @(
     @{ Port = '3040'; Workspace = '@mileshop/identity-service'; EnvMap = $identityEnv },

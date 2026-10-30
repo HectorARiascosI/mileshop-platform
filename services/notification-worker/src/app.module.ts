@@ -5,6 +5,7 @@ import {
   InMemoryNotificationStore,
   LoggingNotificationSender,
   NotificationWorker,
+  type NotificationStore,
 } from "./notification.worker.js";
 import { NotificationsController } from "./notifications.controller.js";
 import { PrismaNotificationStore } from "./prisma.notification.store.js";
@@ -37,7 +38,7 @@ import { PrismaService } from "./prisma.service.js";
     {
       provide: "NOTIFICATION_WORKER",
       inject: ["NOTIFICATION_STORE", "NOTIFICATION_SENDER"],
-      useFactory: (store: InMemoryNotificationStore, sender: LoggingNotificationSender) =>
+      useFactory: (store: NotificationStore, sender: LoggingNotificationSender) =>
         new NotificationWorker(store, sender),
     },
   ],

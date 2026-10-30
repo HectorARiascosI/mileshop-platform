@@ -2,7 +2,9 @@ import {
   BadRequestException,
   Body,
   Controller,
+  ConflictException,
   Get,
+  Headers,
   Inject,
   NotFoundException,
   Param,
@@ -12,7 +14,7 @@ import {
 
 import { CatalogUnavailableError } from "./catalog.reader.js";
 import { OrdersService } from "./orders.service.js";
-import type { CreateOrderInput } from "./orders.types.js";
+import { InvalidOrderError, OrderConflictError } from "./orders.validation.js";
 
 @Controller()
 export class OrdersController {
@@ -26,15 +28,23 @@ export class OrdersController {
   }
 
   @Post("orders")
-  public async createOrder(@Body() body: CreateOrderInput): Promise<{ data: Awaited<ReturnType<OrdersService["createOrder"]>> }> {
+  public async createOrder(
+    @Body() body: unknown,
+    @Headers("idempotency-key") idempotencyKey: string | undefined,
+  ): Promise<{ data: Awaited<ReturnType<OrdersService["createOrder"]>> }> {
     try {
-      return { data: await this.orders.createOrder(body) };
+      return { data: await this.orders.createOrder(body, idempotencyKey) };
     } catch (error) {
       if (error instanceof CatalogUnavailableError) {
         throw new ServiceUnavailableException(error.message);
       }
-
-      throw new BadRequestException(error instanceof Error ? error.message : "Invalid order payload");
+      if (error instanceof InvalidOrderError) {
+        throw new BadRequestException(error.message);
+      }
+      if (error instanceof OrderConflictError) {
+        throw new ConflictException(error.message);
+      }
+      throw error;
     }
   }
 

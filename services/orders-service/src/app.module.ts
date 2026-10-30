@@ -2,7 +2,7 @@ import { Module } from "@nestjs/common";
 
 import { HttpCatalogReader } from "./catalog.reader.js";
 import { OrdersController } from "./orders.controller.js";
-import { OrdersService } from "./orders.service.js";
+import { HttpOrderEventPublisher, OrdersService } from "./orders.service.js";
 import { PrismaOrdersRepository } from "./prisma.orders.repository.js";
 import { PrismaService } from "./prisma.service.js";
 
@@ -17,9 +17,19 @@ import { PrismaService } from "./prisma.service.js";
     },
     {
       provide: "ORDERS_SERVICE",
-      useFactory: (repository: PrismaOrdersRepository, catalog: HttpCatalogReader) =>
-        new OrdersService(repository, catalog),
-      inject: ["ORDERS_REPOSITORY", "CATALOG_READER"],
+      useFactory: (
+        repository: PrismaOrdersRepository,
+        catalog: HttpCatalogReader,
+        eventPublisher: HttpOrderEventPublisher,
+      ) => new OrdersService(repository, catalog, eventPublisher),
+      inject: ["ORDERS_REPOSITORY", "CATALOG_READER", "ORDER_EVENT_PUBLISHER"],
+    },
+    {
+      provide: "ORDER_EVENT_PUBLISHER",
+      useFactory: () => new HttpOrderEventPublisher(
+        fetch,
+        process.env.NOTIFICATION_WORKER_URL ?? "http://localhost:3010",
+      ),
     },
     {
       provide: "CATALOG_READER",

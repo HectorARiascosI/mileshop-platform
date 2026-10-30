@@ -14,11 +14,12 @@ El API Gateway expone una superficie HTTP publica y compone respuestas de servic
 
 - `GET /healthz` valida disponibilidad del gateway.
 - `GET /catalog/products` consulta `catalog-service`.
-- `POST /orders` persiste el pedido mediante `orders-service` y publica `OrderCreated.v1` hacia `notification-worker`.
+- `POST /orders` valida la identidad y reenvía la solicitud a `orders-service`; este servicio persiste el pedido y `OrderCreated.v1` en una transacción y administra la entrega a `notification-worker` mediante outbox.
 - `CATALOG_SERVICE_URL` configura la dependencia interna.
-- `ORDERS_SERVICE_URL` y `NOTIFICATION_WORKER_URL` configuran las dependencias de compra.
+- `ORDERS_SERVICE_URL` configura la dependencia de pedidos.
+- El encabezado `Idempotency-Key` identifica reintentos del mismo checkout.
 - El cliente aplica timeout de 3 segundos.
-- Fallos de red o respuestas no exitosas se traducen a `503 Service Unavailable`.
+- Errores de validación son `400`, conflictos de idempotencia `409` y fallos de dependencias `503 Service Unavailable`.
 - El gateway no posee tablas ni reglas de inventario.
 
 Nest debe recibir el adaptador HTTP mediante el token `CATALOG_FETCH`, de modo que el runtime y las pruebas usen la misma frontera sustituible.

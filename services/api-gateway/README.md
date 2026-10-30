@@ -9,7 +9,6 @@ Desde la raiz del repositorio:
 ```powershell
 $env:CATALOG_SERVICE_URL = "http://localhost:3020"
 $env:ORDERS_SERVICE_URL = "http://localhost:3030"
-$env:NOTIFICATION_WORKER_URL = "http://localhost:3010"
 npm run start:dev --workspace @mileshop/api-gateway
 ```
 
@@ -18,7 +17,6 @@ Variables:
 - `PORT`: puerto HTTP del gateway, por defecto `3000`.
 - `CATALOG_SERVICE_URL`: URL interna de `catalog-service`, por defecto `http://localhost:3020`.
 - `ORDERS_SERVICE_URL`: URL interna de `orders-service`, por defecto `http://localhost:3030`.
-- `NOTIFICATION_WORKER_URL`: URL interna de `notification-worker`, por defecto `http://localhost:3010`.
 
 ## Autenticación y sesión
 
@@ -39,3 +37,5 @@ Endpoints iniciales:
 - `GET /healthz`
 - `GET /catalog/products`
 - `POST /orders`
+
+`POST /orders` exige autenticación y `Idempotency-Key` UUID. El gateway toma `customerId` del token validado, valida la forma de las líneas y reenvía la clave al servicio de pedidos. El gateway no publica directamente eventos; `orders-service` los guarda junto al pedido y administra la entrega outbox.

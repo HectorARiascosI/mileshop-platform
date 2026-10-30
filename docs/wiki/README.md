@@ -35,11 +35,11 @@ flowchart LR
     W --> G[API Gateway]
     G --> CAT[Catalog Service]
     G --> ORD[Orders Service]
-    G --> NOT[Notification Worker]
+    ORD --> NOT[Notification Worker]
     CAT --> DC[(Catalog DB)]
     ORD --> DO[(Orders DB)]
     NOT --> DN[(Notifications DB)]
-    G --> EV[OrderCreated Event]
+    ORD --> EV[OrderCreated Event + transactional outbox]
     EV --> NOT
 ```
 
@@ -106,4 +106,4 @@ Esta wiki debe leerse en este orden:
 
 ## 9. Conclusión
 
-MileShop Platform es actualmente un sistema de catálogo, carrito, pedidos y notificaciones con identificación temporal del cliente en el storefront. La identidad persistente, la autoridad editorial y los canales externos son objetivos documentados, no capacidades disponibles. La wiki deja esos límites, flujos y decisiones explícitos para evitar que el roadmap se confunda con el runtime.
+MileShop Platform es actualmente un sistema de catálogo, carrito, pedidos idempotentes y notificaciones con identidad persistente de clientes. El outbox transaccional de pedidos entrega `OrderCreated.v1` al worker por HTTP con reintentos y deduplicación; no existe broker externo ni adaptador de notificación de negocio. La autoridad editorial y los canales externos siguen siendo objetivos documentados, no capacidades disponibles. La wiki deja esos límites, flujos y decisiones explícitos para evitar que el roadmap se confunda con el runtime.

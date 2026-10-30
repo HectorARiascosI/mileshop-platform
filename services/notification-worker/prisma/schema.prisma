@@ -15,14 +15,16 @@ enum NotificationStatus {
 }
 
 model NotificationDelivery {
-  id          String             @id @default(cuid())
-  eventId     String             @unique
-  status      NotificationStatus @default(PROCESSING)
-  attempts    Int                @default(1)
-  lastError   String?
-  processedAt DateTime?
-  createdAt   DateTime           @default(now())
-  updatedAt   DateTime           @updatedAt
+  id             String             @id @default(cuid())
+  eventId        String             @unique
+  status         NotificationStatus @default(PROCESSING)
+  attempts       Int                @default(1)
+  claimToken     String?
+  leaseExpiresAt DateTime?
+  lastError      String?
+  processedAt   DateTime?
+  createdAt      DateTime           @default(now())
+  updatedAt      DateTime           @updatedAt
 
-  @@index([status, createdAt])
+  @@index([status, leaseExpiresAt])
 }

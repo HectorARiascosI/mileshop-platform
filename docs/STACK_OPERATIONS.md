@@ -15,10 +15,10 @@ This repo is the runtime source of truth for the MileShop distributed platform. 
 
 | Component | Port | Purpose | Dependency |
 | --- | ---: | --- | --- |
-| API Gateway | 3000 | public facade | identity + catalog + orders + notifications |
+| API Gateway | 3000 | public facade | identity + catalog + orders |
 | Notification Worker | 3010 | event receiver and notifier | PostgreSQL |
 | Catalog Service | 3020 | product catalog | PostgreSQL |
-| Orders Service | 3030 | order creation and catalog validation | PostgreSQL + catalog service |
+| Orders Service | 3030 | order creation, outbox delivery and catalog validation | PostgreSQL + catalog service + notification worker |
 | Identity Service | 3040 | authentication and customer identity | PostgreSQL |
 | Catalog Postgres | 5434 | catalog domain database | Docker |
 | Notification Postgres | 5433 | notification domain database | Docker |
@@ -38,13 +38,16 @@ This is not a generic monolith. The design follows domain ownership.
 ### Orders domain
 
 - owns the order aggregate and validation rules
-- accepts the order payload and persists the order; the API gateway publishes `OrderCreated.v1` after persistence
+- accepts an authenticated, idempotent order command and persists the order, lines and `OrderCreated.v1` outbox row atomically
+- delivers outbox events to the notification worker over HTTP, with an exclusive 30-second lease, exponential backoff and an eight-attempt limit
 - keeps its database isolated from the catalog domain
+- does not reserve or decrement stock; concurrent orders can still oversell until inventory ownership and reservation semantics are decided
 
 ### Notification domain
 
 - owns notification processing for downstream delivery
-- receives the `OrderCreated.v1` request published by the API gateway after order persistence
+- receives the `OrderCreated.v1` request published by `orders-service`
+- deduplicates by `eventId` and returns `202 Accepted` when another active lease owns processing
 - does not read catalog tables directly
 
 ### API gateway
@@ -83,6 +86,7 @@ $env:DATABASE_URL='postgresql://notifications:notifications@localhost:5433/notif
 
 ```powershell
 $env:PORT='3030'
+$env:NOTIFICATION_WORKER_URL='http://127.0.0.1:3010'
 $env:DATABASE_URL='postgresql://orders:orders@localhost:5435/orders?schema=public'
 ```
 
@@ -91,7 +95,6 @@ $env:DATABASE_URL='postgresql://orders:orders@localhost:5435/orders?schema=publi
 ```powershell
 $env:PORT='3000'
 $env:CATALOG_SERVICE_URL='http://127.0.0.1:3020'
-$env:NOTIFICATION_WORKER_URL='http://127.0.0.1:3010'
 $env:ORDERS_SERVICE_URL='http://127.0.0.1:3030'
 $env:IDENTITY_SERVICE_URL='http://127.0.0.1:3040'
 ```

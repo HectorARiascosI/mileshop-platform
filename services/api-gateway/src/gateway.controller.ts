@@ -6,11 +6,12 @@ import {
   HttpCode,
   Post,
   Req,
+  UnauthorizedException,
 } from "@nestjs/common";
 
 import { CatalogClient } from "./catalog.client.js";
 import { IdentityClient } from "./identity.client.js";
-import { OrderService, type CreateOrderInput } from "./orders.service.js";
+import { OrderService } from "./orders.service.js";
 
 @Controller()
 export class GatewayController {
@@ -70,16 +71,17 @@ export class GatewayController {
 
   @Post("orders")
   public async createOrder(
-    @Body() input: CreateOrderInput,
+    @Body() input: unknown,
+    @Headers("idempotency-key") idempotencyKey: string | undefined,
     @Req() req: { customerId?: string; raw?: { customerId?: string } },
   ): Promise<{ data: Awaited<ReturnType<OrderService["createOrder"]>> }> {
     // AuthMiddleware writes customerId to the raw Node.js request.
     // In Fastify, @Req() gives the Fastify wrapper; the raw request is at req.raw.
     const verifiedCustomerId = req.customerId ?? req.raw?.customerId;
-    const order = await this.orders.createOrder({
-      customerId: verifiedCustomerId ?? input.customerId,
-      lines: input.lines,
-    });
+    if (!verifiedCustomerId) {
+      throw new UnauthorizedException("Authenticated customer is required");
+    }
+    const order = await this.orders.createOrder(input, verifiedCustomerId, idempotencyKey);
     return { data: order };
   }
 }
