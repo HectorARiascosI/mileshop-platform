@@ -25,6 +25,39 @@ function Wait-ForHttp {
     throw "Timed out waiting for $Uri"
 }
 
+function Wait-ForPostgresContainers {
+    param(
+        [int]$TimeoutSeconds = 120
+    )
+
+    $containerNames = @(
+        'mileshop-notification-postgres',
+        'mileshop-catalog-postgres',
+        'mileshop-orders-postgres',
+        'mileshop-identity-postgres'
+    )
+    $deadline = (Get-Date).AddSeconds($TimeoutSeconds)
+
+    while ((Get-Date) -lt $deadline) {
+        $allHealthy = $true
+        foreach ($containerName in $containerNames) {
+            $health = docker inspect --format '{{.State.Health.Status}}' $containerName
+            if ($LASTEXITCODE -ne 0 -or $health.Trim() -ne 'healthy') {
+                $allHealthy = $false
+                break
+            }
+        }
+
+        if ($allHealthy) {
+            return
+        }
+
+        Start-Sleep -Seconds 2
+    }
+
+    throw "Timed out waiting for PostgreSQL containers to become healthy."
+}
+
 function Start-ServiceProcess {
     param(
         [string]$Port,
@@ -78,15 +111,27 @@ if (-not $dockerOk) {
 docker --version | Out-Host
 
 Write-Host '==> Starting Postgres containers...'
-docker compose -f infra/docker-compose.yml up -d | Out-Host
-docker compose -f infra/docker-compose.yml ps | Out-Host
+docker compose -f infra/docker-compose.yml up -d
+if ($LASTEXITCODE -ne 0) {
+    throw 'Failed to start PostgreSQL containers.'
+}
+docker compose -f infra/docker-compose.yml ps
+if ($LASTEXITCODE -ne 0) {
+    throw 'Failed to inspect PostgreSQL container status.'
+}
+
+Write-Host '==> Waiting for PostgreSQL containers to become healthy...'
+Wait-ForPostgresContainers
 
 Write-Host '==> Applying Prisma migrations...'
 $catalogDatabaseUrl = 'postgresql://catalog:catalog@localhost:5434/catalog?schema=public'
 $notificationDatabaseUrl = 'postgresql://notifications:notifications@localhost:5433/notifications?schema=public'
 $ordersDatabaseUrl = 'postgresql://orders:orders@localhost:5435/orders?schema=public'
 $identityDatabaseUrl = 'postgresql://identity:identity@localhost:5436/identity?schema=public'
-npm run db:deploy | Out-Host
+npm run db:deploy
+if ($LASTEXITCODE -ne 0) {
+    throw 'Database migrations failed; refusing to start application services.'
+}
 
 Write-Host '==> Preparing detached service logs...'
 $logDirectory = Join-Path $repoRoot '.local-stack\logs'

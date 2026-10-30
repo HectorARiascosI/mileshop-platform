@@ -36,6 +36,7 @@ ALTER TABLE "Order" ALTER COLUMN "requestFingerprint" SET NOT NULL;
 ALTER TABLE "Order" ALTER COLUMN "subtotalCop" SET NOT NULL;
 ALTER TABLE "Order" ALTER COLUMN "deliveryFeeCop" SET NOT NULL;
 
+DROP INDEX IF EXISTS "Order_idempotencyKey_key";
 CREATE UNIQUE INDEX IF NOT EXISTS "Order_orderId_key" ON "Order"("orderId");
 CREATE UNIQUE INDEX IF NOT EXISTS "Order_customerId_idempotencyKey_key"
   ON "Order"("customerId", "idempotencyKey");
@@ -75,6 +76,14 @@ CREATE TABLE IF NOT EXISTS "OrderEventOutbox" (
   "updatedAt" TIMESTAMP(3) NOT NULL,
   CONSTRAINT "OrderEventOutbox_pkey" PRIMARY KEY ("eventId")
 );
+
+ALTER TABLE "OrderEventOutbox" ADD COLUMN IF NOT EXISTS "claimToken" TEXT;
+ALTER TABLE "OrderEventOutbox" ADD COLUMN IF NOT EXISTS "leaseExpiresAt" TIMESTAMP(3);
+ALTER TABLE "OrderEventOutbox" ALTER COLUMN "status" DROP DEFAULT;
+ALTER TABLE "OrderEventOutbox" ALTER COLUMN "status"
+  TYPE "OrderEventOutboxStatus" USING "status"::"OrderEventOutboxStatus";
+ALTER TABLE "OrderEventOutbox" ALTER COLUMN "status"
+  SET DEFAULT 'PENDING'::"OrderEventOutboxStatus";
 
 CREATE INDEX IF NOT EXISTS "OrderEventOutbox_status_nextAttemptAt_idx"
   ON "OrderEventOutbox"("status", "nextAttemptAt");
