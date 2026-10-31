@@ -4,7 +4,7 @@ import { AuthMiddleware, IDENTITY_SERVICE_URL } from "./auth.middleware.js";
 import { CATALOG_FETCH, CatalogClient } from "./catalog.client.js";
 import { GatewayController } from "./gateway.controller.js";
 import { IDENTITY_FETCH, IdentityClient } from "./identity.client.js";
-import { ORDER_FETCH, ORDERS_SERVICE_URL, OrderService } from "./orders.service.js";
+import { ORDER_FETCH, ORDERS_INTERNAL_TOKEN, ORDERS_SERVICE_URL, OrderService } from "./orders.service.js";
 import { StoreAdminGuard } from "./store-admin.guard.js";
 
 @Module({
@@ -17,6 +17,10 @@ import { StoreAdminGuard } from "./store-admin.guard.js";
     {
       provide: ORDERS_SERVICE_URL,
       useValue: process.env.ORDERS_SERVICE_URL ?? "http://localhost:3030",
+    },
+    {
+      provide: ORDERS_INTERNAL_TOKEN,
+      useValue: process.env.ORDERS_INTERNAL_TOKEN ?? "local-development-orders-token",
     },
     {
       provide: IDENTITY_SERVICE_URL,

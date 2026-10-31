@@ -9,6 +9,7 @@ import {
 
 export const ORDER_FETCH = "ORDER_FETCH";
 export const ORDERS_SERVICE_URL = "ORDERS_SERVICE_URL";
+export const ORDERS_INTERNAL_TOKEN = "ORDERS_INTERNAL_TOKEN";
 
 export type OrderLineInput = {
   productId: string;
@@ -63,7 +64,16 @@ export class OrderService {
   public constructor(
     @Inject(ORDER_FETCH) private readonly fetcher: typeof fetch,
     @Inject(ORDERS_SERVICE_URL) private readonly ordersServiceUrl: string,
+    @Inject(ORDERS_INTERNAL_TOKEN) private readonly ordersInternalToken: string,
   ) {}
+
+  private internalHeaders(customerId?: string, role = "CUSTOMER"): Record<string, string> {
+    return {
+      "x-orders-internal-token": this.ordersInternalToken,
+      "x-authenticated-customer-id": customerId ?? "",
+      "x-authenticated-role": role,
+    };
+  }
 
   public async createOrder(
     input: CreateOrderInput,
@@ -78,6 +88,7 @@ export class OrderService {
         headers: {
           "content-type": "application/json",
           "idempotency-key": idempotencyKey,
+          ...this.internalHeaders(customerId),
         },
         body: JSON.stringify({ customerId, lines: normalizedLines }),
         signal: AbortSignal.timeout(3_000),
@@ -135,12 +146,16 @@ export class OrderService {
     };
   }
 
-  public async getOrder(orderId: string): Promise<OrderResult> {
+  public async getOrder(
+    orderId: string,
+    customerId?: string,
+    role = "CUSTOMER",
+  ): Promise<OrderResult> {
     let response: Response;
     try {
       response = await this.fetcher(
         `${this.ordersServiceUrl}/orders/${encodeURIComponent(orderId)}`,
-        { signal: AbortSignal.timeout(3_000) },
+        { headers: this.internalHeaders(customerId, role), signal: AbortSignal.timeout(3_000) },
       );
     } catch {
       throw new ServiceUnavailableException("Orders service is unavailable");

@@ -117,11 +117,7 @@ export class GatewayController {
       throw new NotFoundException("Order not found");
     }
 
-    const order = await (
-      (this.orders as any).getOrderById
-        ? (this.orders as any).getOrderById(orderId, verifiedCustomerId, req.raw?.role ?? "CUSTOMER")
-        : this.orders.getOrder(orderId)
-    );
+    const order = await this.orders.getOrder(orderId, verifiedCustomerId, req.raw?.role ?? "CUSTOMER");
     if (order.customerId !== verifiedCustomerId) {
       throw new NotFoundException("Order not found");
     }
