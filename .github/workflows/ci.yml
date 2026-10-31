@@ -79,3 +79,13 @@ jobs:
       - name: Validate local purchase flow
         shell: pwsh
         run: pwsh -File ./scripts/verify-local-purchase.ps1
+
+      - name: Dump local service logs
+        if: failure()
+        shell: bash
+        run: |
+          for log in /tmp/mileshop-*.log; do
+            echo "::group::$log"
+            cat "$log"
+            echo "::endgroup::"
+          done
