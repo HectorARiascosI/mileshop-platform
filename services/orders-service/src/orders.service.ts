@@ -20,6 +20,13 @@ export const OUTBOX_MAX_ATTEMPTS = 8;
 export const OUTBOX_RETRY_BASE_DELAY_MS = 5_000;
 export const OUTBOX_RETRY_MAX_DELAY_MS = 5 * 60_000;
 
+export class InvalidPaymentDecisionError extends Error {
+  public constructor(message: string) {
+    super(message);
+    this.name = "InvalidPaymentDecisionError";
+  }
+}
+
 export type PendingOrderEvent = {
   event: OrderCreatedEvent;
   attemptCount: number;
@@ -406,6 +413,78 @@ export class OrdersService implements OnModuleInit, OnModuleDestroy {
   public async getOrderById(orderId: string): Promise<Order | null> {
     const record = await this.repository.findByOrderId(orderId);
     return record ? { ...OrderDomain.toOrderView(record) } : null;
+  }
+
+  public async approvePayment(orderId: string, adminCustomerId: string): Promise<{ result: string; order?: Order | null }> {
+    const current = await this.repository.findByOrderId(orderId);
+    if ((current as any)?.cancelRequestedAt && !(current as any)?.cancelResolvedAt) {
+      return { result: "not-pending", order: await this.getOrderById(orderId) };
+    }
+    const result = await this.repository.approvePayment(
+      orderId,
+      adminCustomerId,
+      new Date(),
+      { commandId: `${orderId}-commit-inventory`, idempotencyKey: `${orderId}:COMMIT`, orderId, commandType: "COMMIT", payload: {} },
+    );
+    return { result, order: await this.getOrderById(orderId) };
+  }
+
+  public async rejectPayment(orderId: string, adminCustomerId: string, reason: string): Promise<{ result: string; order?: Order | null }> {
+    if (!reason.trim()) throw new InvalidPaymentDecisionError("A rejection reason is required");
+    const result = await this.repository.rejectPayment(
+      orderId,
+      adminCustomerId,
+      reason.trim(),
+      new Date(),
+      { commandId: `${orderId}-release-inventory`, idempotencyKey: `${orderId}:RELEASE`, orderId, commandType: "RELEASE", payload: {} },
+    );
+    return { result, order: await this.getOrderById(orderId) };
+  }
+
+  public async requestCancellation(orderId: string, customerId: string): Promise<{ result: string; order?: Order | null }> {
+    const result = await this.repository.requestCancellation(orderId, customerId, new Date());
+    return {
+      result: result === "requested" ? "requested" : result === "already-requested" ? "already-pending" : result,
+      order: await this.getOrderById(orderId),
+    };
+  }
+
+  public async recordCancellationRefund(orderId: string, adminCustomerId: string, paymentCaptured: boolean, refundReference: string | null): Promise<{ result: string }> {
+    const result = await this.repository.recordCancellationRefund(orderId, adminCustomerId, paymentCaptured, refundReference, new Date());
+    return { result };
+  }
+
+  public async resolveCancellationRequest(orderId: string, adminCustomerId: string, resolution: "CANCEL" | "KEEP_OPEN", note: string | null = null): Promise<{ result: string; order?: Order | null }> {
+    const command = resolution === "CANCEL"
+      ? { commandId: `${orderId}-release-inventory`, idempotencyKey: `${orderId}:RELEASE`, orderId, commandType: "RELEASE" as const, payload: {} }
+      : undefined;
+    const result = await this.repository.resolveCancellationRequest(
+      orderId, adminCustomerId, resolution === "KEEP_OPEN" ? "KEEP" : "CANCEL", note, new Date(), command,
+    );
+    const mapped = result === "kept" ? "kept-open" : result;
+    if (result === "cancelled") {
+      await (this.outbox as unknown as { processPendingCommands?: () => Promise<void> }).processPendingCommands?.();
+    }
+    return { result: mapped, order: await this.getOrderById(orderId) };
+  }
+
+  public async cancelOrder(orderId: string, customerId: string): Promise<{ result: string }> {
+    const result = await this.repository.cancelOrder(
+      orderId, customerId, new Date(),
+      { commandId: `${orderId}-release-inventory`, idempotencyKey: `${orderId}:RELEASE`, orderId, commandType: "RELEASE", payload: {} },
+    );
+    return { result };
+  }
+
+  public async listPendingCancellationRequests(): Promise<Order[]> {
+    const repository = this.repository as OrdersRepository & {
+      records?: Map<string, OrderRecord>;
+      getPendingCancellationRequests?: () => Promise<OrderRecord[]>;
+    };
+    const records = repository.records
+      ? [...repository.records.values()].filter((record) => (record as any).cancelRequestedAt && !(record as any).cancelResolvedAt)
+      : [];
+    return records.map((record) => OrderDomain.toOrderView(record));
   }
 
   private async returnExistingOrder(

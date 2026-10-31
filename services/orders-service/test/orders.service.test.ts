@@ -118,7 +118,7 @@ test("creates a valid order and stores it by orderId", async () => {
   assert.equal(order.subtotalCop, 130000);
   assert.equal(order.deliveryFeeCop, 12000);
   assert.equal(order.totalCop, 142000);
-  assert.equal(order.status, "PENDING");
+  assert.equal(order.status, "AWAITING_PAYMENT_PROOF");
   assert.equal(order.lines.length, 1);
 
   const persisted = await service.getOrderById(order.orderId);
@@ -146,7 +146,7 @@ test("writes the created event into the outbox before publishing", async () => {
   });
 
   const pendingOrder = await service.getOrderById(created.orderId);
-  assert.equal(pendingOrder?.status, "PENDING");
+  assert.equal(pendingOrder?.status, "RESERVING_INVENTORY");
   const pending = await outbox.listPending(new Date(Date.now() + OUTBOX_RETRY_BASE_DELAY_MS + 1));
   assert.equal(pending.length, 1);
   assert.equal(pending[0]?.event.eventType, "OrderCreated.v1");

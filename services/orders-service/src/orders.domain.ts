@@ -82,11 +82,11 @@ export class OrderDomain {
       subtotalCop,
       deliveryFeeCop,
       totalCop: subtotalCop + deliveryFeeCop,
-      status: "PENDING",
+      status: "RESERVING_INVENTORY",
       createdAt: now,
       updatedAt: now,
       requestFingerprint: command.idempotencyKey,
-      reservationExpiresAt: null,
+      reservationExpiresAt: new Date(now.getTime() + 30 * 60_000),
       lines: normalizedLines.map((line: CreateOrderCommand["lines"][number]) => ({
         id: crypto.randomUUID(),
         productId: line.productId,
@@ -110,6 +110,15 @@ export class OrderDomain {
     createdAt: string;
     updatedAt: string;
     lines: OrderLine[];
+    paymentDecision: null | {
+      decision: string;
+      decidedAt: string;
+      reason: string | null;
+    };
+    cancellationRequest?: {
+      requestedAt: string;
+      resolution: string | null;
+    } | null;
   } {
     return {
       id: record.id,
@@ -130,6 +139,16 @@ export class OrderDomain {
         quantity: line.quantity,
         unitPriceCop: line.unitPriceCop,
       })),
+      paymentDecision: null,
+      cancellationRequest: (record as OrderRecord & {
+        cancelRequestedAt?: Date;
+        cancelResolution?: string | null;
+      }).cancelRequestedAt
+        ? {
+            requestedAt: (record as any).cancelRequestedAt.toISOString(),
+            resolution: (record as any).cancelResolution ?? null,
+          }
+        : null,
     };
   }
 }
