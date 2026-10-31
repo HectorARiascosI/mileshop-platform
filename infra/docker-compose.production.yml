@@ -1,0 +1,92 @@
+services:
+  notification-worker:
+    build:
+      context: ..
+      dockerfile: infra/Dockerfile.node-service
+      args:
+        SERVICE_DIR: services/notification-worker
+        SERVICE_WORKSPACE: "@mileshop/notification-worker"
+    environment:
+      PORT: "3010"
+      DATABASE_URL: ${DATABASE_URL_NOTIFICATIONS:?Set DATABASE_URL_NOTIFICATIONS}
+      NOTIFICATION_SENDER_MODE: ${NOTIFICATION_SENDER_MODE:-log}
+    expose:
+      - "3010"
+    restart: unless-stopped
+
+  catalog-service:
+    build:
+      context: ..
+      dockerfile: infra/Dockerfile.node-service
+      args:
+        SERVICE_DIR: services/catalog-service
+        SERVICE_WORKSPACE: "@mileshop/catalog-service"
+    environment:
+      PORT: "3020"
+      DATABASE_URL: ${DATABASE_URL_CATALOG:?Set DATABASE_URL_CATALOG}
+      CATALOG_RESERVATION_TOKEN: ${CATALOG_RESERVATION_TOKEN:?Set CATALOG_RESERVATION_TOKEN}
+    expose:
+      - "3020"
+    restart: unless-stopped
+
+  orders-service:
+    build:
+      context: ..
+      dockerfile: infra/Dockerfile.node-service
+      args:
+        SERVICE_DIR: services/orders-service
+        SERVICE_WORKSPACE: "@mileshop/orders-service"
+    environment:
+      PORT: "3030"
+      DATABASE_URL: ${DATABASE_URL_ORDERS:?Set DATABASE_URL_ORDERS}
+      CATALOG_SERVICE_URL: http://catalog-service:3020
+      CATALOG_RESERVATION_TOKEN: ${CATALOG_RESERVATION_TOKEN:?Set CATALOG_RESERVATION_TOKEN}
+      NOTIFICATION_WORKER_URL: http://notification-worker:3010
+    depends_on:
+      catalog-service:
+        condition: service_started
+      notification-worker:
+        condition: service_started
+    expose:
+      - "3030"
+    restart: unless-stopped
+
+  identity-service:
+    build:
+      context: ..
+      dockerfile: infra/Dockerfile.node-service
+      args:
+        SERVICE_DIR: services/identity-service
+        SERVICE_WORKSPACE: "@mileshop/identity-service"
+    environment:
+      PORT: "3040"
+      DATABASE_URL: ${DATABASE_URL_IDENTITY:?Set DATABASE_URL_IDENTITY}
+      JWT_SECRET: ${JWT_SECRET:?Set JWT_SECRET}
+      ALLOWED_ORIGINS: ${WEB_ORIGIN:?Set WEB_ORIGIN}
+    expose:
+      - "3040"
+    restart: unless-stopped
+
+  api-gateway:
+    build:
+      context: ..
+      dockerfile: infra/Dockerfile.node-service
+      args:
+        SERVICE_DIR: services/api-gateway
+        SERVICE_WORKSPACE: "@mileshop/api-gateway"
+    environment:
+      PORT: "3000"
+      CATALOG_SERVICE_URL: http://catalog-service:3020
+      ORDERS_SERVICE_URL: http://orders-service:3030
+      IDENTITY_SERVICE_URL: http://identity-service:3040
+      ALLOWED_ORIGINS: ${WEB_ORIGIN:?Set WEB_ORIGIN}
+    depends_on:
+      catalog-service:
+        condition: service_started
+      orders-service:
+        condition: service_started
+      identity-service:
+        condition: service_started
+    ports:
+      - "${API_BIND_ADDRESS:-127.0.0.1}:${API_PORT:-3000}:3000"
+    restart: unless-stopped

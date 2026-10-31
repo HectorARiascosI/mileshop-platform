@@ -68,7 +68,8 @@ Los diagramas futuros solo se agregan cuando exista la infraestructura, contrato
 - [ ] despliegue productivo con infraestructura aprobada;
 - [ ] seguridad de identidad, autorización y threat model;
 - [ ] observabilidad con métricas, trazas y alertas reales;
-- [ ] outbox, broker y recuperación de eventos;
+- [x] outbox transaccional y recuperación de eventos;
+- [ ] broker;
 - [ ] dominio de clientes persistente;
 - [ ] administración editorial y comercial;
 - [ ] promociones, banners, variantes y categorías implementadas;

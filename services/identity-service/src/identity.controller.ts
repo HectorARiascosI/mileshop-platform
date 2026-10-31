@@ -29,6 +29,11 @@ export class IdentityController {
     return { status: "ok", service: "identity-service" };
   }
 
+  @Get("readyz")
+  public readiness(): { status: "ready"; service: string } {
+    return { status: "ready", service: "identity-service" };
+  }
+
   @Post("auth/register")
   public async register(
     @Body() body: unknown,

@@ -1,4 +1,5 @@
 import { CatalogShell } from "@/components/catalog-shell";
+import { getApiGatewayEndpoint } from "@/lib/api-gateway-url";
 
 type Product = {
   id: string;
@@ -15,10 +16,13 @@ type CatalogResult = {
 };
 
 async function getCatalog(): Promise<CatalogResult> {
-  const gatewayUrl = process.env.API_GATEWAY_URL ?? "http://localhost:3000";
+  const endpoint = getApiGatewayEndpoint("/catalog/products");
+  if (!endpoint) {
+    return { products: [], unavailable: true };
+  }
 
   try {
-    const response = await fetch(`${gatewayUrl}/catalog/products`, {
+    const response = await fetch(endpoint, {
       cache: "no-store",
     });
 

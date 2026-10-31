@@ -7,6 +7,8 @@ export const orderCreatedSchema = z.object({
   aggregateId: z.string().min(1),
   payload: z.object({
     customerId: z.string().min(1),
+    subtotalCop: z.number().int().nonnegative().optional(),
+    deliveryFeeCop: z.number().int().nonnegative().optional(),
     totalCop: z.number().int().nonnegative(),
     currency: z.literal("COP"),
     lines: z.array(

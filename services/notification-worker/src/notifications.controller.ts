@@ -21,6 +21,11 @@ export class NotificationsController {
     return { status: "ok" };
   }
 
+  @Get("readyz")
+  public readiness(): { status: "ready" } {
+    return { status: "ready" };
+  }
+
   @Post("events/order-created")
   public async orderCreated(@Body() body: unknown): Promise<{ status: string }> {
     const parsed = orderCreatedSchema.safeParse(body);

@@ -1,4 +1,4 @@
-import { Injectable, NestMiddleware, UnauthorizedException, Inject } from "@nestjs/common";
+﻿import { Injectable, NestMiddleware, UnauthorizedException, Inject } from "@nestjs/common";
 import type { FastifyRequest, FastifyReply } from "fastify";
 
 export const IDENTITY_SERVICE_URL = "IDENTITY_SERVICE_URL";
@@ -15,14 +15,21 @@ export class AuthMiddleware implements NestMiddleware {
     _res: FastifyReply["raw"],
     next: () => void,
   ): Promise<void> {
-    const authHeader = (req.headers as Record<string, string>)["authorization"] ?? "";
+    const authHeader = this.getHeaderValue(
+      req.headers as Record<string, string | string[] | undefined>,
+      "authorization",
+    );
+
     if (!authHeader.startsWith("Bearer ")) {
       throw new UnauthorizedException("Missing authorization token");
     }
 
     const token = authHeader.slice(7).trim();
-    let response: Response;
+    if (!token) {
+      throw new UnauthorizedException("Missing authorization token");
+    }
 
+    let response: Response;
     try {
       response = await this.fetcher(`${this.identityServiceUrl}/auth/me`, {
         headers: { authorization: `Bearer ${token}` },
@@ -45,5 +52,14 @@ export class AuthMiddleware implements NestMiddleware {
     req.customerId = body.customerId;
     req.email = body.email;
     next();
+  }
+
+  private getHeaderValue(headers: Record<string, string | string[] | undefined>, name: string): string {
+    const value = headers[name];
+    if (Array.isArray(value)) {
+      return value[0] ?? "";
+    }
+
+    return typeof value === "string" ? value : "";
   }
 }

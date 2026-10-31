@@ -26,7 +26,7 @@ flowchart LR
     Gateway --> Identity[Identity Service\n:3040]
     Gateway --> Catalog[Catalog Service\n:3020]
     Gateway --> Orders[Orders Service\n:3030]
-    Gateway --> Worker[Notification Worker\n:3010]
+    Orders --> Worker[Notification Worker\n:3010]
     Identity --> IdentityDb[(Identity PostgreSQL\n:5436)]
     Catalog --> CatalogDb[(Catalog PostgreSQL\n:5434)]
     Orders --> OrdersDb[(Orders PostgreSQL\n:5435)]
@@ -42,18 +42,18 @@ flowchart LR
     Customer[Cliente autenticado\ncontexto de identidad]
     IdentityCtx[Identidad\nautenticación y sesión]
     CatalogCtx[Catálogo\nproductos y stock]
-    OrdersCtx[Pedidos\nvalidación, total y persistencia]
+    OrdersCtx[Pedidos\nvalidación, importes, persistencia e idempotencia]
     NotificationCtx[Notificaciones\neventId y entrega]
 
     Customer -->|registro y login| IdentityCtx
-    Customer -->|consulta y checkout| CatalogCtx
-    Customer -->|customerId verificado + líneas| OrdersCtx
-    IdentityCtx -->|verifica token JWT| OrdersCtx
-    OrdersCtx -->|OrderCreated.v1 por HTTP| NotificationCtx
+    Customer -->|consulta catálogo| CatalogCtx
+    Customer -->|checkout por API Gateway| OrdersCtx
+    IdentityCtx -->|Gateway verifica JWT y pasa customerId| OrdersCtx
+    OrdersCtx -->|OrderCreated.v1 por HTTP + outbox| NotificationCtx
     OrdersCtx -.->|productId y snapshot de línea| CatalogCtx
 ```
 
-La relación punteada entre catálogo y pedidos no es una lectura directa: el pedido almacena un snapshot de los datos recibidos. El `customerId` que llega al servicio de pedidos está verificado por el servidor mediante `AuthMiddleware` en el gateway.
+La relación punteada representa una consulta HTTP del servicio de pedidos al catálogo para validar estado, SKU, precio y stock. El pedido almacena un snapshot de las líneas y no crea una foreign key entre bases de datos. El `customerId` que llega al servicio de pedidos está verificado por el servidor mediante `AuthMiddleware` en el gateway.
 
 ### 2.2 Componentes y ownership
 
@@ -75,7 +75,7 @@ flowchart TB
     Gateway -->|POST /auth/register\nPOST /auth/login\nPOST /auth/refresh\nPOST /auth/logout\nGET /auth/me\nPOST /auth/verify-token| Identity
     Gateway -->|GET /products| Catalog
     Gateway -->|POST /orders\nGET /orders/:orderId| Orders
-    Gateway -->|POST /events/order-created| Worker
+    Orders -->|POST /events/order-created| Worker
     Web -.-> Contracts
     Identity --> IdentityDb
     Catalog --> CatalogDb
@@ -90,7 +90,8 @@ Ownership actual:
 | Identidad y sesión | `identity-service` | `services/identity-service/prisma/schema.prisma` |
 | Productos activos | `catalog-service` | `services/catalog-service/prisma/schema.prisma` |
 | Pedido y líneas | `orders-service` | `services/orders-service/prisma/schema.prisma` |
-| Entrega idempotente | `notification-worker` | `NotificationDelivery` y `eventId` único |
+| Outbox y reintentos de publicación | `orders-service` | `OrderEventOutbox`, `eventId` único y recuperación periódica |
+| Deduplicación de entrega | `notification-worker` | `NotificationDelivery` y `eventId` único |
 | Composición pública | `api-gateway` | `gateway.controller.ts` y `orders.service.ts` |
 | Checkout y autenticación web | `apps/web` | `catalog-shell.tsx`, `login/page.tsx` y `register/page.tsx` |
 
@@ -100,7 +101,8 @@ Ownership actual:
 | --- | --- | --- |
 | Gateway | `GET /healthz` | estado del gateway |
 | Gateway | `GET /catalog/products` | catálogo activo compuesto desde catálogo |
-| Gateway | `POST /orders` | persiste el pedido y publica el evento (requiere JWT) |
+| Gateway | `POST /orders` | requiere JWT y `Idempotency-Key`; delega la creación y publicación al servicio de pedidos |
+| Gateway | `GET /orders/:orderId` | requiere JWT y solo retorna pedidos del cliente autenticado |
 | Gateway | `POST /auth/register` | proxy hacia identity-service, crea cuenta |
 | Gateway | `POST /auth/login` | proxy hacia identity-service, devuelve tokens |
 | Gateway | `POST /auth/refresh` | proxy hacia identity-service, renueva access token |
@@ -116,8 +118,8 @@ Ownership actual:
 | Catalog | `GET /healthz` | estado del catálogo |
 | Catalog | `GET /products` | productos activos ordenados por nombre |
 | Orders | `GET /healthz` | estado de pedidos |
-| Orders | `POST /orders` | valida, calcula total y persiste |
-| Orders | `GET /orders/:orderId` | recupera pedido y líneas |
+| Orders | `POST /orders` | valida líneas contra catálogo, calcula subtotal/envío/total, persiste en `PENDING` y devuelve el evento; requiere clave de idempotencia |
+| Orders | `GET /orders/:orderId` | recupera pedido, estado, importes y líneas |
 | Worker | `GET /healthz` | estado de notificaciones |
 | Worker | `POST /events/order-created` | reclama, deduplica y procesa el evento |
 
@@ -160,23 +162,30 @@ sequenceDiagram
     G->>ID: POST /auth/login
     ID-->>G: JWT (15 min) + refresh token
     G-->>W: httpOnly cookie con tokens
-    C->>W: confirma carrito
+    C->>W: POST /api/orders (cookie httpOnly + Idempotency-Key UUID)
+    Note over W,G: El proxy Next.js lee la cookie y envía el access token como Authorization
     W->>G: POST /orders (Authorization: Bearer JWT)
     G->>ID: POST /auth/verify-token
     ID-->>G: payload del token verificado
-    G->>ORD: POST /orders (customerId verificado)
-    ORD->>CAT: GET /products\nvalida identidad, precio y stock
+    G->>ORD: POST /orders (customerId verificado + Idempotency-Key)
+    ORD->>CAT: GET /products\nvalida producto, SKU, precio y stock disponible
     CAT-->>ORD: producto activo y disponibilidad
-    ORD->>ORD: valida payload y calcula total
-    ORD-->>G: pedido persistido
-    G->>N: POST /events/order-created
+    ORD->>ORD: valida, calcula subtotal/envío/total y persiste pedido PENDING
+    ORD->>ORD: agrega evento al outbox
+    ORD->>N: POST /events/order-created
     N->>NDB: crea eventId único
     N->>NDB: marca entrega SENT
-    N-->>G: estado de notificación
-    G-->>W: orderId, total y evento
+    N-->>ORD: estado de notificación
+    ORD-->>G: orderId, estado e importes persistidos
+    G-->>W: resultado del pedido
+    W->>G: GET /orders/:orderId
+    G->>ID: verifica JWT
+    G->>ORD: GET /orders/:orderId
+    ORD-->>G: estado e importes persistidos
+    G-->>W: pedido propio del cliente
 ```
 
-El gateway persiste antes de publicar la notificación. La operación no tiene todavía outbox transaccional; si el worker falla después de persistir, el pedido queda creado y la recuperación depende de reintentar el evento.
+`orders-service` es propietario de la creación del pedido, su clave de idempotencia y el outbox persistente. El pedido, sus líneas y el evento de outbox se guardan en una transacción PostgreSQL; la publicación HTTP al worker comienza después del commit. Si la publicación falla, el pedido sigue en `PENDING` y el servicio reintenta con backoff hasta ocho intentos; el checkout consulta el estado real y no presupone confirmación.
 
 ### 2.5 Modelo de datos implementado
 
@@ -213,7 +222,10 @@ erDiagram
     ORDER {
         string id PK
         string orderId UK
+        string idempotencyKey UK
         string customerId
+        int subtotalCop
+        int deliveryFeeCop
         int totalCop
         string status
         datetime createdAt
@@ -238,6 +250,19 @@ erDiagram
         datetime createdAt
         datetime updatedAt
     }
+    ORDER_EVENT_OUTBOX {
+        string id PK
+        string eventId UK
+        string eventType
+        string aggregateId
+        json payload
+        string status
+        int attemptCount
+        datetime nextAttemptAt
+        datetime publishedAt
+        datetime createdAt
+        datetime updatedAt
+    }
     CUSTOMER ||--|{ REFRESH_TOKEN : has
     ORDER ||--|{ ORDER_LINE : contains
 ```
@@ -252,21 +277,23 @@ stateDiagram-v2
     PENDING --> [*]: lectura actual
 ```
 
-El schema permite texto libre y el dominio tipa `PENDING`, `CONFIRMED` y `CANCELLED`, pero todavía no existen endpoints ni transiciones implementadas para confirmar o cancelar. Estados adicionales como `READY_FOR_DISPATCH` y `COMPLETED` son objetivo, no comportamiento actual.
+El estado inicial es `PENDING`. Aunque el tipo de dominio incluye `CONFIRMED` y `CANCELLED`, todavía no existen endpoints ni transiciones implementadas para confirmar o cancelar. La publicación del evento no cambia el estado del pedido. Estados adicionales como `READY_FOR_DISPATCH` y `COMPLETED` son objetivo, no comportamiento actual.
 
 ### 2.7 Evento `OrderCreated.v1`
 
 ```mermaid
 flowchart LR
-    Persisted[Order persistido] --> Event[OrderCreated.v1]
+    Persisted[Order persistido] --> Outbox[OrderEventOutbox PENDING]
+    Outbox --> Event[OrderCreated.v1]
     Event --> Worker[Notification Worker]
     Worker --> Claim[eventId único]
     Claim --> Sent[SENT]
-    Claim --> Failed[FAILED + lastError]
-    Failed --> Retry[reintento incrementa attempts]
+    Worker --> Failed[fallo de publicación]
+    Failed --> Retry[outbox reintenta con backoff]
+    Retry --> Worker
 ```
 
-El evento se construye en `services/api-gateway/src/orders.service.ts`. El worker deduplica mediante `NotificationDelivery.eventId`. No hay broker externo ni outbox persistente del productor.
+El evento se construye desde `services/orders-service/src/orders.service.ts`; el pedido, sus líneas y la fila outbox se persisten en una única transacción antes de cualquier envío HTTP. La outbox registra el payload, el número de intentos y el próximo reintento; tras ocho intentos fallidos requiere intervención. El worker deduplica mediante `NotificationDelivery.eventId`. No hay broker externo.
 
 ### 2.8 Despliegue local
 
@@ -315,7 +342,7 @@ Estos elementos pertenecen al producto planificado y no deben aparecer en los di
 - promociones, banners, notas, categorías y variantes;
 - estados avanzados del pedido y sus transiciones;
 - adaptador real de WhatsApp;
-- broker y outbox transaccional;
+- broker externo;
 - despliegue remoto, observabilidad y backup productivos.
 
 ## 4. Matriz de trazabilidad documental

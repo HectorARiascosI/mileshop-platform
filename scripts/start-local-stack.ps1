@@ -74,10 +74,10 @@ $logDirectory = Join-Path $repoRoot '.local-stack\logs'
 New-Item -ItemType Directory -Path $logDirectory -Force | Out-Null
 
 $catalogEnv = @{ DATABASE_URL = $catalogDatabaseUrl }
-$workerEnv = @{ DATABASE_URL = $notificationDatabaseUrl }
-$ordersEnv = @{ DATABASE_URL = $ordersDatabaseUrl; CATALOG_SERVICE_URL = 'http://127.0.0.1:3020' }
+$workerEnv = @{ DATABASE_URL = $notificationDatabaseUrl; NOTIFICATION_SENDER_MODE = 'log' }
+$ordersEnv = @{ DATABASE_URL = $ordersDatabaseUrl; CATALOG_SERVICE_URL = 'http://127.0.0.1:3020'; NOTIFICATION_WORKER_URL = 'http://127.0.0.1:3010' }
 $identityEnv = @{ DATABASE_URL = $identityDatabaseUrl; JWT_SECRET = 'mileshop-local-dev-secret-change-in-prod'; JWT_EXPIRES_IN = '15m'; REFRESH_TOKEN_EXPIRES_DAYS = '30'; ALLOWED_ORIGINS = 'http://localhost:3001' }
-$gatewayEnv = @{ CATALOG_SERVICE_URL = 'http://127.0.0.1:3020'; NOTIFICATION_WORKER_URL = 'http://127.0.0.1:3010'; ORDERS_SERVICE_URL = 'http://127.0.0.1:3030'; IDENTITY_SERVICE_URL = 'http://127.0.0.1:3040' }
+$gatewayEnv = @{ CATALOG_SERVICE_URL = 'http://127.0.0.1:3020'; ORDERS_SERVICE_URL = 'http://127.0.0.1:3030'; IDENTITY_SERVICE_URL = 'http://127.0.0.1:3040' }
 
 $jobs = @(
     @{ Port = '3040'; Workspace = '@mileshop/identity-service'; EnvMap = $identityEnv },
@@ -99,12 +99,17 @@ Wait-ForHttp -Uri 'http://localhost:3010/healthz' -TimeoutSeconds 60 | Out-Host
 Wait-ForHttp -Uri 'http://localhost:3020/healthz' -TimeoutSeconds 60 | Out-Host
 Wait-ForHttp -Uri 'http://localhost:3030/healthz' -TimeoutSeconds 60 | Out-Host
 
-Write-Host '==> Health checks...'
+Write-Host '==> Health and readiness checks...'
 Invoke-WebRequest -Uri 'http://localhost:3040/healthz' -UseBasicParsing | Select-Object -ExpandProperty Content | Out-Host
+Invoke-WebRequest -Uri 'http://localhost:3040/readyz' -UseBasicParsing | Select-Object -ExpandProperty Content | Out-Host
 Invoke-WebRequest -Uri 'http://localhost:3000/healthz' -UseBasicParsing | Select-Object -ExpandProperty Content | Out-Host
+Invoke-WebRequest -Uri 'http://localhost:3000/readyz' -UseBasicParsing | Select-Object -ExpandProperty Content | Out-Host
 Invoke-WebRequest -Uri 'http://localhost:3010/healthz' -UseBasicParsing | Select-Object -ExpandProperty Content | Out-Host
+Invoke-WebRequest -Uri 'http://localhost:3010/readyz' -UseBasicParsing | Select-Object -ExpandProperty Content | Out-Host
 Invoke-WebRequest -Uri 'http://localhost:3020/healthz' -UseBasicParsing | Select-Object -ExpandProperty Content | Out-Host
+Invoke-WebRequest -Uri 'http://localhost:3020/readyz' -UseBasicParsing | Select-Object -ExpandProperty Content | Out-Host
 Invoke-WebRequest -Uri 'http://localhost:3030/healthz' -UseBasicParsing | Select-Object -ExpandProperty Content | Out-Host
+Invoke-WebRequest -Uri 'http://localhost:3030/readyz' -UseBasicParsing | Select-Object -ExpandProperty Content | Out-Host
 
 Write-Host '==> Catalog smoke test...'
 Invoke-WebRequest -Uri 'http://localhost:3000/catalog/products' -UseBasicParsing | Select-Object -ExpandProperty Content | Out-Host

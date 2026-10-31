@@ -43,6 +43,8 @@ test("construye el evento de pedido con datos del cliente y líneas de compra", 
 
   assert.equal(event.eventType, "OrderCreated.v1");
   assert.equal(event.payload.customerId, "customer-42");
+  assert.equal(event.payload.subtotalCop, 130000);
+  assert.equal(event.payload.deliveryFeeCop, 12000);
   assert.equal(event.payload.totalCop, 142000);
   assert.equal(event.payload.lines.length, 1);
   assert.equal(event.payload.lines[0]?.sku, "SKU-01");

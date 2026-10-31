@@ -57,6 +57,8 @@ export function buildOrderCreatedEvent(lines: CartLine[], customerId = "guest-us
     aggregateId: orderId,
     payload: {
       customerId,
+      subtotalCop: summary.subtotalCop,
+      deliveryFeeCop: summary.deliveryFeeCop,
       totalCop: summary.totalCop,
       currency: "COP",
       lines: normalizedLines.map((line) => ({

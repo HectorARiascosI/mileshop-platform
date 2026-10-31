@@ -1,23 +1,27 @@
 import { cookies } from "next/headers";
 
+import { getApiGatewayEndpoint } from "@/lib/api-gateway-url";
+import { clearSessionCookies } from "@/lib/auth-session";
+
 export async function POST() {
   const cookieStore = await cookies();
   const refreshToken = cookieStore.get("refreshToken")?.value;
 
-  const gatewayUrl = process.env.API_GATEWAY_URL ?? "http://localhost:3000";
+  const endpoint = getApiGatewayEndpoint("/auth/logout");
 
-  try {
-    await fetch(`${gatewayUrl}/auth/logout`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ refreshToken }),
-    });
-  } catch {
-    // Best-effort: proceed to delete cookies even if the gateway call fails
+  if (endpoint) {
+    try {
+      await fetch(endpoint, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ refreshToken }),
+      });
+    } catch {
+      // Best-effort: proceed to delete cookies even if the gateway call fails.
+    }
   }
 
-  cookieStore.delete("accessToken");
-  cookieStore.delete("refreshToken");
+  await clearSessionCookies();
 
   return new Response(null, { status: 204 });
 }

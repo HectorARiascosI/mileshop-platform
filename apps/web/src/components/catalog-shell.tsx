@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useState, useSyncExternalStore } from "react";
 
 import {
   addProductToCart,
@@ -12,6 +12,12 @@ import {
   type CartLine,
 } from "@/lib/cart";
 import { buildCheckoutSummary } from "@/lib/order";
+import {
+  buildWhatsAppOrderUrl,
+  normalizeWhatsAppBusinessPhone,
+  isWhatsAppOrderSummary,
+  type WhatsAppOrderSummary,
+} from "@/lib/whatsapp-order";
 
 type Product = {
   id: string;
@@ -28,6 +34,20 @@ type CatalogShellProps = {
 };
 
 const STORAGE_KEY = "mileshop-cart-v1";
+const IDEMPOTENCY_STORAGE_KEY = "mileshop-checkout-idempotency-v1";
+const WHATSAPP_BUSINESS_PHONE = process.env.NEXT_PUBLIC_WHATSAPP_BUSINESS_PHONE;
+
+function subscribeToHydration(): () => void {
+  return () => {};
+}
+
+function getClientHydrationSnapshot(): boolean {
+  return true;
+}
+
+function getServerHydrationSnapshot(): boolean {
+  return false;
+}
 
 function formatPrice(priceCop: number): string {
   return new Intl.NumberFormat("es-CO", {
@@ -37,8 +57,35 @@ function formatPrice(priceCop: number): string {
   }).format(priceCop);
 }
 
+function getIdempotencyKey(cart: CartLine[]): string {
+  const fingerprint = JSON.stringify(
+    cart.map(({ productId, quantity, priceCop }) => ({ productId, quantity, priceCop })),
+  );
+  const stored = window.localStorage.getItem(IDEMPOTENCY_STORAGE_KEY);
+
+  if (stored) {
+    try {
+      const parsed = JSON.parse(stored) as { fingerprint?: string; key?: string };
+      if (parsed.fingerprint === fingerprint && parsed.key) {
+        return parsed.key;
+      }
+    } catch {
+      window.localStorage.removeItem(IDEMPOTENCY_STORAGE_KEY);
+    }
+  }
+
+  const key = window.crypto.randomUUID();
+  window.localStorage.setItem(IDEMPOTENCY_STORAGE_KEY, JSON.stringify({ fingerprint, key }));
+  return key;
+}
+
 export function CatalogShell({ products, unavailable }: CatalogShellProps) {
   const router = useRouter();
+  const isCartHydrated = useSyncExternalStore(
+    subscribeToHydration,
+    getClientHydrationSnapshot,
+    getServerHydrationSnapshot,
+  );
   const [cart, setCart] = useState<CartLine[]>(() => {
     if (typeof window === "undefined") {
       return [];
@@ -59,13 +106,19 @@ export function CatalogShell({ products, unavailable }: CatalogShellProps) {
   });
   const [isCartOpen, setIsCartOpen] = useState(false);
   const [orderConfirmed, setOrderConfirmed] = useState(false);
+  const [isSubmitting, setIsSubmitting] = useState(false);
+  const [checkoutError, setCheckoutError] = useState<string | null>(null);
 
   useEffect(() => {
+    if (!isCartHydrated) {
+      return;
+    }
     window.localStorage.setItem(STORAGE_KEY, JSON.stringify(cart));
-  }, [cart]);
+  }, [cart, isCartHydrated]);
 
-  const cartCount = useMemo(() => getCartItemCount(cart), [cart]);
-  const checkoutSummary = useMemo(() => buildCheckoutSummary(cart), [cart]);
+  const visibleCart = isCartHydrated ? cart : [];
+  const cartCount = getCartItemCount(visibleCart);
+  const checkoutSummary = buildCheckoutSummary(visibleCart);
 
   const handleAddToCart = (product: Product) => {
     setCart((currentCart) =>
@@ -105,23 +158,40 @@ export function CatalogShell({ products, unavailable }: CatalogShellProps) {
   };
 
   const handleCheckout = async () => {
-    if (cart.length === 0) {
+    if (cart.length === 0 || isSubmitting) {
       return;
     }
 
-    const session = await fetch("/api/auth/me").then((r) => (r.ok ? r.json() : null));
-    if (!session) {
-      router.push("/login");
-      return;
+    let whatsappWindow: Window | null = null;
+    if (normalizeWhatsAppBusinessPhone(WHATSAPP_BUSINESS_PHONE)) {
+      // Open synchronously from the user's click so the browser does not block
+      // the later WhatsApp navigation after the order API request completes.
+      whatsappWindow = window.open("about:blank", "_blank");
+      if (whatsappWindow) {
+        whatsappWindow.opener = null;
+      }
     }
 
+    setIsSubmitting(true);
+    setCheckoutError(null);
     try {
+      const sessionResponse = await fetch("/api/auth/me");
+      if (!sessionResponse.ok) {
+        whatsappWindow?.close();
+        router.push("/login");
+        return;
+      }
+
+      const idempotencyKey = getIdempotencyKey(cart);
       // POST goes through the Next.js API route so the server can attach
       // the httpOnly accessToken cookie as an Authorization header.
       // The client never touches the token directly.
       const response = await fetch("/api/orders", {
         method: "POST",
-        headers: { "content-type": "application/json" },
+        headers: {
+          "content-type": "application/json",
+          "idempotency-key": idempotencyKey,
+        },
         body: JSON.stringify({
           lines: cart.map((line) => ({
             productId: line.productId,
@@ -137,39 +207,33 @@ export function CatalogShell({ products, unavailable }: CatalogShellProps) {
         throw new Error("No se pudo confirmar la orden");
       }
 
-      const payload = (await response.json()) as {
-        data: {
-          orderId: string;
-          totalCop: number;
-          event: {
-            payload: {
-              customerId: string;
-              totalCop: number;
-              currency: "COP";
-              lines: Array<{
-                productId: string;
-                sku: string;
-                name: string;
-                quantity: number;
-                unitPriceCop: number;
-              }>;
-            };
-          };
-        };
-      };
+      const payload = (await response.json()) as { data?: unknown };
+      if (!isWhatsAppOrderSummary(payload.data)) {
+        throw new Error("Orders service returned an invalid persisted order");
+      }
 
-      const order = {
-        aggregateId: payload.data.orderId,
-        payload: payload.data.event.payload,
-      };
+      const persistedOrder: WhatsAppOrderSummary = payload.data;
+      const whatsappUrl = buildWhatsAppOrderUrl(WHATSAPP_BUSINESS_PHONE, persistedOrder);
+      if (whatsappWindow && whatsappUrl) {
+        try {
+          whatsappWindow.location.replace(whatsappUrl);
+        } catch {
+          whatsappWindow.close();
+        }
+      } else {
+        whatsappWindow?.close();
+      }
 
-      window.localStorage.setItem("mileshop-last-order-v1", JSON.stringify(order));
+      window.localStorage.removeItem(IDEMPOTENCY_STORAGE_KEY);
       setOrderConfirmed(true);
       setCart([]);
       setIsCartOpen(true);
-      router.push("/checkout");
+      router.push(`/checkout?orderId=${encodeURIComponent(persistedOrder.orderId)}`);
     } catch {
-      window.alert("No pudimos confirmar tu pedido en este momento. Inténtalo de nuevo.");
+      whatsappWindow?.close();
+      setCheckoutError("No pudimos confirmar la respuesta. Puedes volver a intentarlo sin duplicar tu pedido.");
+    } finally {
+      setIsSubmitting(false);
     }
   };
 
@@ -262,11 +326,11 @@ export function CatalogShell({ products, unavailable }: CatalogShellProps) {
           </button>
         </div>
 
-        {cart.length === 0 ? (
+        {visibleCart.length === 0 ? (
           orderConfirmed ? (
             <div className="notice notice-success" role="status">
-              <strong>Pedido confirmado.</strong>
-              <span>Tu compra quedó registrada en MileShop y ya puedes seguir explorando el catálogo.</span>
+              <strong>Pedido registrado.</strong>
+              <span>Tu compra quedó guardada en MileShop. Revisa y envía el resumen que se abre en WhatsApp.</span>
             </div>
           ) : (
             <p className="empty-cart">Todavía no has agregado productos.</p>
@@ -274,7 +338,7 @@ export function CatalogShell({ products, unavailable }: CatalogShellProps) {
         ) : (
           <>
             <ul className="cart-items">
-              {cart.map((item) => (
+              {visibleCart.map((item) => (
                 <li key={item.productId} className="cart-item">
                   <div>
                     <strong>{item.name}</strong>
@@ -306,7 +370,7 @@ export function CatalogShell({ products, unavailable }: CatalogShellProps) {
                 <strong>{formatPrice(checkoutSummary.subtotalCop)}</strong>
               </div>
               <div>
-                <span>Envío</span>
+                <span>Envío estimado</span>
                 <strong>{checkoutSummary.isFreeDelivery ? "Gratis" : formatPrice(checkoutSummary.deliveryFeeCop)}</strong>
               </div>
               <div className="checkout-total">
@@ -315,9 +379,14 @@ export function CatalogShell({ products, unavailable }: CatalogShellProps) {
               </div>
             </div>
 
+            <p className="notice">
+              Al confirmar, guardaremos tu pedido y abriremos WhatsApp con el resumen para que lo revises y lo envíes.
+              Si pagas por transferencia, adjunta el comprobante manualmente en ese chat.
+            </p>
             <button className="checkout-button" type="button" onClick={handleCheckout}>
-              Confirmar pedido
+              {isSubmitting ? "Guardando pedido..." : "Confirmar y abrir WhatsApp"}
             </button>
+            {checkoutError && <p className="notice-error" role="alert">{checkoutError}</p>}
           </>
         )}
       </aside>

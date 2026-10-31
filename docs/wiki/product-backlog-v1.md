@@ -55,9 +55,11 @@ La v1 actual está construida alrededor de cuatro procesos ejecutables: storefro
 
 - valida `customerId` y líneas no vacías;
 - exige cantidades positivas y precios enteros no negativos;
-- calcula `totalCop` desde las líneas recibidas;
+- calcula subtotal, envío y total en `orders-service`; el cliente solo aporta precios que se vuelven a validar contra catálogo;
+- exige una clave de idempotencia única y devuelve el pedido existente al repetir la misma solicitud del cliente;
 - persiste pedido y líneas en PostgreSQL propio;
-- devuelve estado inicial `PENDING` y `orderId` único.
+- devuelve estado inicial `PENDING` y `orderId` único;
+- permite consultar el pedido por gateway solo a su cliente autenticado.
 
 **Limitación:** valida precio, identidad de línea y stock disponible contra el catálogo activo, pero todavía no reserva ni decrementa stock y no tiene transiciones de estado operativas.
 
@@ -65,11 +67,11 @@ La v1 actual está construida alrededor de cuatro procesos ejecutables: storefro
 
 **Estado:** Parcial implementado.
 
-**Evidencia:** `packages/contracts`, `api-gateway/src/orders.service.ts`, prueba del gateway y `POST /events/order-created`.
+**Evidencia:** `packages/contracts`, `orders-service/src/orders.service.ts`, prueba del servicio y `POST /events/order-created`.
 
-**Incluye hoy:** evento `OrderCreated.v1` construido después de persistir el pedido y enviado por HTTP al worker.
+**Incluye hoy:** evento `OrderCreated.v1` persistido en la misma transacción PostgreSQL que el pedido y sus líneas, y enviado por HTTP al worker tras el commit; falla de notificación no revierte ni oculta el pedido persistido.
 
-**Limitaciones:** el productor es el gateway, no `orders-service`; no existe outbox transaccional, broker ni reintento durable del productor.
+**Limitaciones:** no existe broker.
 
 ### BL-06 — Deduplicación de notificaciones
 
@@ -143,14 +145,18 @@ La v1 actual está construida alrededor de cuatro procesos ejecutables: storefro
 
 ### P0-03 — Contrato de error y recuperación de compra
 
+**Estado:** Implementado en código; pendiente repetir el smoke test con las migraciones nuevas aplicadas.
+
 **Objetivo:** que el storefront no confirme falsamente un pedido cuando falla persistencia o notificación.
 
 **Criterios de aceptación:**
 
-- el frontend muestra estado específico para fallo de orders-service;
-- el pedido creado con fallo posterior de notificación queda trazable;
+- el checkout diferencia el pedido recibido del estado persistido y vuelve a consultarlo desde el gateway;
+- el pedido creado con fallo posterior de notificación queda persistido con estado `PENDING`;
 - existe estrategia explícita de reintento del evento;
-- la respuesta pública no expone detalles internos ni produce duplicados.
+- la respuesta pública no expone detalles internos ni produce duplicados al reintentar con la misma clave.
+
+**Validación pendiente:** `npm run verify:local-purchase` contra una stack reiniciada con la migración de importes e idempotencia aplicada.
 
 **Ownership:** gateway, web y worker.
 
@@ -179,7 +185,7 @@ La v1 actual está construida alrededor de cuatro procesos ejecutables: storefro
 
 ### P2 — Plataforma productiva
 
-- outbox transaccional y transporte asíncrono durable;
+- broker y transporte asíncrono durable;
 - observabilidad con métricas, trazas y alertas;
 - despliegue cloud, secretos, backups y restore probado;
 - threat model, autorización administrativa y auditoría;

@@ -1,13 +1,14 @@
 import {
   BadRequestException,
+  ConflictException,
   Inject,
   Injectable,
+  NotFoundException,
   ServiceUnavailableException,
 } from "@nestjs/common";
 
 export const ORDER_FETCH = "ORDER_FETCH";
 export const ORDERS_SERVICE_URL = "ORDERS_SERVICE_URL";
-export const NOTIFICATION_WORKER_URL = "NOTIFICATION_WORKER_URL";
 
 export type OrderLineInput = {
   productId: string;
@@ -18,8 +19,20 @@ export type OrderLineInput = {
 };
 
 export type CreateOrderInput = {
-  customerId: string;
   lines: OrderLineInput[];
+};
+
+export type OrderResult = {
+  orderId: string;
+  customerId: string;
+  subtotalCop: number;
+  deliveryFeeCop: number;
+  totalCop: number;
+  status: string;
+  createdAt: string;
+  updatedAt: string;
+  lines: OrderLineInput[];
+  event?: OrderEvent;
 };
 
 export type OrderEvent = {
@@ -29,6 +42,8 @@ export type OrderEvent = {
   aggregateId: string;
   payload: {
     customerId: string;
+    subtotalCop?: number;
+    deliveryFeeCop?: number;
     totalCop: number;
     currency: "COP";
     lines: Array<{
@@ -41,32 +56,42 @@ export type OrderEvent = {
   };
 };
 
-export type CreatedOrderResult = {
-  orderId: string;
-  totalCop: number;
-  event: OrderEvent;
-};
+export type CreatedOrderResult = OrderResult & { event: OrderEvent };
 
 @Injectable()
 export class OrderService {
   public constructor(
     @Inject(ORDER_FETCH) private readonly fetcher: typeof fetch,
-    @Inject(NOTIFICATION_WORKER_URL) private readonly notificationWorkerUrl: string,
     @Inject(ORDERS_SERVICE_URL) private readonly ordersServiceUrl: string,
   ) {}
 
-  public async createOrder(input: CreateOrderInput): Promise<CreatedOrderResult> {
+  public async createOrder(
+    input: CreateOrderInput,
+    customerId: string,
+    idempotencyKey: string,
+  ): Promise<CreatedOrderResult> {
     const normalizedLines = input.lines.filter((line) => line.quantity > 0);
-    const orderResponse = await this.fetcher(`${this.ordersServiceUrl}/orders`, {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({ customerId: input.customerId, lines: normalizedLines }),
-      signal: AbortSignal.timeout(3_000),
-    });
+    let orderResponse: Response;
+    try {
+      orderResponse = await this.fetcher(`${this.ordersServiceUrl}/orders`, {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          "idempotency-key": idempotencyKey,
+        },
+        body: JSON.stringify({ customerId, lines: normalizedLines }),
+        signal: AbortSignal.timeout(3_000),
+      });
+    } catch {
+      throw new ServiceUnavailableException("Orders service is unavailable");
+    }
 
     if (!orderResponse.ok) {
       if (orderResponse.status === 400) {
         throw new BadRequestException("Order payload rejected by orders service");
+      }
+      if (orderResponse.status === 409) {
+        throw new ConflictException("Idempotency key has already been used");
       }
 
       throw new ServiceUnavailableException("Orders service is unavailable");
@@ -76,46 +101,55 @@ export class OrderService {
       data: {
         orderId: string;
         customerId: string;
+        subtotalCop: number;
+        deliveryFeeCop: number;
         totalCop: number;
+        status: string;
+        createdAt: string;
+        updatedAt: string;
         lines: OrderLineInput[];
+        event?: OrderEvent;
       };
     };
+
     const persistedOrder = orderResult.data;
-    const { orderId, totalCop } = persistedOrder;
-    const event: OrderEvent = {
-      eventType: "OrderCreated.v1",
-      eventId: `${orderId}-event`,
-      occurredAt: new Date().toISOString(),
-      aggregateId: orderId,
-      payload: {
-        customerId: persistedOrder.customerId,
-        totalCop,
-        currency: "COP",
-        lines: persistedOrder.lines.map((line) => ({
-          productId: line.productId,
-          sku: line.sku,
-          name: line.name,
-          quantity: line.quantity,
-          unitPriceCop: line.unitPriceCop,
-        })),
-      },
-    };
-
-    const response = await this.fetcher(`${this.notificationWorkerUrl}/events/order-created`, {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify(event),
-      signal: AbortSignal.timeout(3_000),
-    });
-
-    if (!response.ok) {
-      throw new ServiceUnavailableException("Notification worker is unavailable");
+    if (!persistedOrder.event) {
+      throw new ServiceUnavailableException("Orders service did not return an OrderCreated event");
     }
 
     return {
-      orderId,
-      totalCop,
-      event,
+      orderId: persistedOrder.orderId,
+      subtotalCop: persistedOrder.subtotalCop,
+      deliveryFeeCop: persistedOrder.deliveryFeeCop,
+      totalCop: persistedOrder.totalCop,
+      customerId: persistedOrder.customerId,
+      status: persistedOrder.status,
+      createdAt: persistedOrder.createdAt,
+      updatedAt: persistedOrder.updatedAt,
+      lines: persistedOrder.lines,
+      event: persistedOrder.event,
     };
+  }
+
+  public async getOrder(orderId: string): Promise<OrderResult> {
+    let response: Response;
+    try {
+      response = await this.fetcher(
+        `${this.ordersServiceUrl}/orders/${encodeURIComponent(orderId)}`,
+        { signal: AbortSignal.timeout(3_000) },
+      );
+    } catch {
+      throw new ServiceUnavailableException("Orders service is unavailable");
+    }
+
+    if (response.status === 404) {
+      throw new NotFoundException("Order not found");
+    }
+    if (!response.ok) {
+      throw new ServiceUnavailableException("Orders service is unavailable");
+    }
+
+    const result = (await response.json()) as { data: OrderResult };
+    return result.data;
   }
 }

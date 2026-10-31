@@ -1,0 +1,62 @@
+{
+  "generatedAt": "2026-10-31T08:13:47Z",
+  "generatedOnPlatform": "win32",
+  "projectType": "webapp",
+  "setup": [],
+  "assertions": [
+    {
+      "name": "tests-pass",
+      "kind": "process",
+      "command": "npm",
+      "args": ["test", "--workspace", "apps/web"],
+      "cwd": "C:\\Users\\hecto\\OneDrive\\Desktop\\ProyectosEnProceso\\MileShop\\mileshop-platform",
+      "verificationMethod": "test-results",
+      "expected": "0",
+      "timeoutSeconds": 300
+    },
+    {
+      "name": "web-typecheck",
+      "kind": "process",
+      "command": "npm",
+      "args": ["run", "typecheck", "--workspace", "apps/web"],
+      "cwd": "C:\\Users\\hecto\\OneDrive\\Desktop\\ProyectosEnProceso\\MileShop\\mileshop-platform",
+      "verificationMethod": "exit-code",
+      "expected": "0",
+      "timeoutSeconds": 180
+    },
+    {
+      "name": "web-lint",
+      "kind": "process",
+      "command": "npm",
+      "args": ["run", "lint", "--workspace", "apps/web"],
+      "cwd": "C:\\Users\\hecto\\OneDrive\\Desktop\\ProyectosEnProceso\\MileShop\\mileshop-platform",
+      "verificationMethod": "exit-code",
+      "expected": "0",
+      "timeoutSeconds": 180
+    },
+    {
+      "name": "web-production-build",
+      "kind": "process",
+      "command": "npm",
+      "args": ["run", "build", "--workspace", "apps/web"],
+      "cwd": "C:\\Users\\hecto\\OneDrive\\Desktop\\ProyectosEnProceso\\MileShop\\mileshop-platform",
+      "verificationMethod": "exit-code",
+      "expected": "0",
+      "timeoutSeconds": 300
+    },
+    {
+      "name": "web-home-responds",
+      "kind": "http-probe",
+      "startCommand": "npm",
+      "startArgs": ["run", "start", "--workspace", "apps/web"],
+      "cwd": "C:\\Users\\hecto\\OneDrive\\Desktop\\ProyectosEnProceso\\MileShop\\mileshop-platform",
+      "env": {
+        "PORT": "3200"
+      },
+      "url": "http://localhost:3200/",
+      "verificationMethod": "http-status",
+      "expected": "200",
+      "timeoutSeconds": 120
+    }
+  ]
+}

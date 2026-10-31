@@ -1,9 +1,12 @@
 import {
+  BadRequestException,
   Body,
   Controller,
   Get,
   Headers,
   HttpCode,
+  NotFoundException,
+  Param,
   Post,
   Req,
 } from "@nestjs/common";
@@ -25,6 +28,11 @@ export class GatewayController {
   @Get("healthz")
   public healthcheck(): { status: "ok" } {
     return { status: "ok" };
+  }
+
+  @Get("readyz")
+  public readiness(): { status: "ready" } {
+    return { status: "ready" };
   }
 
   // ─── Catalog ─────────────────────────────────────────────────────────────
@@ -71,15 +79,38 @@ export class GatewayController {
   @Post("orders")
   public async createOrder(
     @Body() input: CreateOrderInput,
+    @Headers("idempotency-key") idempotencyKey: string | undefined,
     @Req() req: { customerId?: string; raw?: { customerId?: string } },
   ): Promise<{ data: Awaited<ReturnType<OrderService["createOrder"]>> }> {
     // AuthMiddleware writes customerId to the raw Node.js request.
     // In Fastify, @Req() gives the Fastify wrapper; the raw request is at req.raw.
     const verifiedCustomerId = req.customerId ?? req.raw?.customerId;
-    const order = await this.orders.createOrder({
-      customerId: verifiedCustomerId ?? input.customerId,
-      lines: input.lines,
-    });
+    if (!verifiedCustomerId) {
+      throw new NotFoundException("Authenticated customer not found");
+    }
+    if (!idempotencyKey) {
+      throw new BadRequestException("Missing Idempotency-Key header");
+    }
+
+    const order = await this.orders.createOrder(input, verifiedCustomerId, idempotencyKey);
+    return { data: order };
+  }
+
+  @Get("orders/:orderId")
+  public async getOrder(
+    @Param("orderId") orderId: string,
+    @Req() req: { customerId?: string; raw?: { customerId?: string } },
+  ): Promise<{ data: Awaited<ReturnType<OrderService["getOrder"]>> }> {
+    const verifiedCustomerId = req.customerId ?? req.raw?.customerId;
+    if (!verifiedCustomerId) {
+      throw new NotFoundException("Order not found");
+    }
+
+    const order = await this.orders.getOrder(orderId);
+    if (order.customerId !== verifiedCustomerId) {
+      throw new NotFoundException("Order not found");
+    }
+
     return { data: order };
   }
 }
