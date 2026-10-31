@@ -1,6 +1,10 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { ConflictException, UnauthorizedException } from "@nestjs/common";
+import {
+  ConflictException,
+  NotFoundException,
+  UnauthorizedException,
+} from "@nestjs/common";
 import { IdentityService } from "../src/identity.service.js";
 import { InMemoryCustomerRepository } from "../src/identity.repository.js";
 
@@ -28,6 +32,77 @@ test("registers a new customer and returns tokens", async () => {
   assert.ok(result.accessToken.length > 0, "accessToken should be non-empty");
   assert.ok(result.refreshToken.length > 0, "refreshToken should be non-empty");
   assert.equal(result.email, "alice@example.com");
+});
+
+test("registered customers receive the default customer role in their profile", async () => {
+  const { service } = makeService();
+  const registered = await service.register({
+    email: "customer@example.com",
+    password: "password123",
+    name: "Customer",
+  });
+
+  const profile = await service.getMe(registered.accessToken);
+
+  assert.equal(profile.role, "CUSTOMER");
+});
+
+test("initial admin bootstrap grants one existing customer and is one-time", async () => {
+  const { repo, service } = makeService();
+  const registered = await service.register({
+    email: "owner@example.com",
+    password: "password123",
+    name: "Owner",
+  });
+
+  const owner = await repo.bootstrapInitialAdmin(registered.email);
+
+  assert.equal(owner.id, registered.customerId);
+  assert.equal(owner.role, "STORE_ADMIN");
+  assert.equal((await service.getMe(registered.accessToken)).role, "STORE_ADMIN");
+  await assert.rejects(
+    () => repo.bootstrapInitialAdmin(registered.email),
+    (error: unknown) =>
+      error instanceof ConflictException ||
+      (error instanceof Error && (error as { getStatus?: () => number }).getStatus?.() === 409),
+  );
+});
+
+test("initial admin bootstrap requires an existing account", async () => {
+  const { repo } = makeService();
+
+  await assert.rejects(
+    () => repo.bootstrapInitialAdmin("missing@example.com"),
+    (error: unknown) =>
+      error instanceof NotFoundException ||
+      (error instanceof Error && (error as { getStatus?: () => number }).getStatus?.() === 404),
+  );
+});
+
+test("concurrent initial admin bootstraps grant only one store admin", async () => {
+  const { repo, service } = makeService();
+  const first = await service.register({
+    email: "first-owner@example.com",
+    password: "password123",
+    name: "First Owner",
+  });
+  const second = await service.register({
+    email: "second-owner@example.com",
+    password: "password123",
+    name: "Second Owner",
+  });
+
+  const results = await Promise.allSettled([
+    repo.bootstrapInitialAdmin(first.email),
+    repo.bootstrapInitialAdmin(second.email),
+  ]);
+  const customers = await Promise.all([
+    repo.findById(first.customerId),
+    repo.findById(second.customerId),
+  ]);
+
+  assert.equal(results.filter((result) => result.status === "fulfilled").length, 1);
+  assert.equal(customers.filter((customer) => customer?.role === "STORE_ADMIN").length, 1);
 });
 
 test("duplicate email registration throws 409 ConflictException", async () => {

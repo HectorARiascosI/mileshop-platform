@@ -1,7 +1,7 @@
 # MileShop local stack runbook
 
 ## Objective
-Bring up the full local monorepo stack in a stable and repeatable way.
+Bring up the local database and backend services. The Next.js storefront is started separately.
 
 ## Prerequisites
 - Docker Desktop installed and running
@@ -17,6 +17,17 @@ Set-Location (git rev-parse --show-toplevel)
 ```
 
 The startup script checks ports 3000, 3010, 3020, 3030, and 3040 before starting containers or applying migrations. If a port is already in use, it reports the owning process and exits without stopping it. Inspect the stack with `.\scripts\status-local-stack.ps1`; stop a process only after confirming it belongs to MileShop.
+
+The script starts four PostgreSQL containers, applies migrations, starts the five backend services and writes their logs under `.local-stack\logs`. It does not start `apps/web`.
+
+To start the storefront in a second terminal:
+
+```powershell
+$env:PORT = '3001'
+npm run dev --workspace apps/web
+```
+
+Port `3001` avoids the Gateway's default `3000` and matches the local Identity CORS origin.
 
 ## Port map
 - API gateway: http://localhost:3000
@@ -39,7 +50,7 @@ Invoke-WebRequest -Uri http://localhost:3040/healthz -UseBasicParsing
 ```
 
 ## Identity service migration
-Apply the identity-service Prisma migration separately (do not reuse another service's `DATABASE_URL`):
+The startup script applies all service migrations. If provisioning Identity separately, do not reuse another service's `DATABASE_URL`:
 
 ```powershell
 $env:DATABASE_URL = "postgresql://identity:identity@localhost:5436/identity?schema=public"
@@ -77,6 +88,7 @@ GitHub Actions conserva esta misma validación como smoke de CI: espera que Post
 
 ## Important notes
 - Always run commands from the repo root, not from the parent folder.
-- If an application port is already occupied, inspect `scripts/status-local-stack.ps1` and identify the owning process before taking action; the startup script never stops processes automatically.
+- If an application port is already occupied, inspect `scripts/status-local-stack.ps1` and identify the owning process before taking action; startup exits on conflicts and does not stop processes automatically.
+- `scripts/stop-local-stack.ps1` forcibly stops listeners on the five default application ports without checking their workspace. Verify each listener belongs to this repository before running it, especially when another MileShop workspace is active.
 - Docker must be live before the Postgres services are started.
 - `npm run db:deploy` applies each Prisma migration with its explicit domain `DATABASE_URL`; do not export one shared `DATABASE_URL` when running migrations manually.

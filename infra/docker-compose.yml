@@ -1,3 +1,6 @@
+# This Compose stack provisions databases only. orders-service runs from its
+# workspace on the host; configure its private local evidence directory in
+# services/orders-service/.env.example. Never mount evidence files into a DB.
 services:
   notification-postgres:
     image: postgres:17-alpine

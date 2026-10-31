@@ -1,11 +1,14 @@
 export type CustomerId = string;
 
+export type CustomerRole = "CUSTOMER" | "STORE_ADMIN";
+
 export type CustomerRecord = {
   id: CustomerId;
   email: string;
   passwordHash: string;
   name: string;
   phone?: string;
+  role: CustomerRole;
   createdAt: Date;
   updatedAt: Date;
 };
@@ -45,5 +48,6 @@ export type CustomerView = {
   customerId: CustomerId;
   email: string;
   name: string;
+  role: CustomerRole;
   phone?: string;
 };
