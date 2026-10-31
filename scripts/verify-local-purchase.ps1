@@ -112,7 +112,7 @@ $persisted = Get-JsonResponse -Uri "http://localhost:3000/orders/$($order.orderI
 Assert-Equal -Actual $persisted.data.orderId -Expected $order.orderId -Message 'Order was not persisted with the returned orderId'
 Assert-Equal -Actual $persisted.data.customerId -Expected $auth.customerId -Message 'Persisted order has an inconsistent customer id'
 Assert-Equal -Actual $persisted.data.totalCop -Expected ($product.priceCop + 12000) -Message 'Persisted order has an inconsistent total'
-Assert-Equal -Actual $persisted.data.status -Expected 'PENDING' -Message 'Persisted order has an unexpected initial status'
+Assert-Equal -Actual $persisted.data.status -Expected 'AWAITING_PAYMENT_PROOF' -Message 'Persisted order has an unexpected initial status'
 
 Write-Host '==> Replaying the same event to verify worker deduplication...'
 $duplicate = Get-JsonResponse -Uri 'http://localhost:3010/events/order-created' -Method Post -Body $event
