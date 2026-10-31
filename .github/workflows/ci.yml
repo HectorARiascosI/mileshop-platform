@@ -51,7 +51,7 @@ jobs:
       - name: Start local stack for smoke validation
         shell: bash
         run: |
-          docker compose -f infra/docker-compose.yml up -d
+          docker compose -f infra/docker-compose.yml up -d --wait --wait-timeout 120
           pwsh -File ./scripts/deploy-local-databases.ps1
 
           PORT=3040 DATABASE_URL='postgresql://identity:identity@localhost:5436/identity?schema=public' JWT_SECRET='ci-local-dev-secret-change-in-prod' JWT_EXPIRES_IN='15m' REFRESH_TOKEN_EXPIRES_DAYS='30' ALLOWED_ORIGINS='http://localhost:3001' npm run start --workspace @mileshop/identity-service > /tmp/mileshop-identity.log 2>&1 &
