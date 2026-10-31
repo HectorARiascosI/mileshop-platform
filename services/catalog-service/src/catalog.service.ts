@@ -12,6 +12,9 @@ export type Product = {
 export interface CatalogStore {
   listActiveProducts(): Promise<Product[]>;
   reserveProducts(orderId: string, lines: ReservationRequestLine[]): Promise<InventoryReservation>;
+  reserveInventory(orderId: string, lines: ReservationRequestLine[], expiresAt: Date): Promise<InventoryReservation>;
+  commitInventory(orderId: string): Promise<InventoryReservation>;
+  releaseInventory(orderId: string): Promise<InventoryReservation>;
 }
 
 export type ReservationRequestLine = {
@@ -29,7 +32,7 @@ export type ReservedProductLine = {
 
 export type InventoryReservation = {
   orderId: string;
-  status: "RESERVED";
+  status: "RESERVED" | "ACTIVE" | "COMMITTED" | "RELEASED";
   reservedAt: string;
   lines: ReservedProductLine[];
 };
@@ -38,7 +41,7 @@ export function normalizeReservationLines(
   lines: ReservationRequestLine[],
 ): ReservationRequestLine[] {
   if (!Array.isArray(lines) || lines.length === 0) {
-    throw new InventoryConflictError("Reservation must include at least one product");
+    throw Object.assign(new Error("Reservation must include at least one product"), { code: "INVALID_COMMAND" });
   }
 
   const quantities = new Map<string, number>();
@@ -49,12 +52,12 @@ export function normalizeReservationLines(
       !Number.isSafeInteger(line.quantity) ||
       line.quantity <= 0
     ) {
-      throw new InventoryConflictError("Reservation line is invalid");
+      throw Object.assign(new Error("Reservation line is invalid"), { code: "INVALID_COMMAND" });
     }
 
     const quantity = (quantities.get(line.productId) ?? 0) + line.quantity;
     if (!Number.isSafeInteger(quantity)) {
-      throw new InventoryConflictError("Reservation quantity is invalid");
+      throw Object.assign(new Error("Reservation quantity is invalid"), { code: "INVALID_COMMAND" });
     }
     quantities.set(line.productId, quantity);
   }
@@ -68,6 +71,7 @@ export class InventoryConflictError extends Error {
   public constructor(message: string) {
     super(message);
     this.name = "InventoryConflictError";
+    (this as Error & { code?: string }).code = "INSUFFICIENT_INVENTORY";
   }
 }
 
@@ -75,12 +79,14 @@ export class ReservationIdempotencyConflictError extends Error {
   public constructor() {
     super("Reservation idempotency key was reused with different product quantities");
     this.name = "ReservationIdempotencyConflictError";
+    (this as Error & { code?: string }).code = "CONFLICT";
   }
 }
 
 @Injectable()
 export class InMemoryCatalogStore implements CatalogStore {
-  private readonly products: Product[] = [
+  private readonly products: Product[];
+  private readonly defaultProducts: Product[] = [
     {
       id: "prod-mug-001",
       sku: "MILE-MUG-001",
@@ -109,8 +115,13 @@ export class InMemoryCatalogStore implements CatalogStore {
   private readonly reservations = new Map<string, {
     requestLines: ReservationRequestLine[];
     result: InventoryReservation;
+    expiresAt: Date;
   }>();
   private operationTail: Promise<void> = Promise.resolve();
+
+  public constructor(products?: Product[]) {
+    this.products = (products ?? this.defaultProducts).map((product) => ({ ...product }));
+  }
 
   public async listActiveProducts(): Promise<Product[]> {
     return this.products
@@ -163,8 +174,83 @@ export class InMemoryCatalogStore implements CatalogStore {
       this.reservations.set(orderId, {
         requestLines,
         result: structuredClone(result),
+        expiresAt: new Date(Date.now() + 15 * 60 * 1000),
       });
       return result;
+    });
+  }
+
+  public async reserveInventory(
+    orderId: string,
+    lines: ReservationRequestLine[],
+    expiresAt: Date,
+  ): Promise<InventoryReservation> {
+    if (!orderId.trim() || !(expiresAt instanceof Date) || Number.isNaN(expiresAt.getTime()) || expiresAt.getTime() <= Date.now()) {
+      throw Object.assign(new Error("Invalid inventory command"), { code: "INVALID_COMMAND" });
+    }
+    return this.withExclusiveLock(async () => {
+      const requestLines = normalizeReservationLines(lines);
+      const existing = this.reservations.get(orderId);
+      if (existing) {
+        if (JSON.stringify(existing.requestLines) !== JSON.stringify(requestLines)) {
+          throw Object.assign(new ReservationIdempotencyConflictError(), { code: "CONFLICT" });
+        }
+        if (existing.result.status === "RELEASED" || existing.result.status === "COMMITTED") {
+          return structuredClone(existing.result);
+        }
+        return structuredClone({ ...existing.result, status: "ACTIVE" });
+      }
+      const products = requestLines.map((line) => {
+        const product = this.products.find((candidate) => candidate.id === line.productId);
+        if (!product || product.stock < line.quantity) {
+          throw new InventoryConflictError(`Insufficient stock: ${line.productId}`);
+        }
+        return { product, quantity: line.quantity };
+      });
+      const reservation: InventoryReservation = {
+        orderId,
+        status: "RESERVED",
+        reservedAt: new Date().toISOString(),
+        lines: products.map(({ product, quantity }) => ({
+          productId: product.id,
+          sku: product.sku,
+          name: product.name,
+          quantity,
+          unitPriceCop: product.priceCop,
+        })),
+      };
+      for (const { product, quantity } of products) product.stock -= quantity;
+      const active: InventoryReservation = { ...reservation, status: "ACTIVE" };
+      this.reservations.set(orderId, { requestLines, result: active, expiresAt });
+      return structuredClone(active);
+    });
+  }
+
+  public async commitInventory(orderId: string): Promise<InventoryReservation> {
+    return this.withExclusiveLock(async () => {
+      const reservation = this.reservations.get(orderId);
+      if (!reservation) throw Object.assign(new Error("Reservation not found"), { code: "NOT_FOUND" });
+      if (reservation.result.status === "COMMITTED") return structuredClone(reservation.result);
+      if (reservation.result.status !== "ACTIVE") throw Object.assign(new Error("Committed reservation cannot be released"), { code: "CONFLICT" });
+      const committed = { ...reservation.result, status: "COMMITTED" as const };
+      reservation.result = committed;
+      return structuredClone(committed);
+    });
+  }
+
+  public async releaseInventory(orderId: string): Promise<InventoryReservation> {
+    return this.withExclusiveLock(async () => {
+      const reservation = this.reservations.get(orderId);
+      if (!reservation) throw Object.assign(new Error("Reservation not found"), { code: "NOT_FOUND" });
+      if (reservation.result.status === "RELEASED") return structuredClone(reservation.result);
+      if (reservation.result.status === "COMMITTED") throw Object.assign(new Error("Committed reservation cannot be released"), { code: "CONFLICT" });
+      for (const line of reservation.result.lines) {
+        const product = this.products.find((candidate) => candidate.id === line.productId);
+        if (product) product.stock += line.quantity;
+      }
+      const released = { ...reservation.result, status: "RELEASED" as const };
+      reservation.result = released;
+      return structuredClone(released);
     });
   }
 
@@ -199,5 +285,22 @@ export class CatalogService {
       throw new InventoryConflictError("Order id is required");
     }
     return this.store.reserveProducts(orderId, lines);
+  }
+
+  public reserveInventory(
+    orderId: string,
+    lines: ReservationRequestLine[],
+    expiresAt: Date,
+  ): Promise<InventoryReservation> {
+    if (!orderId.trim()) throw Object.assign(new Error("Order id is required"), { code: "INVALID_COMMAND" });
+    return this.store.reserveInventory(orderId, lines, expiresAt);
+  }
+
+  public commitInventory(orderId: string): Promise<InventoryReservation> {
+    return this.store.commitInventory(orderId);
+  }
+
+  public releaseInventory(orderId: string): Promise<InventoryReservation> {
+    return this.store.releaseInventory(orderId);
   }
 }
