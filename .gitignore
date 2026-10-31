@@ -5,6 +5,7 @@ coverage/
 services/*/generated/
 .data/
 .local-stack/
+.tsupgrader/runtime-validation/
 .env
 .env.*
 !.env.example

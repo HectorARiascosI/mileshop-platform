@@ -1,6 +1,7 @@
 import "reflect-metadata";
 
 import helmet from "@fastify/helmet";
+import multipart from "@fastify/multipart";
 import rateLimit from "@fastify/rate-limit";
 import { NestFactory } from "@nestjs/core";
 import {
@@ -22,6 +23,16 @@ async function bootstrap(): Promise<void> {
     AppModule,
     new FastifyAdapter(),
   );
+  await app.register(multipart, {
+    attachFieldsToBody: true,
+    throwFileSizeLimit: true,
+    limits: {
+      fileSize: 10 * 1024 * 1024,
+      files: 1,
+      fields: 1,
+      parts: 2,
+    },
+  });
 
   app.enableCors({
     origin: allowedOrigins,

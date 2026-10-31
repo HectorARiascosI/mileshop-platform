@@ -9,15 +9,48 @@ datasource db {
 }
 
 model Product {
-  id          String   @id @default(cuid())
-  sku         String   @unique
-  name        String
-  description String
-  priceCop    Int
-  stock       Int
-  isActive    Boolean  @default(true)
-  createdAt   DateTime @default(now())
-  updatedAt   DateTime @updatedAt
+  id            String                     @id @default(cuid())
+  sku           String                     @unique
+  name          String
+  description   String
+  priceCop      Int
+  stock         Int
+  reservedStock Int                        @default(0)
+  isActive      Boolean                    @default(true)
+  createdAt     DateTime                   @default(now())
+  updatedAt     DateTime                   @updatedAt
+  reservations  InventoryReservationLine[]
 
   @@index([isActive, name])
+}
+
+enum InventoryReservationStatus {
+  ACTIVE
+  COMMITTED
+  RELEASED
+}
+
+model InventoryReservation {
+  id                 String                     @id @default(cuid())
+  orderId            String                     @unique
+  requestFingerprint String
+  status             InventoryReservationStatus @default(ACTIVE)
+  expiresAt          DateTime
+  createdAt          DateTime                   @default(now())
+  updatedAt          DateTime                   @updatedAt
+  lines              InventoryReservationLine[]
+
+  @@index([status, expiresAt])
+}
+
+model InventoryReservationLine {
+  id            String               @id @default(cuid())
+  reservationId String
+  productId     String
+  quantity      Int
+  reservation   InventoryReservation @relation(fields: [reservationId], references: [id], onDelete: Cascade)
+  product       Product              @relation(fields: [productId], references: [id], onDelete: Restrict)
+
+  @@unique([reservationId, productId])
+  @@index([productId])
 }

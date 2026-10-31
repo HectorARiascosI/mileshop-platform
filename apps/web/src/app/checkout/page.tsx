@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import { useMemo, useState } from "react";
 
 import { buildCheckoutSummary } from "@/lib/order";
@@ -94,8 +95,8 @@ export default function CheckoutPage() {
   return (
     <main className="checkout-page">
       <section className="checkout-card">
-        <p className="eyebrow">Pedido confirmado</p>
-        <h1>Gracias por tu compra</h1>
+        <p className="eyebrow">Pedido recibido</p>
+        <h1>Estamos preparando tu pedido</h1>
 
         <div className="order-meta">
           <span>ID de pedido</span>
@@ -128,6 +129,12 @@ export default function CheckoutPage() {
             <strong>{formatPrice(order.payload.totalCop)}</strong>
           </div>
         </div>
+        <Link
+          className="checkout-button order-action"
+          href={`/orders/${encodeURIComponent(order.aggregateId)}`}
+        >
+          Consultar estado del pedido
+        </Link>
       </section>
     </main>
   );

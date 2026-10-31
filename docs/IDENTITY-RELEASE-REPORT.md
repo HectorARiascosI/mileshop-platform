@@ -4,6 +4,8 @@
 **Rama base:** `develop`  
 **Estado final:** ✅ Completado — 27/27 tests verdes, build limpio, todos los merges sin conflictos
 
+> **Nota histórica:** este reporte captura el cierre de identidad del 2026-10-14; no es la referencia del runtime actual. La ruta `POST /auth/verify-token` que aparece abajo pertenece a esa implementación anterior. Para el contrato vigente, consultar [architecture-overview.md](wiki/architecture-overview.md) y el servicio actual.
+
 ---
 
 ## Resumen ejecutivo

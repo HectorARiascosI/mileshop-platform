@@ -39,6 +39,7 @@ export class IdentityService {
       passwordHash,
       name: command.name,
       phone: command.phone,
+      role: "CUSTOMER",
       createdAt: new Date(),
       updatedAt: new Date(),
     };

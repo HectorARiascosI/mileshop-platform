@@ -1,4 +1,13 @@
-export type OrderStatus = "PENDING" | "CONFIRMED" | "CANCELLED";
+export type OrderStatus =
+  | "PENDING"
+  | "RESERVING_INVENTORY"
+  | "AWAITING_PAYMENT_PROOF"
+  | "PAYMENT_REVIEW_PENDING"
+  | "PAYMENT_APPROVED_FINALIZING"
+  | "RESERVATION_FAILED"
+  | "CONFIRMED"
+  | "RESERVATION_EXPIRED"
+  | "CANCELLED";
 
 export type OrderLineInput = {
   productId: string;
@@ -25,6 +34,30 @@ export type OrderLine = {
   unitPriceCop: number;
 };
 
+export type PaymentDecisionView = {
+  decision: "APPROVED" | "REJECTED";
+  decidedAt: string;
+  reason: string | null;
+};
+
+export type OrderCancellationRequestView = {
+  requestedAt: string;
+  resolvedAt: string | null;
+  resolution: "CANCELLED" | "KEPT_OPEN" | null;
+};
+
+export type PendingCancellationRequest = {
+  orderId: string;
+  customerId: string;
+  totalCop: number;
+  createdAt: string;
+  requestedAt: string;
+  paymentCaptured: boolean | null;
+  refundHandledAt: string | null;
+  externalRefundReference: string | null;
+  refundRecordedByCustomerId: string | null;
+};
+
 export type Order = {
   id: string;
   orderId: string;
@@ -33,9 +66,12 @@ export type Order = {
   deliveryFeeCop: number;
   totalCop: number;
   status: OrderStatus;
+  reservationExpiresAt: string | null;
   createdAt: string;
   updatedAt: string;
   lines: OrderLine[];
+  paymentDecision: PaymentDecisionView | null;
+  cancellationRequest: OrderCancellationRequestView | null;
 };
 
 export type OrderCreatedEvent = {

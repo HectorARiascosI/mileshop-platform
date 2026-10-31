@@ -9,6 +9,8 @@ import type { FastifyRequest, FastifyReply } from "fastify";
 
 export const IDENTITY_SERVICE_URL = "IDENTITY_SERVICE_URL";
 
+export type CustomerRole = "CUSTOMER" | "STORE_ADMIN";
+
 @Injectable()
 export class AuthMiddleware implements NestMiddleware {
   public constructor(
@@ -17,7 +19,11 @@ export class AuthMiddleware implements NestMiddleware {
   ) {}
 
   public async use(
-    req: FastifyRequest["raw"] & { customerId?: string; email?: string },
+    req: FastifyRequest["raw"] & {
+      customerId?: string;
+      email?: string;
+      role?: CustomerRole;
+    },
     _res: FastifyReply["raw"],
     next: () => void,
   ): Promise<void> {
@@ -63,13 +69,16 @@ export class AuthMiddleware implements NestMiddleware {
       typeof body.customerId !== "string" ||
       !body.customerId ||
       !("email" in body) ||
-      typeof body.email !== "string"
+      typeof body.email !== "string" ||
+      !("role" in body) ||
+      (body.role !== "CUSTOMER" && body.role !== "STORE_ADMIN")
     ) {
       throw new ServiceUnavailableException("Identity service returned an invalid response");
     }
 
     req.customerId = body.customerId;
     req.email = body.email;
+    req.role = body.role;
     next();
   }
 }

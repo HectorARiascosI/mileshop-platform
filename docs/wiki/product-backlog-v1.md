@@ -4,7 +4,7 @@
 
 Este backlog distingue el runtime demostrado de las capacidades pendientes. Ningún item se considera terminado por tener documentación: necesita código, prueba y evidencia de ejecución cuando corresponda.
 
-La v1 actual está construida alrededor de cuatro procesos ejecutables: storefront web, API Gateway, Catalog Service, Orders Service y Notification Worker. `Proyecto_ventas` es legacy y no forma parte de este backlog.
+La v1 actual incluye el storefront web y cinco servicios ejecutables: API Gateway, Identity, Catalog, Orders y Notification Worker. `Proyecto_ventas` es legacy y no forma parte de este backlog.
 
 ## 2. Estados
 
@@ -33,7 +33,7 @@ La v1 actual está construida alrededor de cuatro procesos ejecutables: storefro
 
 **Incluye hoy:** agregar, quitar, cambiar cantidad, persistir carrito localmente, subtotal, costo de entrega y umbral de envío gratis.
 
-**Limitación:** el carrito no consulta stock nuevamente antes de confirmar y no existe reserva de inventario.
+**Limitación:** el carrito del navegador es informativo; la reserva real ocurre al enviar el pedido y es confirmada atómicamente por Catálogo. El usuario debe completar el pago dentro del plazo de reserva.
 
 ### BL-03 — Contexto de cliente antes del checkout
 
@@ -58,9 +58,9 @@ La v1 actual está construida alrededor de cuatro procesos ejecutables: storefro
 - calcula subtotal, costo de entrega y total en el servidor;
 - persiste pedido, líneas y evento outbox en una transacción de PostgreSQL;
 - devuelve el pedido previo ante un reintento idéntico y responde `409` si la misma clave se usa con otro contenido;
-- devuelve estado inicial `PENDING` y `orderId` único.
+- devuelve estado inicial `RESERVING_INVENTORY` y `orderId` único; pasa a `AWAITING_PAYMENT_PROOF` cuando Catálogo confirma la reserva.
 
-**Limitación:** valida precio, identidad de línea y stock observado contra el catálogo activo, pero todavía no reserva ni decrementa stock y no tiene transiciones de estado operativas. La lectura de stock no evita sobreventa en compras concurrentes.
+**Incluye ahora:** reserva de inventario atómica e idempotente en Catálogo, transición del estado mediante outbox durable y liberación al cancelar, vencer o rechazar el pedido. La aprobación compromete la reserva una sola vez.
 
 ### BL-05 — Evento de pedido creado
 
@@ -84,13 +84,13 @@ La v1 actual está construida alrededor de cuatro procesos ejecutables: storefro
 
 ### BL-07 — Runtime local reproducible
 
-**Estado:** Implementado para desarrollo local.
+**Estado:** Parcial para desarrollo local.
 
-**Evidencia:** `infra/docker-compose.yml`, migraciones Prisma, `start-local-stack.ps1`, `status-local-stack.ps1`, `stop-local-stack.ps1` y runbook.
+**Evidencia:** `infra/docker-compose.yml`, migraciones Prisma y runbooks en `CONTRIBUTING.md` y `docs/STACK_OPERATIONS.md`.
 
-**Incluye hoy:** cuatro PostgreSQL, migraciones automáticas, cinco procesos independientes, health checks y smoke test de catálogo.
+**Incluye hoy:** cuatro PostgreSQL locales, migraciones por servicio, script para iniciar servicios backend, health checks y smoke de compra idempotente. El storefront Next.js se inicia aparte.
 
-**Limitación:** no es un despliegue productivo ni una configuración cloud.
+**Limitación:** Compose solo administra las bases; el script `start-local-stack.ps1` inicia backend y bases en puertos predeterminados. Antes de usar `stop-local-stack.ps1`, identifica los procesos en esos puertos: el script los detiene sin validar su workspace. Esto no es despliegue productivo ni configuración cloud.
 
 ### BL-08 — Quality gates
 
@@ -102,30 +102,41 @@ La v1 actual está construida alrededor de cuatro procesos ejecutables: storefro
 
 **Limitación:** no existe CD, promoción automática, preproducción ni prueba de restauración.
 
+### BL-09 — Revisión administrativa de pagos
+
+**Estado:** Implementado para revisión manual y almacenamiento local privado.
+
+**Evidencia:** rol `STORE_ADMIN` en Identity, rutas administrativas de Gateway/Orders y `/admin/payments` en `apps/web`.
+
+**Incluye hoy:** cola de comprobantes, descarga autenticada, aprobación o rechazo, registro de retención/eliminación y resolución de solicitudes de cancelación con constancia de gestión del reembolso externo.
+
+**Limitación:** no procesa pagos ni reembolsos automáticamente; el archivo local requiere almacenamiento persistente y respaldo antes de producción.
+
 ## 4. Trabajo P0 pendiente
 
 ### P0-01 — Prueba de integración del checkout completo
 
 **Estado:** Implementado.
 
-**Objetivo:** demostrar en una sola prueba el flujo storefront/contexto local → gateway → orders-service → worker.
+**Objetivo:** demostrar el flujo autenticado de compra por Gateway, la reserva de Catálogo, la persistencia de Orders y la deduplicación del evento en Notification Worker.
 
 **Evidencia:** `scripts/verify-local-purchase.ps1`, `npm run verify:local-purchase` y ejecución validada contra la stack local.
 
 **Criterios de aceptación:**
 
 - crea un pedido contra el stack local;
-- recupera el pedido por `orderId`;
+- espera la confirmación de reserva y recupera el pedido por `orderId`;
 - verifica el mismo `eventId` en notification-worker;
 - comprueba que una repetición no duplica la entrega;
 - verifica subtotal, envío, total e idempotencia al repetir el mismo checkout;
+- cancela el pedido de prueba para liberar su reserva;
 - cubre por pruebas automatizadas fallo de notificación y programación de reintento.
 
 **Ownership:** web, gateway, orders-service y notification-worker.
 
 ### P0-02 — Validación de precio y disponibilidad
 
-**Estado:** Parcial implementado.
+**Estado:** Implementado.
 
 **Objetivo:** impedir que el cliente envíe precios o productos incoherentes con el catálogo vigente.
 
@@ -136,12 +147,12 @@ La v1 actual está construida alrededor de cuatro procesos ejecutables: storefro
 - orders-service valida cada producto activo contra catálogo y canonicaliza el nombre de línea;
 - el precio persistido se toma de la respuesta autorizada del catálogo;
 - stock insuficiente produce rechazo claro;
-- la decisión de reserva o decremento de stock queda documentada;
+- Orders persiste reservas y liberaciones como comandos durables e idempotentes;
 - existen pruebas de precio manipulado, producto inactivo y stock insuficiente.
 
-**Pendiente para cerrar:** reserva o decremento transaccional de stock; actualmente solo se valida la disponibilidad observada.
+**Criterios cerrados:** Catálogo valida y reserva unidades atómicamente; Orders persiste el comando durable de reserva y reintenta errores transitorios sin aceptar sobreventa por lecturas concurrentes.
 
-**Ownership:** catálogo, pedidos y gateway; requiere decidir el contrato de consulta.
+**Ownership:** catálogo, pedidos y gateway.
 
 ### P0-03 — Contrato de error y recuperación de compra
 
@@ -160,25 +171,26 @@ La v1 actual está construida alrededor de cuatro procesos ejecutables: storefro
 
 ### P0-04 — Identidad mínima de servidor
 
-**Objetivo:** decidir si la v1 acepta contexto local o exige identidad persistente real.
+**Estado:** Implementado.
+
+**Objetivo:** asegurar que pedidos y rutas administrativas se vinculen a una identidad persistente autenticada y autorizada en servidor.
 
 **Criterios de aceptación:**
 
-- decisión documentada por negocio y seguridad;
-- si se exige identidad, existe customer model, endpoint y almacenamiento propio;
-- el pedido referencia una identidad validada por servidor;
-- se eliminan claims de “registro” si solo existe `localStorage`.
+- Identity mantiene cuentas, hash de contraseña, refresh tokens y rol `CUSTOMER`/`STORE_ADMIN` en su base propia;
+- las cookies `httpOnly` mantienen la sesión web y no se guardan tokens en `localStorage`;
+- Gateway verifica token y rol con Identity y Orders recibe contexto autenticado solo por su ruta interna protegida;
+- solo administradores de tienda pueden acceder a la revisión de pagos.
 
-**Ownership:** identidad, gateway, web y pedidos. Es una decisión de release, no una mejora cosmética.
+**Ownership:** Identity, Gateway, web y Orders.
 
 ## 5. Objetivos posteriores, fuera del P0 actual
 
-### P1 — Operación comercial
+### P1 — Operación comercial pendiente
 
 - adaptador real de notificación y canal WhatsApp aprobado;
-- panel administrativo para catálogo y pedidos;
+- administración de catálogo y gestión comercial de pedidos;
 - consulta de pedidos por cliente y fecha;
-- transiciones de estado con permisos y auditoría;
 - promociones, categorías, imágenes, variantes y destacados.
 
 ### P2 — Plataforma productiva

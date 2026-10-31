@@ -186,7 +186,7 @@ export function CatalogShell({ products, unavailable }: CatalogShellProps) {
       setOrderConfirmed(true);
       setCart([]);
       setIsCartOpen(true);
-      router.push("/checkout");
+      router.push(`/orders/${encodeURIComponent(payload.data.orderId)}`);
     } catch {
       window.alert("No pudimos confirmar tu pedido en este momento. Inténtalo de nuevo.");
     }

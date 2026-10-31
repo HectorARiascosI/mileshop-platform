@@ -9,9 +9,19 @@ import { CatalogReader } from "./catalog.reader.js";
 import { FREE_DELIVERY_THRESHOLD_COP, OrderDomain } from "./orders.domain.js";
 import type { OrderRecord } from "./orders.domain.js";
 import type {
+  CancellationRefundRecordResult,
+  CancellationResolutionResult,
+  CancellationRequestResult,
+  OrderCancellationResult,
   OrdersRepository,
   OutboxFailureResult,
+  PaymentApprovalResult,
+  PaymentRejectionResult,
 } from "./orders.repository.js";
+import {
+  createInventoryReleaseCommand,
+  type InventoryCommand,
+} from "./inventory-command.repository.js";
 import {
   InvalidOrderError,
   OrderConflictError,
@@ -22,6 +32,7 @@ import type {
   CreatedOrder,
   Order,
   OrderCreatedEvent,
+  PendingCancellationRequest,
 } from "./orders.types.js";
 
 export const OUTBOX_MAX_ATTEMPTS = 8;
@@ -31,6 +42,24 @@ const OUTBOX_BATCH_SIZE = 25;
 
 export interface OrderEventPublisher {
   publishCreated(event: OrderCreatedEvent): Promise<void>;
+}
+
+export interface InventoryCommandProcessor {
+  processPendingCommands(): Promise<void>;
+}
+
+export class InvalidPaymentDecisionError extends Error {
+  public constructor(message: string) {
+    super(message);
+    this.name = "InvalidPaymentDecisionError";
+  }
+}
+
+export class InvalidCancellationResolutionError extends Error {
+  public constructor(message: string) {
+    super(message);
+    this.name = "InvalidCancellationResolutionError";
+  }
 }
 
 export class HttpOrderEventPublisher implements OrderEventPublisher {
@@ -63,6 +92,7 @@ export class OrdersService implements OnModuleInit, OnModuleDestroy {
     private readonly repository: OrdersRepository,
     private readonly catalog: CatalogReader,
     private readonly eventPublisher: OrderEventPublisher,
+    private readonly inventoryCommandProcessor?: InventoryCommandProcessor,
   ) {}
 
   public async onModuleInit(): Promise<void> {
@@ -200,9 +230,22 @@ export class OrdersService implements OnModuleInit, OnModuleDestroy {
       lines: validatedLines,
     });
     const event = this.buildOrderCreatedEvent(record);
+    if (!record.reservationExpiresAt) {
+      throw new Error("New orders must have an inventory reservation expiry");
+    }
+    const inventoryCommand: InventoryCommand = {
+      commandId: `${record.orderId}-reserve-inventory`,
+      idempotencyKey: `${record.orderId}:RESERVE`,
+      orderId: record.orderId,
+      commandType: "RESERVE",
+      payload: {
+        lines: record.lines.map(({ productId, quantity }) => ({ productId, quantity })),
+        expiresAt: record.reservationExpiresAt.toISOString(),
+      },
+    };
 
     try {
-      await this.repository.save(record, event);
+      await this.repository.save(record, event, inventoryCommand);
     } catch (error) {
       const concurrent = await this.repository.findByIdempotencyKey(
         command.customerId,
@@ -218,9 +261,270 @@ export class OrdersService implements OnModuleInit, OnModuleDestroy {
     return { ...OrderDomain.toOrderView(record), event };
   }
 
-  public async getOrderById(orderId: string): Promise<Order | null> {
+  public async getOrderById(orderId: string, customerId: string): Promise<Order | null> {
     const record = await this.repository.findByOrderId(orderId);
-    return record ? { ...OrderDomain.toOrderView(record) } : null;
+    return record && record.customerId === customerId
+      ? { ...OrderDomain.toOrderView(record) }
+      : null;
+  }
+
+  public async cancelOrder(
+    orderId: string,
+    customerId: string,
+  ): Promise<{ result: OrderCancellationResult; order: Order | null }> {
+    if (!/^[a-zA-Z0-9-]{1,128}$/.test(orderId)) {
+      throw new InvalidOrderError("Invalid order ID");
+    }
+    if (!customerId.trim() || customerId.length > 128) {
+      throw new InvalidOrderError("Verified customer is required");
+    }
+
+    const cancelledAt = new Date();
+    const result = await this.repository.cancelOrder(
+      orderId,
+      customerId,
+      cancelledAt,
+      createInventoryReleaseCommand(orderId),
+    );
+    const record = await this.repository.findByOrderId(orderId);
+    if (result === "cancelled") {
+      if (this.inventoryCommandProcessor) {
+        void this.inventoryCommandProcessor.processPendingCommands().catch((error: unknown) => {
+          this.logger.error(
+            `Immediate inventory release attempt failed for cancelled order ${orderId}; durable retry remains scheduled`,
+            error instanceof Error ? error.stack : undefined,
+          );
+        });
+      } else {
+        this.logger.error(
+          `No immediate inventory command processor is configured for cancelled order ${orderId}; durable retry worker must process it`,
+        );
+      }
+    }
+    return {
+      result,
+      order: record ? OrderDomain.toOrderView(record) : null,
+    };
+  }
+
+  public async requestCancellation(
+    orderId: string,
+    customerId: string,
+  ): Promise<{ result: CancellationRequestResult; order: Order | null }> {
+    if (!/^[a-zA-Z0-9-]{1,128}$/.test(orderId)) {
+      throw new InvalidOrderError("Invalid order ID");
+    }
+    if (!customerId.trim() || customerId.length > 128) {
+      throw new InvalidOrderError("Verified customer is required");
+    }
+
+    const requestedAt = new Date();
+    const result = await this.repository.requestCancellation(
+      orderId,
+      customerId,
+      requestedAt,
+    );
+    const record = await this.repository.findByOrderId(orderId);
+    return {
+      result,
+      order: record?.customerId === customerId
+        ? OrderDomain.toOrderView(record)
+        : null,
+    };
+  }
+
+  public async listPendingCancellationRequests(): Promise<PendingCancellationRequest[]> {
+    return this.repository.listPendingCancellationRequests();
+  }
+
+  public async recordCancellationRefund(
+    orderId: string,
+    adminCustomerId: string,
+    paymentCapturedInput: unknown,
+    externalRefundReferenceInput: unknown,
+  ): Promise<{ result: CancellationRefundRecordResult; order: Order | null }> {
+    if (!/^[a-zA-Z0-9-]{1,128}$/.test(orderId)) {
+      throw new InvalidOrderError("Invalid order ID");
+    }
+    if (!adminCustomerId.trim() || adminCustomerId.length > 128) {
+      throw new InvalidCancellationResolutionError("Verified store administrator is required");
+    }
+    if (typeof paymentCapturedInput !== "boolean") {
+      throw new InvalidCancellationResolutionError("Payment capture status is required");
+    }
+    let externalRefundReference: string | null = null;
+    if (paymentCapturedInput) {
+      if (typeof externalRefundReferenceInput !== "string") {
+        throw new InvalidCancellationResolutionError(
+          "An external refund reference is required when payment was captured",
+        );
+      }
+      externalRefundReference = externalRefundReferenceInput.trim();
+      if (!externalRefundReference || externalRefundReference.length > 200) {
+        throw new InvalidCancellationResolutionError(
+          "An external refund reference between 1 and 200 characters is required",
+        );
+      }
+    } else if (
+      externalRefundReferenceInput !== undefined &&
+      externalRefundReferenceInput !== null &&
+      externalRefundReferenceInput !== ""
+    ) {
+      throw new InvalidCancellationResolutionError(
+        "A refund reference is not allowed when payment was not captured",
+      );
+    }
+
+    const recordedAt = new Date();
+    const result = await this.repository.recordCancellationRefund(
+      orderId,
+      adminCustomerId,
+      paymentCapturedInput,
+      externalRefundReference,
+      recordedAt,
+    );
+    const record = await this.repository.findByOrderId(orderId);
+    return {
+      result,
+      order: record ? OrderDomain.toOrderView(record) : null,
+    };
+  }
+
+  public async resolveCancellationRequest(
+    orderId: string,
+    adminCustomerId: string,
+    actionInput: unknown,
+    noteInput: unknown,
+  ): Promise<{ result: CancellationResolutionResult; order: Order | null }> {
+    if (!/^[a-zA-Z0-9-]{1,128}$/.test(orderId)) {
+      throw new InvalidOrderError("Invalid order ID");
+    }
+    if (!adminCustomerId.trim() || adminCustomerId.length > 128) {
+      throw new InvalidCancellationResolutionError("Verified store administrator is required");
+    }
+    if (actionInput !== "CANCEL" && actionInput !== "KEEP_OPEN") {
+      throw new InvalidCancellationResolutionError("A valid cancellation resolution is required");
+    }
+    if (typeof noteInput !== "string") {
+      throw new InvalidCancellationResolutionError("A resolution note is required");
+    }
+    const note = noteInput.trim();
+    if (!note || note.length > 1000) {
+      throw new InvalidCancellationResolutionError(
+        "A resolution note between 1 and 1000 characters is required",
+      );
+    }
+
+    const resolvedAt = new Date();
+    const result = await this.repository.resolveCancellationRequest(
+      orderId,
+      adminCustomerId,
+      actionInput,
+      note,
+      resolvedAt,
+      createInventoryReleaseCommand(orderId),
+    );
+    const record = await this.repository.findByOrderId(orderId);
+    if (result === "cancelled") {
+      if (this.inventoryCommandProcessor) {
+        void this.inventoryCommandProcessor.processPendingCommands().catch((error: unknown) => {
+          this.logger.error(
+            `Immediate inventory release attempt failed for post-proof cancelled order ${orderId}; durable retry remains scheduled`,
+            error instanceof Error ? error.stack : undefined,
+          );
+        });
+      } else {
+        this.logger.error(
+          `No immediate inventory command processor is configured for post-proof cancelled order ${orderId}; durable retry worker must process it`,
+        );
+      }
+    }
+    return {
+      result,
+      order: record ? OrderDomain.toOrderView(record) : null,
+    };
+  }
+
+  public async approvePayment(
+    orderId: string,
+    adminCustomerId: string,
+  ): Promise<{ result: PaymentApprovalResult; order: Order | null }> {
+    if (!/^[a-zA-Z0-9-]{1,128}$/.test(orderId)) {
+      throw new InvalidOrderError("Invalid order ID");
+    }
+    if (!adminCustomerId.trim() || adminCustomerId.length > 128) {
+      throw new Error("Verified store administrator is required");
+    }
+    const decidedAt = new Date();
+    const inventoryCommand: InventoryCommand = {
+      commandId: `${orderId}-commit-inventory`,
+      idempotencyKey: `${orderId}:COMMIT`,
+      orderId,
+      commandType: "COMMIT",
+      payload: {},
+    };
+    const result = await this.repository.approvePayment(
+      orderId,
+      adminCustomerId,
+      decidedAt,
+      inventoryCommand,
+    );
+    const record = await this.repository.findByOrderId(orderId);
+    return {
+      result,
+      order: record ? OrderDomain.toOrderView(record) : null,
+    };
+  }
+
+  public async rejectPayment(
+    orderId: string,
+    adminCustomerId: string,
+    reasonInput: unknown,
+  ): Promise<{ result: PaymentRejectionResult; order: Order | null }> {
+    if (!/^[a-zA-Z0-9-]{1,128}$/.test(orderId)) {
+      throw new InvalidOrderError("Invalid order ID");
+    }
+    if (!adminCustomerId.trim() || adminCustomerId.length > 128) {
+      throw new InvalidPaymentDecisionError("Verified store administrator is required");
+    }
+    if (typeof reasonInput !== "string") {
+      throw new InvalidPaymentDecisionError("A rejection reason is required");
+    }
+    const reason = reasonInput.trim();
+    if (!reason || reason.length > 1000) {
+      throw new InvalidPaymentDecisionError(
+        "A rejection reason between 1 and 1000 characters is required",
+      );
+    }
+
+    const decidedAt = new Date();
+    const inventoryCommand = createInventoryReleaseCommand(orderId);
+    const result = await this.repository.rejectPayment(
+      orderId,
+      adminCustomerId,
+      reason,
+      decidedAt,
+      inventoryCommand,
+    );
+    const record = await this.repository.findByOrderId(orderId);
+    if (result === "rejected") {
+      if (this.inventoryCommandProcessor) {
+        void this.inventoryCommandProcessor.processPendingCommands().catch((error: unknown) => {
+          this.logger.error(
+            `Immediate inventory release attempt failed for rejected order ${orderId}; durable retry remains scheduled`,
+            error instanceof Error ? error.stack : undefined,
+          );
+        });
+      } else {
+        this.logger.error(
+          `No immediate inventory command processor is configured for rejected order ${orderId}; durable retry worker must process it`,
+        );
+      }
+    }
+    return {
+      result,
+      order: record ? OrderDomain.toOrderView(record) : null,
+    };
   }
 
   private returnExistingOrder(record: OrderRecord, fingerprint: string): CreatedOrder {

@@ -23,8 +23,8 @@ Este documento controla que la documentación de MileShop describa el sistema re
 
 | Diagrama de la propuesta | Decisión | Motivo para este proyecto |
 | --- | --- | --- |
-| Casos de uso UML | Posponer | Solo existe el flujo de cliente; no existe aún administración implementada. |
-| Mapa de navegación / user flow | Mantener | Es crítico para registro obligatorio, carrito y checkout. |
+| Casos de uso UML | Posponer | El mapa de navegación y la secuencia ya cubren checkout y revisión administrativa de pagos; no se necesita duplicar esos flujos. |
+| Mapa de navegación / user flow | Mantener | Es crítico para registro obligatorio, carrito, checkout y revisión de pagos por `STORE_ADMIN`. |
 | Bloques funcionales | Sustituir por C4 | Componentes y ownership expresan mejor los límites actuales. |
 | C4 contexto | Mantener | Define actores, sistema y dependencias reales. |
 | DFD | No crear aparte | La secuencia y el modelo de datos cubren el flujo sin duplicarlo. |
@@ -37,7 +37,7 @@ Este documento controla que la documentación de MileShop describa el sistema re
 | Secuencia UML | Mantener | Es la prueba visual del checkout y `OrderCreated.v1`. |
 | Máquina de estados | Mantener | Evita inventar transiciones de pedido no implementadas. |
 | Paquetes UML | Posponer | Los boundaries actuales se entienden con workspaces y componentes. |
-| Despliegue UML | Mantener local | Docker Compose y los cuatro procesos ya existen. |
+| Despliegue UML | Mantener local | Docker Compose provisiona cuatro bases PostgreSQL; hay cinco servicios backend y el storefront web, iniciado por separado. |
 | Infraestructura cloud | Posponer | No hay proveedor cloud ni topología aprobada. |
 | Redes y seguridad VPC | Posponer | No existe VPC, subredes o firewall productivo definido. |
 | DNS | Posponer | No hay dominio ni routing productivo documentado. |
@@ -45,7 +45,7 @@ Este documento controla que la documentación de MileShop describa el sistema re
 | Mapa de contextos DDD | Mantener | Formaliza catálogo, pedidos, notificaciones y web sin inventar servicios. |
 | Pipeline CI/CD | Mantener CI | `.github/workflows/ci.yml` ya ejecuta quality gates; CD aún no existe. |
 | Observabilidad | Posponer | Solo existen logs y health checks, no plataforma de métricas/tracing. |
-| Service mesh | Eliminar | No corresponde a cuatro procesos locales sin Kubernetes ni malla. |
+| Service mesh | Eliminar | No corresponde a cinco servicios locales sin Kubernetes ni malla. |
 
 ## Paquete mínimo aprobado
 
@@ -67,13 +67,12 @@ Los diagramas futuros solo se agregan cuando exista la infraestructura, contrato
 ## Cobertura futura, todavía no cerrada
 
 - [ ] despliegue productivo con infraestructura aprobada;
-- [ ] seguridad de identidad, autorización y threat model;
+- [ ] threat model y auditoría de seguridad formal (autenticación y roles básicos sí están implementados);
 - [ ] observabilidad con métricas, trazas y alertas reales;
 - [ ] broker externo (el productor ya dispone de outbox HTTP durable);
-- [ ] dominio de clientes persistente;
-- [ ] administración editorial y comercial;
+- [ ] administración editorial y de catálogo (la revisión operativa de pagos sí está implementada);
 - [ ] promociones, banners, variantes y categorías implementadas;
-- [ ] estados avanzados y transiciones del pedido;
+- [ ] estados de despacho y finalización logística;
 - [ ] adaptador operativo de WhatsApp;
 - [ ] backup, restore y disaster recovery comprobados.
 

@@ -5,6 +5,10 @@ import type { CatalogProduct } from "../src/catalog.reader.js";
 import { OrderDomain } from "../src/orders.domain.js";
 import { InMemoryOrdersRepository } from "../src/orders.repository.js";
 import {
+  InventoryCommandWorker,
+  InventoryReservationRejectedError,
+} from "../src/inventory-command.worker.js";
+import {
   HttpOrderEventPublisher,
   OrdersService,
   type OrderEventPublisher,
@@ -46,8 +50,14 @@ function createService(
   repository = new InMemoryOrdersRepository(),
   publisher: OrderEventPublisher = { publishCreated: async () => undefined },
   products: CatalogProduct[] = [catalogProduct],
+  inventoryCommandProcessor?: { processPendingCommands(): Promise<void> },
 ): OrdersService {
-  return new OrdersService(repository, { listActiveProducts: async () => products }, publisher);
+  return new OrdersService(
+    repository,
+    { listActiveProducts: async () => products },
+    publisher,
+    inventoryCommandProcessor,
+  );
 }
 
 function createLine(overrides: { quantity?: number; unitPriceCop?: number } = {}) {
@@ -70,13 +80,168 @@ test("creates a valid order and stores its financial totals", async () => {
   assert.equal(order.subtotalCop, 130000);
   assert.equal(order.deliveryFeeCop, 12000);
   assert.equal(order.totalCop, 142000);
-  assert.equal(order.status, "PENDING");
+  assert.equal(order.status, "RESERVING_INVENTORY");
+  assert.ok(order.reservationExpiresAt);
+  assert.equal(
+    Date.parse(order.reservationExpiresAt) - Date.parse(order.createdAt),
+    6 * 60 * 60 * 1_000,
+  );
   assert.equal(order.lines.length, 1);
 
-  const persisted = await service.getOrderById(order.orderId);
+  const persisted = await service.getOrderById(order.orderId, "customer-1");
   assert.equal(persisted?.customerId, "customer-1");
   assert.equal(persisted?.orderId, order.orderId);
   assert.equal(persisted?.subtotalCop, 130000);
+  assert.equal(persisted?.paymentDecision, null);
+});
+
+test("expires only overdue unsubmitted reservations and enqueues RELEASE once", async () => {
+  const repository = new InMemoryOrdersRepository();
+  const now = new Date("2026-10-30T18:00:00.000Z");
+  const createRecord = (
+    key: string,
+    status: "AWAITING_PAYMENT_PROOF" | "PAYMENT_REVIEW_PENDING",
+    reservationExpiresAt: Date,
+  ) => {
+    const record = OrderDomain.createOrder({
+      customerId: "customer-1",
+      idempotencyKey: key,
+      lines: [createLine()],
+    });
+    record.status = status;
+    record.reservationExpiresAt = reservationExpiresAt;
+    return record;
+  };
+  const persist = async (
+    record: ReturnType<typeof createRecord>,
+  ) => repository.save(
+    record,
+    {
+      ...orderEvent,
+      eventId: `${record.orderId}-created`,
+      aggregateId: record.orderId,
+    },
+    {
+      commandId: `${record.orderId}-reserve-inventory`,
+      idempotencyKey: `${record.orderId}:RESERVE`,
+      orderId: record.orderId,
+      commandType: "RESERVE",
+      payload: {},
+    },
+  );
+  const overdue = createRecord(
+    "overdue-order",
+    "AWAITING_PAYMENT_PROOF",
+    new Date(now.getTime() - 1),
+  );
+  const notDue = createRecord(
+    "not-due-order",
+    "AWAITING_PAYMENT_PROOF",
+    new Date(now.getTime() + 1),
+  );
+  const alreadySubmitted = createRecord(
+    "submitted-order",
+    "PAYMENT_REVIEW_PENDING",
+    new Date(now.getTime() - 1),
+  );
+  await persist(overdue);
+  await persist(notDue);
+  await persist(alreadySubmitted);
+
+  assert.equal(await repository.expireDueOrders(now, 25), 1);
+  assert.equal((await repository.findByOrderId(overdue.orderId))?.status, "RESERVATION_EXPIRED");
+  assert.equal((await repository.findByOrderId(notDue.orderId))?.status, "AWAITING_PAYMENT_PROOF");
+  assert.equal(
+    (await repository.findByOrderId(alreadySubmitted.orderId))?.status,
+    "PAYMENT_REVIEW_PENDING",
+  );
+  assert.equal(await repository.expireDueOrders(now, 25), 0);
+
+  const commands = await repository.claimPendingCommands(now, 30_000, 25);
+  assert.equal(commands.filter(({ command }) => command.commandType === "RELEASE").length, 1);
+  assert.equal(
+    commands.find(({ command }) => command.commandType === "RELEASE")?.command.orderId,
+    overdue.orderId,
+  );
+});
+
+test("cancels an active reservation once and immediately processes its RELEASE", async () => {
+  const repository = new InMemoryOrdersRepository();
+  const record = OrderDomain.createOrder({
+    customerId: "customer-1",
+    idempotencyKey: "cancel-order",
+    lines: [createLine()],
+  });
+  record.status = "AWAITING_PAYMENT_PROOF";
+  record.reservationExpiresAt = new Date(Date.now() + 60_000);
+  await repository.save(
+    record,
+    {
+      ...orderEvent,
+      eventId: `${record.orderId}-created`,
+      aggregateId: record.orderId,
+    },
+    {
+      commandId: `${record.orderId}-reserve-inventory`,
+      idempotencyKey: `${record.orderId}:RESERVE`,
+      orderId: record.orderId,
+      commandType: "RESERVE",
+      payload: {},
+    },
+  );
+  let processCalls = 0;
+  const service = createService(
+    repository,
+    undefined,
+    [catalogProduct],
+    { processPendingCommands: async () => { processCalls += 1; } },
+  );
+
+  const first = await service.cancelOrder(record.orderId, "customer-1");
+  const replay = await service.cancelOrder(record.orderId, "customer-1");
+
+  assert.equal(first.result, "cancelled");
+  assert.equal(first.order?.status, "CANCELLED");
+  assert.equal(replay.result, "already-cancelled");
+  assert.equal(replay.order?.status, "CANCELLED");
+  assert.equal(processCalls, 1);
+  const commands = await repository.claimPendingCommands(new Date(), 30_000, 25);
+  assert.equal(commands.filter(({ command }) => command.commandType === "RELEASE").length, 1);
+});
+
+test("returns an order only to its owner", async () => {
+  const service = createService();
+  const order = await service.createOrder({
+    customerId: "customer-1",
+    lines: [createLine()],
+  }, idempotencyKey);
+
+  assert.equal(
+    (await service.getOrderById(order.orderId, "customer-1"))?.orderId,
+    order.orderId,
+  );
+  assert.equal(await service.getOrderById(order.orderId, "customer-2"), null);
+});
+
+test("includes persisted payment decision details in the customer order view", () => {
+  const record = OrderDomain.createOrder({
+    customerId: "customer-1",
+    idempotencyKey,
+    lines: [createLine()],
+  });
+  record.paymentDecision = {
+    decision: "REJECTED",
+    decidedAt: new Date("2026-10-30T12:00:00.000Z"),
+    reason: "El comprobante no corresponde al total del pedido.",
+  };
+
+  const view = OrderDomain.toOrderView(record);
+
+  assert.deepEqual(view.paymentDecision, {
+    decision: "REJECTED",
+    decidedAt: "2026-10-30T12:00:00.000Z",
+    reason: "El comprobante no corresponde al total del pedido.",
+  });
 });
 
 test("rejects an order without valid lines", async () => {
@@ -144,6 +309,177 @@ test("replays the saved order for the same key and payload without republishing"
 
   assert.equal(replay.orderId, first.orderId);
   assert.equal(published, 1);
+  const command = await repository.claimPendingCommands(new Date(), 30_000, 10);
+  assert.equal(command.length, 1);
+  assert.equal(command[0]?.command.commandType, "RESERVE");
+  assert.equal(command[0]?.command.idempotencyKey, `${first.orderId}:RESERVE`);
+  assert.deepEqual(command[0]?.command.payload, {
+    lines: [{ productId: catalogProduct.id, quantity: 1 }],
+    expiresAt: first.reservationExpiresAt,
+  });
+});
+
+test("moves an order to awaiting proof after catalog confirms reservation", async () => {
+  const repository = new InMemoryOrdersRepository();
+  const service = createService(repository);
+  const order = await service.createOrder({
+    customerId: "customer-1",
+    lines: [createLine()],
+  }, idempotencyKey);
+  const worker = new InventoryCommandWorker(repository, { dispatch: async () => undefined });
+
+  await worker.processPendingCommands();
+
+  const updated = await service.getOrderById(order.orderId, "customer-1");
+  assert.equal(updated?.status, "AWAITING_PAYMENT_PROOF");
+});
+
+test("approves a pending payment once and enqueues one idempotent inventory commit", async () => {
+  const repository = new InMemoryOrdersRepository();
+  const record = OrderDomain.createOrder({
+    customerId: "customer-1",
+    idempotencyKey,
+    lines: [createLine()],
+  });
+  record.status = "PAYMENT_REVIEW_PENDING";
+  await repository.save(record, {
+    ...orderEvent,
+    aggregateId: record.orderId,
+    eventId: `${record.orderId}-created`,
+  }, {
+    commandId: `${record.orderId}-reserve-inventory`,
+    idempotencyKey: `${record.orderId}:RESERVE`,
+    orderId: record.orderId,
+    commandType: "RESERVE",
+    payload: {},
+  });
+  const service = createService(repository);
+
+  const [first, replay] = await Promise.all([
+    service.approvePayment(record.orderId, "store-admin-1"),
+    service.approvePayment(record.orderId, "store-admin-1"),
+  ]);
+  const commitCommands = await repository.claimPendingCommands(new Date(), 30_000, 10);
+  const commit = commitCommands.find(({ command }) => command.commandType === "COMMIT");
+
+  assert.equal(first.order?.status, "PAYMENT_APPROVED_FINALIZING");
+  assert.equal(first.order?.paymentDecision?.decision, "APPROVED");
+  assert.ok(first.order?.paymentDecision?.decidedAt);
+  assert.ok(["approved", "already-approved"].includes(first.result));
+  assert.ok(["approved", "already-approved"].includes(replay.result));
+  assert.equal(first.result === replay.result, false);
+  assert.equal(commitCommands.filter(({ command }) => command.commandType === "COMMIT").length, 1);
+  assert.equal(commit?.command.commandId, `${record.orderId}-commit-inventory`);
+  assert.equal(commit?.command.idempotencyKey, `${record.orderId}:COMMIT`);
+});
+
+test("moves an approved order to confirmed only after catalog commit completes", async () => {
+  const repository = new InMemoryOrdersRepository();
+  const record = OrderDomain.createOrder({
+    customerId: "customer-1",
+    idempotencyKey,
+    lines: [createLine()],
+  });
+  record.status = "PAYMENT_APPROVED_FINALIZING";
+  record.paymentDecision = {
+    decision: "APPROVED",
+    decidedAt: new Date(),
+    reason: null,
+  };
+  await repository.save(record, {
+    ...orderEvent,
+    aggregateId: record.orderId,
+    eventId: `${record.orderId}-created`,
+  }, {
+    commandId: `${record.orderId}-commit-inventory`,
+    idempotencyKey: `${record.orderId}:COMMIT`,
+    orderId: record.orderId,
+    commandType: "COMMIT",
+    payload: {},
+  });
+  const worker = new InventoryCommandWorker(repository, { dispatch: async () => undefined });
+
+  await worker.processPendingCommands();
+
+  assert.equal((await repository.findByOrderId(record.orderId))?.status, "CONFIRMED");
+});
+
+test("rejects a pending payment once, queues release, and immediately triggers inventory processing", async () => {
+  const repository = new InMemoryOrdersRepository();
+  const record = OrderDomain.createOrder({
+    customerId: "customer-1",
+    idempotencyKey,
+    lines: [createLine()],
+  });
+  record.status = "PAYMENT_REVIEW_PENDING";
+  await repository.save(record, {
+    ...orderEvent,
+    aggregateId: record.orderId,
+    eventId: `${record.orderId}-created`,
+  }, {
+    commandId: `${record.orderId}-reserve-inventory`,
+    idempotencyKey: `${record.orderId}:RESERVE`,
+    orderId: record.orderId,
+    commandType: "RESERVE",
+    payload: {},
+  });
+  let processCalls = 0;
+  const service = createService(repository, undefined, undefined, {
+    processPendingCommands: async () => {
+      processCalls += 1;
+    },
+  });
+  const reason = "  El comprobante no corresponde al total del pedido.  ";
+
+  const [first, replay] = await Promise.all([
+    service.rejectPayment(record.orderId, "store-admin-1", reason),
+    service.rejectPayment(record.orderId, "store-admin-2", reason),
+  ]);
+  const commands = await repository.claimPendingCommands(new Date(), 30_000, 10);
+  const release = commands.find(({ command }) => command.commandType === "RELEASE");
+
+  assert.equal(first.order?.status, "CANCELLED");
+  assert.equal(first.order?.paymentDecision?.decision, "REJECTED");
+  assert.equal(first.order?.paymentDecision?.reason, reason.trim());
+  assert.ok(first.order?.paymentDecision?.decidedAt);
+  assert.ok(["rejected", "already-rejected"].includes(first.result));
+  assert.ok(["rejected", "already-rejected"].includes(replay.result));
+  assert.notEqual(first.result, replay.result);
+  assert.equal(processCalls, 1);
+  assert.equal(commands.filter(({ command }) => command.commandType === "RELEASE").length, 1);
+  assert.equal(release?.command.commandId, `${record.orderId}-release-inventory`);
+  assert.equal(release?.command.idempotencyKey, `${record.orderId}:RELEASE`);
+});
+
+test("rejects blank and oversized payment decision reasons", async () => {
+  const service = createService();
+  await assert.rejects(
+    () => service.rejectPayment("order-123", "admin-1", " \t "),
+    { name: "InvalidPaymentDecisionError" },
+  );
+  await assert.rejects(
+    () => service.rejectPayment("order-123", "admin-1", "x".repeat(1001)),
+    { name: "InvalidPaymentDecisionError" },
+  );
+});
+
+test("marks an order failed when catalog permanently rejects its reservation", async () => {
+  const repository = new InMemoryOrdersRepository();
+  const service = createService(repository);
+  const order = await service.createOrder({
+    customerId: "customer-1",
+    lines: [createLine()],
+  }, idempotencyKey);
+  const worker = new InventoryCommandWorker(repository, {
+    dispatch: async () => {
+      throw new InventoryReservationRejectedError("Insufficient inventory");
+    },
+  });
+
+  await worker.processPendingCommands();
+
+  const updated = await service.getOrderById(order.orderId, "customer-1");
+  assert.equal(updated?.status, "RESERVATION_FAILED");
 });
 
 test("rejects reuse of an idempotency key with a different payload", async () => {
@@ -245,7 +581,7 @@ test("builds the domain object with free delivery at the configured threshold", 
 });
 
 test("getOrderById returns null for a non-existent order", async () => {
-  const result = await createService().getOrderById("order-does-not-exist");
+  const result = await createService().getOrderById("order-does-not-exist", "customer-1");
   assert.equal(result, null);
 });
 
