@@ -5,7 +5,9 @@ import {
   Get,
   Inject,
   Post,
+  Res,
 } from "@nestjs/common";
+import type { FastifyReply } from "fastify";
 
 import { orderCreatedSchema } from "./events.js";
 import { NotificationWorker } from "./notification.worker.js";
@@ -27,13 +29,17 @@ export class NotificationsController {
   }
 
   @Post("events/order-created")
-  public async orderCreated(@Body() body: unknown): Promise<{ status: string }> {
+  public async orderCreated(
+    @Body() body: unknown,
+    @Res({ passthrough: true }) response: FastifyReply,
+  ): Promise<{ status: string }> {
     const parsed = orderCreatedSchema.safeParse(body);
     if (!parsed.success) {
       throw new BadRequestException("Invalid OrderCreated.v1 event");
     }
 
     const status = await this.worker.handleOrderCreated(parsed.data);
+    response.code(status === "processing" ? 202 : 200);
     return { status };
   }
 }

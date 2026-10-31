@@ -17,6 +17,7 @@ import {
   registerSchema,
 } from "./identity.validation.js";
 import type { IdentityService } from "./identity.service.js";
+import type { CustomerView } from "./identity.types.js";
 
 @Controller()
 export class IdentityController {
@@ -84,7 +85,7 @@ export class IdentityController {
   @Get("auth/me")
   public async getMe(
     @Headers("authorization") authorization: string | undefined,
-  ): Promise<{ customerId: string; email: string; name: string; phone?: string }> {
+  ): Promise<CustomerView> {
     if (!authorization) {
       throw new UnauthorizedException("Missing Authorization header");
     }

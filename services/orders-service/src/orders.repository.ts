@@ -9,6 +9,7 @@ export interface OrdersRepository {
   completeReservationIntent?(intent: ReservationIntent, record: OrderRecord, event: OrderCreatedEvent): Promise<void>;
   listPendingReservationIntents?(now: Date): Promise<ReservationIntent[]>;
   getReservationIntentPayload?(intentId: string): Promise<{ record: OrderRecord; event: OrderCreatedEvent } | null>;
+  expireDueOrders(now: Date, limit: number): Promise<number>;
 }
 
 export type ReservationIntent = {
@@ -36,6 +37,10 @@ export class InMemoryOrdersRepository implements OrdersRepository {
   >();
 
   public constructor(private readonly outbox: OrderEventStore) {}
+
+  public async expireDueOrders(_now: Date, _limit: number): Promise<number> {
+    return 0;
+  }
 
   public async save(record: OrderRecord, event: OrderCreatedEvent): Promise<void> {
     const existingOrderId = this.orderIdsByIdempotencyKey.get(record.idempotencyKey);

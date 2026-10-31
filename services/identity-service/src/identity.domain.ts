@@ -1,6 +1,6 @@
 import crypto from "node:crypto";
 import bcrypt from "bcryptjs";
-import type { CustomerRecord } from "./identity.types.js";
+import type { CustomerRecord, CustomerView } from "./identity.types.js";
 
 const BCRYPT_ROUNDS = 12;
 
@@ -17,16 +17,12 @@ export class IdentityDomain {
     return crypto.randomBytes(64).toString("hex");
   }
 
-  public static buildCustomerView(record: CustomerRecord): {
-    customerId: string;
-    email: string;
-    name: string;
-    phone?: string;
-  } {
+  public static buildCustomerView(record: CustomerRecord): CustomerView {
     return {
       customerId: record.id,
       email: record.email,
       name: record.name,
+      role: record.role,
       ...(record.phone !== undefined && { phone: record.phone }),
     };
   }

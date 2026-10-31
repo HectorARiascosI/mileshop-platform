@@ -1,0 +1,95 @@
+batch_id: "B01"
+completed_tasks: ["SHOP-001", "SHOP-002", "SHOP-003", "SHOP-004"]
+blocked_tasks: []
+required_endpoints: []
+files_changed:
+  SHOP-001:
+    - file: ".github/modernize/shop-workflow/plan.md"
+      change_type: "created"
+      description: "Records current-state evidence, product decisions, phased scope, requirements, and Vercel deployment boundary."
+    - file: ".github/modernize/shop-workflow/tasks.json"
+      change_type: "created"
+      description: "Tracks implementation tasks and acceptance criteria."
+  SHOP-002:
+    - file: "apps/web/src/lib/whatsapp-order.ts"
+      change_type: "created"
+      description: "Validates E.164 phone and persisted order summary, then creates the encoded WhatsApp message URL."
+    - file: "apps/web/src/lib/whatsapp-order.test.ts"
+      change_type: "created"
+      description: "Covers phone validation, full order summary, and invalid input."
+  SHOP-003:
+    - file: "apps/web/src/components/catalog-shell.tsx"
+      change_type: "modified"
+      description: "Persists the order before navigating the synchronously opened tab to WhatsApp; closes it on failure."
+    - file: "apps/web/src/app/checkout/checkout-order.tsx"
+      change_type: "created"
+      description: "Displays persisted order details, fallback WhatsApp link, and manual send/proof instructions."
+    - file: "apps/web/.env.example"
+      change_type: "created"
+      description: "Documents the public phone-number configuration without including a real number."
+  SHOP-004:
+    - file: ".github/modernize/shop-workflow/batch-report-B01.yaml"
+      change_type: "created"
+      description: "Records task traceability and verification."
+    - file: ".github/modernize/shop-workflow/checkpoints/tasks-to-impl.yaml"
+      change_type: "created"
+      description: "Records the implementation checkpoint and pending work."
+upstream_artifacts_consumed:
+  SHOP-001:
+    - artifact: "README.md"
+      used_for: "Verified current service architecture and existing operational limitations."
+    - artifact: "apps/web/src/app/api/orders/route.ts"
+      used_for: "Confirmed the existing authenticated order API proxy."
+  SHOP-003:
+    - artifact: "services/api-gateway/src/gateway.controller.ts"
+      used_for: "Confirmed orders are authenticated and scoped to the customer."
+evidence_mapping:
+  SHOP-002:
+    - upstream: "REQ-002"
+      output: "apps/web/src/lib/whatsapp-order.ts"
+      evidence: "Unit test decodes the wa.me URL and asserts persisted order reference, all lines, and totals."
+    - upstream: "REQ-003"
+      output: "apps/web/src/lib/whatsapp-order.test.ts"
+      evidence: "Tests missing phone and malformed order return no WhatsApp URL."
+  SHOP-003:
+    - upstream: "REQ-001"
+      output: "apps/web/src/components/catalog-shell.tsx"
+      evidence: "The WhatsApp URL is built only after a successful POST and validated persisted response."
+    - upstream: "REQ-003"
+      output: "apps/web/src/app/checkout/checkout-order.tsx"
+      evidence: "Order page gives fallback link when configured and explains manual Send/attachment."
+traceability:
+  - requirement: "REQ-001"
+    plan_item: "Batch 1"
+    task: "SHOP-003"
+    files: ["apps/web/src/components/catalog-shell.tsx"]
+    status: "completed"
+  - requirement: "REQ-002"
+    plan_item: "Batch 1"
+    task: "SHOP-002"
+    files: ["apps/web/src/lib/whatsapp-order.ts", "apps/web/src/lib/whatsapp-order.test.ts"]
+    status: "completed"
+  - requirement: "REQ-003"
+    plan_item: "Batch 1"
+    task: "SHOP-002"
+    files: ["apps/web/src/lib/whatsapp-order.ts", "apps/web/src/app/checkout/checkout-order.tsx"]
+    status: "completed"
+protocol_violation: false
+errors: []
+warnings:
+  - severity: HIGH
+    message: "This batch implements only the order-to-WhatsApp handoff. Inventory reservation, admin/payment ledger, and an end-to-end Vercel backend are not implemented."
+  - severity: HIGH
+    message: "The current web API routes still require API_GATEWAY_URL; Vercel frontend deployment alone does not host the NestJS services."
+test_results:
+  SHOP-004:
+    command: "npm test --workspace apps/web"
+    passed: 8
+    failed: 0
+    skipped: 0
+    failures: []
+validation:
+  typecheck: "npm run typecheck --workspace apps/web passed"
+  lint: "npm run lint --workspace apps/web passed"
+  build: "npm run build --workspace apps/web passed"
+  diff_check: "git diff --check passed"

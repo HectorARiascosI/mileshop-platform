@@ -55,3 +55,48 @@ export async function clearSessionCookies(): Promise<void> {
   cookieStore.delete("accessToken");
   cookieStore.delete("refreshToken");
 }
+
+export async function exchangeRefreshToken(
+  gatewayUrl: string,
+  refreshToken: string,
+  fetcher: typeof fetch = fetch,
+): Promise<
+  | { status: "refreshed"; tokens: SessionTokens }
+  | { status: "unauthenticated" }
+  | { status: "unavailable" }
+> {
+  try {
+    const response = await fetcher(`${gatewayUrl.replace(/\/$/, "")}/auth/refresh`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ refreshToken }),
+    });
+
+    if (response.status === 401) {
+      return { status: "unauthenticated" };
+    }
+    if (!response.ok) {
+      return { status: "unavailable" };
+    }
+
+    const data = await response.json() as Partial<SessionTokens>;
+    if (
+      typeof data.accessToken !== "string" ||
+      data.accessToken.length === 0 ||
+      typeof data.refreshToken !== "string" ||
+      data.refreshToken.length === 0
+    ) {
+      return { status: "unavailable" };
+    }
+
+    return {
+      status: "refreshed",
+      tokens: {
+        accessToken: data.accessToken,
+        refreshToken: data.refreshToken,
+      },
+    };
+  } catch {
+    return { status: "unavailable" };
+  }
+}

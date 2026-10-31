@@ -2,13 +2,18 @@ import { Injectable } from "@nestjs/common";
 
 import type { OrderCreatedEvent } from "./events.js";
 
-export interface NotificationStore {
-  claim(eventId: string): Promise<ProcessEventResult>;
-  markSent(eventId: string): Promise<void>;
-  markFailed(eventId: string, reason: string): Promise<void>;
-}
+export const NOTIFICATION_LEASE_MS = 30_000;
 
-export type ProcessEventResult = "claimed" | "duplicate";
+export type NotificationClaim =
+  | { status: "claimed"; claimToken: string }
+  | { status: "duplicate" }
+  | { status: "processing" };
+
+export interface NotificationStore {
+  claim(eventId: string, now?: Date, leaseMilliseconds?: number): Promise<NotificationClaim>;
+  markSent(eventId: string, claimToken: string): Promise<void>;
+  markFailed(eventId: string, claimToken: string, reason: string): Promise<void>;
+}
 
 export interface NotificationSender {
   sendOrderCreated(event: OrderCreatedEvent): Promise<void>;
@@ -21,42 +26,84 @@ export class NotificationWorker {
     private readonly sender: NotificationSender,
   ) {}
 
-  public async handleOrderCreated(event: OrderCreatedEvent): Promise<"sent" | "duplicate"> {
-    if ((await this.store.claim(event.eventId)) === "duplicate") {
-      return "duplicate";
+  public async handleOrderCreated(
+    event: OrderCreatedEvent,
+  ): Promise<"sent" | "duplicate" | "processing"> {
+    const claim = await this.store.claim(event.eventId);
+    if (claim.status !== "claimed") {
+      return claim.status;
     }
 
     try {
       await this.sender.sendOrderCreated(event);
-      await this.store.markSent(event.eventId);
-      return "sent";
     } catch (error) {
       const reason = error instanceof Error ? error.message : "Unknown notification error";
-      await this.store.markFailed(event.eventId, reason);
+      await this.store.markFailed(event.eventId, claim.claimToken, reason);
       throw error;
     }
+
+    await this.store.markSent(event.eventId, claim.claimToken);
+    return "sent";
   }
 }
 
 @Injectable()
 export class InMemoryNotificationStore implements NotificationStore {
-  private readonly eventStatuses = new Map<string, "PROCESSING" | "SENT" | "FAILED">();
-
-  public async claim(eventId: string): Promise<ProcessEventResult> {
-    const status = this.eventStatuses.get(eventId);
-    if (status === "SENT" || status === "PROCESSING") {
-      return "duplicate";
+  private readonly eventStatuses = new Map<
+    string,
+    {
+      status: "PROCESSING" | "SENT" | "FAILED";
+      attempts: number;
+      claimToken: string | null;
+      leaseExpiresAt: Date | null;
     }
-    this.eventStatuses.set(eventId, "PROCESSING");
-    return "claimed";
+  >();
+
+  public async claim(
+    eventId: string,
+    now = new Date(),
+    leaseMilliseconds = NOTIFICATION_LEASE_MS,
+  ): Promise<NotificationClaim> {
+    const existing = this.eventStatuses.get(eventId);
+    if (existing?.status === "SENT") {
+      return { status: "duplicate" };
+    }
+    if (
+      existing?.status === "PROCESSING" &&
+      existing.leaseExpiresAt !== null &&
+      existing.leaseExpiresAt > now
+    ) {
+      return { status: "processing" };
+    }
+
+    const claimToken = crypto.randomUUID();
+    this.eventStatuses.set(eventId, {
+      status: "PROCESSING",
+      attempts: (existing?.attempts ?? 0) + 1,
+      claimToken,
+      leaseExpiresAt: new Date(now.getTime() + leaseMilliseconds),
+    });
+    return { status: "claimed", claimToken };
   }
 
-  public async markSent(eventId: string): Promise<void> {
-    this.eventStatuses.set(eventId, "SENT");
+  public async markSent(eventId: string, claimToken: string): Promise<void> {
+    const current = this.eventStatuses.get(eventId);
+    if (!current || current.status !== "PROCESSING" || current.claimToken !== claimToken) {
+      throw new Error(`Notification claim lost for event: ${eventId}`);
+    }
+    current.status = "SENT";
+    current.claimToken = null;
+    current.leaseExpiresAt = null;
   }
 
-  public async markFailed(eventId: string, _reason: string): Promise<void> {
-    this.eventStatuses.set(eventId, "FAILED");
+  public async markFailed(eventId: string, claimToken: string, _reason: string): Promise<void> {
+    const current = this.eventStatuses.get(eventId);
+    if (!current || current.status !== "PROCESSING" || current.claimToken !== claimToken) {
+      throw new Error(`Notification claim lost for event: ${eventId}`);
+    }
+    current.status = "FAILED";
+    current.claimToken = null;
+    current.leaseExpiresAt = null;
   }
 }
 

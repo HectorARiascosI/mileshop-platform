@@ -1,7 +1,13 @@
-﻿import { Injectable, NestMiddleware, UnauthorizedException, Inject } from "@nestjs/common";
-import type { FastifyRequest, FastifyReply } from "fastify";
+import {
+  Inject,
+  Injectable,
+  NestMiddleware,
+  UnauthorizedException,
+} from "@nestjs/common";
+import type { FastifyReply, FastifyRequest } from "fastify";
 
 export const IDENTITY_SERVICE_URL = "IDENTITY_SERVICE_URL";
+export type CustomerRole = "CUSTOMER" | "STORE_ADMIN";
 
 @Injectable()
 export class AuthMiddleware implements NestMiddleware {
@@ -11,7 +17,11 @@ export class AuthMiddleware implements NestMiddleware {
   ) {}
 
   public async use(
-    req: FastifyRequest["raw"] & { customerId?: string; email?: string },
+    req: FastifyRequest["raw"] & {
+      customerId?: string;
+      email?: string;
+      role?: CustomerRole;
+    },
     _res: FastifyReply["raw"],
     next: () => void,
   ): Promise<void> {
@@ -32,7 +42,7 @@ export class AuthMiddleware implements NestMiddleware {
     let response: Response;
     try {
       response = await this.fetcher(`${this.identityServiceUrl}/auth/me`, {
-        headers: { authorization: `Bearer ${token}` },
+        headers: { authorization: authHeader },
         signal: AbortSignal.timeout(3_000),
       });
     } catch {
@@ -47,14 +57,19 @@ export class AuthMiddleware implements NestMiddleware {
       customerId: string;
       email: string;
       name: string;
+      role: CustomerRole;
     };
 
     req.customerId = body.customerId;
     req.email = body.email;
+    req.role = body.role;
     next();
   }
 
-  private getHeaderValue(headers: Record<string, string | string[] | undefined>, name: string): string {
+  private getHeaderValue(
+    headers: Record<string, string | string[] | undefined>,
+    name: string,
+  ): string {
     const value = headers[name];
     if (Array.isArray(value)) {
       return value[0] ?? "";

@@ -17,11 +17,117 @@ model Order {
   deliveryFeeCop  Int
   totalCop        Int
   status          String      @default("PENDING")
+  requestFingerprint String
+  reservationExpiresAt DateTime?
+  cancelRequestedAt DateTime?
+  cancelResolvedAt DateTime?
+  cancelResolution String?
+  cancelResolvedByCustomerId String?
+  cancelResolutionNote String?
+  cancelPaymentCaptured Boolean?
+  externalRefundRecordedByCustomerId String?
+  externalRefundReference String?
+  externalRefundHandledAt DateTime?
   createdAt       DateTime    @default(now())
   updatedAt       DateTime    @updatedAt
   lines           OrderLine[]
+  paymentEvidence PaymentEvidence?
+  paymentDecision PaymentDecision?
+  inventoryCommands InventoryCommandOutbox[]
 
   @@index([customerId, createdAt])
+}
+
+enum PaymentDecisionType {
+  APPROVED
+  REJECTED
+}
+
+enum InventoryCommandType {
+  RESERVE
+  COMMIT
+  RELEASE
+}
+
+enum InventoryCommandStatus {
+  PENDING
+  PROCESSING
+  COMPLETED
+  FAILED
+}
+
+model PaymentEvidence {
+  id String @id @default(cuid())
+  orderId String @unique
+  storageKey String?
+  originalFileName String?
+  contentType String?
+  sizeBytes Int
+  transactionReference String?
+  receivedAt DateTime @default(now())
+  retentionUntil DateTime?
+  legalHold Boolean @default(false)
+  cleanupClaimToken String?
+  cleanupLeaseExpiresAt DateTime?
+  deletedAt DateTime?
+  deletedByCustomerId String?
+  deletionReason String?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  order Order @relation(fields: [orderId], references: [orderId], onDelete: Cascade)
+  legalHolds PaymentEvidenceLegalHold[]
+
+  @@unique([storageKey])
+  @@index([retentionUntil, legalHold, deletedAt])
+  @@index([cleanupLeaseExpiresAt])
+}
+
+model PaymentEvidenceLegalHold {
+  id String @id @default(cuid())
+  paymentEvidenceId String
+  setByCustomerId String
+  reason String
+  setAt DateTime @default(now())
+  releasedByCustomerId String?
+  releaseReason String?
+  releasedAt DateTime?
+  paymentEvidence PaymentEvidence @relation(fields: [paymentEvidenceId], references: [id], onDelete: Cascade)
+
+  @@index([paymentEvidenceId, setAt])
+}
+
+model PaymentDecision {
+  id String @id @default(cuid())
+  orderId String @unique
+  decision PaymentDecisionType
+  adminCustomerId String
+  decidedAt DateTime @default(now())
+  reason String?
+  order Order @relation(fields: [orderId], references: [orderId], onDelete: Cascade)
+
+  @@index([adminCustomerId, decidedAt])
+}
+
+model InventoryCommandOutbox {
+  commandId String @id
+  idempotencyKey String @unique
+  orderId String
+  commandType InventoryCommandType
+  payload Json
+  status InventoryCommandStatus @default(PENDING)
+  attemptCount Int @default(0)
+  nextAttemptAt DateTime @default(now())
+  claimToken String?
+  leaseExpiresAt DateTime?
+  lastError String?
+  completedAt DateTime?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  order Order @relation(fields: [orderId], references: [orderId], onDelete: Cascade)
+
+  @@index([status, nextAttemptAt])
+  @@index([status, leaseExpiresAt])
+  @@index([orderId, createdAt])
 }
 
 model OrderLine {

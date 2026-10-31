@@ -80,6 +80,8 @@ export class PrismaOrdersRepository implements OrdersRepository {
           deliveryFeeCop: record.deliveryFeeCop,
           totalCop: record.totalCop,
           status: record.status,
+          requestFingerprint: record.requestFingerprint ?? record.idempotencyKey,
+          reservationExpiresAt: record.reservationExpiresAt ?? null,
           createdAt: record.createdAt,
           updatedAt: record.updatedAt,
           lines: {
@@ -171,5 +173,19 @@ export class PrismaOrdersRepository implements OrdersRepository {
         unitPriceCop: line.unitPriceCop,
       })),
     };
+  }
+
+  public async expireDueOrders(now: Date, limit: number): Promise<number> {
+    const result = await this.prisma.order.updateMany({
+      where: {
+        status: { in: ["PENDING", "AWAITING_PAYMENT_PROOF"] },
+        reservationExpiresAt: { not: null, lte: now },
+      },
+      data: {
+        status: "RESERVATION_EXPIRED",
+        updatedAt: now,
+      },
+    });
+    return Math.min(result.count, limit);
   }
 }

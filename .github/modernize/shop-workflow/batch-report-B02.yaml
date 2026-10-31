@@ -1,0 +1,79 @@
+batch_id: "B02"
+completed_tasks: ["SHOP-005"]
+blocked_tasks: []
+required_endpoints: []
+files_changed:
+  SHOP-005:
+    - file: "apps/web/src/lib/api-gateway-url.ts"
+      change_type: "created"
+      description: "Validates API_GATEWAY_URL and builds safe service endpoints."
+    - file: "apps/web/src/lib/api-gateway-url.test.ts"
+      change_type: "created"
+      description: "Tests missing, local, HTTPS, invalid URL, and base-path behavior."
+    - file: "apps/web/src/app/page.tsx"
+      change_type: "modified"
+      description: "Uses validated gateway configuration for catalog requests."
+    - file: "apps/web/src/app/api/auth"
+      change_type: "modified"
+      description: "Uses the validated gateway endpoint; reports backend outages separately from invalid sessions."
+    - file: "apps/web/src/app/api/orders"
+      change_type: "modified"
+      description: "Uses the validated gateway endpoint for order creation and lookup."
+    - file: "apps/web/.tsupgrader/runtime-validation/eval-plan.json"
+      change_type: "modified"
+      description: "Probes the built production server on port 3200, avoiding collision with the existing Next development server."
+    - file: "apps/web/.env.example"
+      change_type: "modified"
+      description: "Documents the server-only local gateway URL."
+    - file: "apps/web/README.md"
+      change_type: "modified"
+      description: "Documents Vercel environment configuration and the separate backend hosting requirement."
+    - file: ".github/modernize/shop-workflow/plan.md"
+      change_type: "modified"
+      description: "Records proxy readiness and the remaining end-to-end backend deployment gate."
+    - file: ".github/modernize/shop-workflow/tasks.json"
+      change_type: "modified"
+      description: "Adds SHOP-005 with acceptance criteria and verification evidence."
+    - file: ".github/modernize/shop-workflow/checkpoints/tasks-to-impl.yaml"
+      change_type: "modified"
+      description: "Adds SHOP-005 implementation and traceability evidence."
+upstream_artifacts_consumed:
+  SHOP-005:
+    - artifact: ".github/modernize/shop-workflow/plan.md"
+      used_for: "REQ-006 and the explicit Vercel/backend hosting boundary."
+    - artifact: "apps/web/src/app/api"
+      used_for: "Identified all Next.js routes that proxy to API_GATEWAY_URL."
+evidence_mapping:
+  SHOP-005:
+    - upstream: "REQ-006"
+      output: "apps/web/src/lib/api-gateway-url.test.ts"
+      evidence: "Tests reject absent gateway URLs and non-HTTPS production endpoints while supporting local development."
+traceability:
+  - requirement: "REQ-006"
+    plan_item: "Follow-up — Vercel proxy readiness"
+    task: "SHOP-005"
+    files:
+      - "apps/web/src/lib/api-gateway-url.ts"
+      - "apps/web/src/lib/api-gateway-url.test.ts"
+      - "apps/web/README.md"
+    status: "completed"
+protocol_violation: false
+errors: []
+warnings:
+  - severity: HIGH
+    message: "Vercel hosts the Next.js application and proxy routes only; the NestJS services, PostgreSQL databases, migrations, and operational recovery are not deployed by this change."
+  - severity: LOW
+    message: "Runtime validation reported the test-result summary as parse-failed, but the standalone test command exited successfully and the direct npm test run verified 13 passing tests."
+test_results:
+  SHOP-005:
+    command: "npm test --workspace apps/web"
+    passed: 13
+    failed: 0
+    skipped: 0
+    failures: []
+validation:
+  typecheck: "npm run typecheck --workspace apps/web passed"
+  lint: "npm run lint --workspace apps/web passed"
+  build: "npm run build --workspace apps/web passed"
+  runtime: "Standalone runtime validation — 5 passed, 0 failed"
+  diff_check: "git diff --check passed"

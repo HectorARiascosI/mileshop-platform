@@ -4,6 +4,24 @@ export const FREE_DELIVERY_THRESHOLD_COP = 150_000;
 export const MINIMUM_DELIVERY_FEE_COP = 12_000;
 export const DELIVERY_FEE_RATE = 0.08;
 
+export type OrderCancellationResolution =
+  | "CANCELLED_NO_PAYMENT"
+  | "CANCELLED_PAYMENT_PENDING_REFUND"
+  | "CANCELLED_PAYMENT_REFUNDED";
+
+export function parseOrderCancellationResolution(
+  value: string | null | undefined,
+): OrderCancellationResolution | null {
+  if (
+    value === "CANCELLED_NO_PAYMENT" ||
+    value === "CANCELLED_PAYMENT_PENDING_REFUND" ||
+    value === "CANCELLED_PAYMENT_REFUNDED"
+  ) {
+    return value;
+  }
+  return null;
+}
+
 export type OrderRecord = {
   id: string;
   orderId: string;
@@ -15,6 +33,17 @@ export type OrderRecord = {
   status: OrderStatus;
   createdAt: Date;
   updatedAt: Date;
+  requestFingerprint?: string;
+  reservationExpiresAt?: Date | null;
+  cancelRequestedAt?: Date | null;
+  cancelResolvedAt?: Date | null;
+  cancelResolution?: OrderCancellationResolution | null;
+  cancelResolvedByCustomerId?: string | null;
+  cancelResolutionNote?: string | null;
+  cancelPaymentCaptured?: boolean | null;
+  externalRefundRecordedByCustomerId?: string | null;
+  externalRefundReference?: string | null;
+  externalRefundHandledAt?: Date | null;
   lines: Array<{
     id: string;
     productId: string;
@@ -56,6 +85,8 @@ export class OrderDomain {
       status: "PENDING",
       createdAt: now,
       updatedAt: now,
+      requestFingerprint: command.idempotencyKey,
+      reservationExpiresAt: null,
       lines: normalizedLines.map((line: CreateOrderCommand["lines"][number]) => ({
         id: crypto.randomUUID(),
         productId: line.productId,
@@ -75,6 +106,7 @@ export class OrderDomain {
     deliveryFeeCop: number;
     totalCop: number;
     status: OrderStatus;
+    reservationExpiresAt: Date | null;
     createdAt: string;
     updatedAt: string;
     lines: OrderLine[];
@@ -87,6 +119,7 @@ export class OrderDomain {
       deliveryFeeCop: record.deliveryFeeCop,
       totalCop: record.totalCop,
       status: record.status,
+      reservationExpiresAt: record.reservationExpiresAt ?? null,
       createdAt: record.createdAt.toISOString(),
       updatedAt: record.updatedAt.toISOString(),
       lines: record.lines.map((line) => ({

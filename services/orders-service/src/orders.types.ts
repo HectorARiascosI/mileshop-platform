@@ -1,4 +1,11 @@
-export type OrderStatus = "PENDING" | "CONFIRMED" | "CANCELLED";
+export type OrderStatus =
+  | "PENDING"
+  | "AWAITING_PAYMENT_PROOF"
+  | "PAYMENT_REVIEW_PENDING"
+  | "CONFIRMED"
+  | "CANCELLED"
+  | "RESERVATION_EXPIRED"
+  | "RESERVATION_FAILED";
 
 export type OrderLineInput = {
   productId: string;
@@ -54,6 +61,7 @@ export type Order = {
   deliveryFeeCop: number;
   totalCop: number;
   status: OrderStatus;
+  reservationExpiresAt: Date | null;
   createdAt: string;
   updatedAt: string;
   lines: OrderLine[];
