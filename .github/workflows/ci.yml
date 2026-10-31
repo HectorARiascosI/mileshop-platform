@@ -64,6 +64,15 @@ jobs:
             for i in $(seq 1 60); do
               curl -fsS "$url" && break || sleep 2
             done
+            curl -fsS "$url" || {
+              echo "::error::Service health check failed: $url"
+              for log in /tmp/mileshop-*.log; do
+                echo "::group::$log"
+                cat "$log"
+                echo "::endgroup::"
+              done
+              exit 1
+            }
           done
 
       - name: Validate local purchase flow
