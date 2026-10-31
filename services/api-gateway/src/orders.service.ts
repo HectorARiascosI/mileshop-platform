@@ -87,6 +87,10 @@ export class OrderService {
     }
 
     if (!orderResponse.ok) {
+      const responseBody = await orderResponse.text();
+      console.error(
+        `Orders service createOrder failed: status=${orderResponse.status} body=${responseBody}`,
+      );
       if (orderResponse.status === 400) {
         throw new BadRequestException("Order payload rejected by orders service");
       }
