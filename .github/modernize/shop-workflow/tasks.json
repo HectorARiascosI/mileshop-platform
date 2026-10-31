@@ -1,0 +1,99 @@
+{
+  "plan": ".github/modernize/shop-workflow/plan.md",
+  "scope": "Storefront handoff and Vercel proxy readiness",
+  "tasks": [
+    {
+      "id": "SHOP-001",
+      "description": "Record current architecture, superseded proof-upload/expiry decisions, reservation policy, and phased acceptance criteria.",
+      "status": "completed",
+      "files": [
+        ".github/modernize/shop-workflow/plan.md",
+        ".github/modernize/shop-workflow/tasks.json"
+      ],
+      "verification": "Reviewed current worktree and prior session artifacts; captured baseline storefront tests and typecheck."
+    },
+    {
+      "id": "SHOP-002",
+      "description": "Implement a pure WhatsApp URL builder with international phone validation and the persisted order's complete summary.",
+      "status": "completed",
+      "requirements": ["REQ-002", "REQ-003"],
+      "files": [
+        "apps/web/src/lib/whatsapp-order.ts",
+        "apps/web/src/lib/whatsapp-order.test.ts"
+      ],
+      "acceptance": [
+        "Reject missing/invalid phone configuration.",
+        "Encode an order reference, each line and all persisted totals.",
+        "Never imply that WhatsApp sent the message or attached proof."
+      ],
+      "verification": "Three unit tests cover E.164 validation, complete encoded summary, and invalid input."
+    },
+    {
+      "id": "SHOP-003",
+      "description": "Navigate to WhatsApp only after order persistence, preserving a fallback for popup/configuration failures.",
+      "status": "completed",
+      "requirements": ["REQ-001", "REQ-003"],
+      "files": [
+        "apps/web/src/components/catalog-shell.tsx",
+        "apps/web/src/app/checkout/checkout-order.tsx",
+        "apps/web/.env.example"
+      ],
+      "acceptance": [
+        "A failed POST closes the temporary tab and does not hand off.",
+        "A successful POST routes the tab to the configured wa.me link.",
+        "The persisted order remains accessible with a manual fallback link and proof instructions."
+      ],
+      "verification": "Inspected the order-first request flow; the confirmation page retains a fallback CTA when popup/config is unavailable."
+    },
+    {
+      "id": "SHOP-004",
+      "description": "Verify first-batch behavior using focused storefront tests, typecheck, and lint.",
+      "status": "completed",
+      "files": [],
+      "acceptance": [
+        "WhatsApp URL tests pass.",
+        "Storefront test, typecheck, and lint commands pass or pre-existing failures are identified."
+      ],
+      "verification": {
+        "tests": "npm test --workspace apps/web — 8 passed, 0 failed",
+        "typecheck": "npm run typecheck --workspace apps/web — passed",
+        "lint": "npm run lint --workspace apps/web — passed",
+        "build": "npm run build --workspace apps/web — passed"
+      }
+    },
+    {
+      "id": "SHOP-005",
+      "description": "Harden the Next.js-to-gateway boundary for Vercel and document the separate backend requirement.",
+      "status": "completed",
+      "requirements": ["REQ-006"],
+      "files": [
+        "apps/web/src/lib/api-gateway-url.ts",
+        "apps/web/src/lib/api-gateway-url.test.ts",
+        "apps/web/src/app/page.tsx",
+        "apps/web/src/app/api/auth/login/route.ts",
+        "apps/web/src/app/api/auth/logout/route.ts",
+        "apps/web/src/app/api/auth/me/route.ts",
+        "apps/web/src/app/api/auth/register/route.ts",
+        "apps/web/src/app/api/auth/refresh/route.ts",
+        "apps/web/src/app/api/orders/route.ts",
+        "apps/web/src/app/api/orders/[orderId]/route.ts",
+        "apps/web/.tsupgrader/runtime-validation/eval-plan.json",
+        "apps/web/.env.example",
+        "apps/web/README.md"
+      ],
+      "acceptance": [
+        "No production proxy silently falls back to localhost.",
+        "Production gateway URLs must use HTTPS and reject credentials, query strings, and fragments.",
+        "Transient gateway outages are reported as unavailable rather than misreported as expired authentication.",
+        "Vercel documentation states that NestJS services and databases still require a separately deployed backend."
+      ],
+      "verification": {
+        "tests": "npm test --workspace apps/web — 13 passed, 0 failed",
+        "typecheck": "npm run typecheck --workspace apps/web — passed",
+        "lint": "npm run lint --workspace apps/web — passed",
+        "build": "npm run build --workspace apps/web — passed",
+        "runtime": "Standalone runtime validation — 5 assertions passed"
+      }
+    }
+  ]
+}

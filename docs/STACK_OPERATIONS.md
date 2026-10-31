@@ -6,8 +6,8 @@ This repo is the runtime source of truth for the MileShop distributed platform. 
 
 - `apps/web` exposes the storefront and checkout flow.
 - `services/api-gateway` exposes the public HTTP entrypoint and composes domain services.
-- `services/catalog-service` owns product data, available stock and atomic inventory reservations.
-- `services/orders-service` owns the order lifecycle, payment-review metadata, outboxes and private payment-evidence files.
+- `services/catalog-service` owns the product catalog domain and its data model.
+- `services/orders-service` owns order creation and validation rules.
 - `services/notification-worker` receives events and performs downstream notifications.
 - `infra/docker-compose.yml` provisions the local Postgres instances used by the services.
 
@@ -18,7 +18,7 @@ This repo is the runtime source of truth for the MileShop distributed platform. 
 | API Gateway | 3000 | public facade | identity + catalog + orders |
 | Notification Worker | 3010 | event receiver and notifier | PostgreSQL |
 | Catalog Service | 3020 | product catalog | PostgreSQL |
-| Orders Service | 3030 | order lifecycle, inventory commands, payment review and outboxes | PostgreSQL + catalog service + notification worker |
+| Orders Service | 3030 | order creation, pricing, idempotency and event outbox | PostgreSQL + catalog service + notification worker |
 | Identity Service | 3040 | authentication and customer identity | PostgreSQL |
 | Catalog Postgres | 5434 | catalog domain database | Docker |
 | Notification Postgres | 5433 | notification domain database | Docker |
@@ -31,25 +31,21 @@ This is not a generic monolith. The design follows domain ownership.
 
 ### Catalog domain
 
-- owns product definitions, sellable stock and listing logic
-- exposes `GET /products` for consumer reads and authenticated internal reservation, commit and release commands
-- reports sellable stock separately from inventory already reserved by pending orders
+- owns product definitions, stock and listing logic
+- exposes `GET /products` for consumer reads
 - remains the source of truth for catalog data
 
 ### Orders domain
 
-- owns the order aggregate and validation rules
-- accepts an authenticated, idempotent order command and atomically persists the order, lines, event and inventory-reservation command
-- delivers outbox events to the notification worker over HTTP, with an exclusive 30-second lease, exponential backoff and an eight-attempt limit
-- retries inventory reservation, commit and release commands durably and idempotently
-- stores payment evidence privately; in production its configured directory must be a persistent private volume
+- owns the order aggregate, pricing rules, idempotency and event outbox
+- validates products against the catalog and calculates/persists subtotal, delivery fee and total
+- publishes `OrderCreated.v1` to the notification worker and retries failed deliveries from its persistent outbox
 - keeps its database isolated from the catalog domain
 
 ### Notification domain
 
 - owns notification processing for downstream delivery
 - receives the `OrderCreated.v1` request published by `orders-service`
-- deduplicates by `eventId` and returns `202 Accepted` when another active lease owns processing
 - does not read catalog tables directly
 
 ### API gateway
@@ -62,7 +58,7 @@ This is not a generic monolith. The design follows domain ownership.
 ### Identity domain
 
 - owns customer accounts, password hashes and session refresh tokens
-- exposes `POST /auth/register`, `POST /auth/login`, `POST /auth/refresh`, `POST /auth/logout` and `GET /auth/me`
+- exposes `POST /auth/register`, `POST /auth/login`, `POST /auth/refresh`, `POST /auth/logout`, `GET /auth/me` and `POST /auth/verify-token`
 - issues JWT HS256 access tokens (15 min) and opaque refresh tokens (30 days) stored in its own database
 - no other service reads identity tables directly
 
@@ -74,7 +70,6 @@ Each service is configured explicitly and intentionally.
 
 ```powershell
 $env:PORT='3020'
-$env:CATALOG_INVENTORY_COMMAND_TOKEN='<same-random-secret-as-orders-service>'
 $env:DATABASE_URL='postgresql://catalog:catalog@localhost:5434/catalog?schema=public'
 ```
 
@@ -88,13 +83,9 @@ $env:DATABASE_URL='postgresql://notifications:notifications@localhost:5433/notif
 ### Orders service
 
 ```powershell
-$env:PORT='3030'
-$env:NOTIFICATION_WORKER_URL='http://127.0.0.1:3010'
 $env:CATALOG_SERVICE_URL='http://127.0.0.1:3020'
-$env:CATALOG_INVENTORY_COMMAND_TOKEN='<same-random-secret-as-catalog-service>'
-$env:ORDERS_INTERNAL_TOKEN='<same-random-secret-as-api-gateway; at-least-32-characters>'
-$env:PAYMENT_EVIDENCE_STORAGE='local'
-$env:PAYMENT_EVIDENCE_LOCAL_DIR='<private-local-directory>'
+$env:NOTIFICATION_WORKER_URL='http://127.0.0.1:3010'
+$env:PORT='3030'
 $env:DATABASE_URL='postgresql://orders:orders@localhost:5435/orders?schema=public'
 ```
 
@@ -105,7 +96,6 @@ $env:PORT='3000'
 $env:CATALOG_SERVICE_URL='http://127.0.0.1:3020'
 $env:ORDERS_SERVICE_URL='http://127.0.0.1:3030'
 $env:IDENTITY_SERVICE_URL='http://127.0.0.1:3040'
-$env:ORDERS_INTERNAL_TOKEN='<same-random-secret-as-orders-service>'
 ```
 
 ### Identity service
@@ -121,22 +111,35 @@ $env:ALLOWED_ORIGINS='http://localhost:3001'
 
 ## 5. Startup sequence
 
-`infra/docker-compose.yml` provisions the four local PostgreSQL databases only; it does not build, start, or stop application services. Start Docker and the databases, then apply their local migrations from the repository root:
+1. Ensure Docker Desktop is running.
+2. Run the repository-local startup script from the repo root:
 
 ```powershell
-docker compose -f infra/docker-compose.yml up -d
-docker compose -f infra/docker-compose.yml ps
-npm run db:generate
-npm run db:deploy
+Set-Location "C:\Users\hecto\OneDrive\Desktop\MileShop\mileshop-platform"
+.\scripts\start-local-stack.ps1
 ```
 
-Configure each application process with its own `PORT`, `DATABASE_URL` and service URLs. The inventory command token must match between Catalog and Orders; the Gateway-to-Orders token must match between Gateway and Orders. Set a non-empty local `JWT_SECRET` for Identity so login and token refresh can sign sessions. Generate secrets outside the repository and do not reuse production credentials for local testing.
+3. The script performs the following in order:
+   - validates Docker availability
+   - starts the Postgres compose stack
+   - applies Prisma migrations for the four service databases
+   - clears stale listeners on ports 3000, 3010, 3020, 3030 and 3040
+   - launches the five application services as independent processes with env-specific variables
+   - waits until each service health endpoint is available
+   - executes smoke checks against the gateway and catalog flow
 
-The application processes must be launched and stopped separately. Do not clear ports by killing an unverified process; identify the listener and its owning workspace first. See `CONTRIBUTING.md`, section “Entorno local”, for the current database, migration and storage requirements.
+The migration command is centralized in `scripts/deploy-local-databases.ps1`, which assigns the catalog, notification, and orders database URL separately. This prevents a shell-level `DATABASE_URL` from applying a migration to the wrong domain.
 
 ## 6. Health and operational checks
 
-Probe each running service directly:
+Use the repository status script to inspect the current runtime state:
+
+```powershell
+Set-Location "C:\Users\hecto\OneDrive\Desktop\MileShop\mileshop-platform"
+.\scripts\status-local-stack.ps1
+```
+
+Expected checks:
 
 - `http://localhost:3000/healthz`
 - `http://localhost:3010/healthz`
@@ -148,15 +151,15 @@ All should respond with an HTTP 200 and a JSON payload like `{"status":"ok"}`.
 
 ## 7. Failure modes to diagnose quickly
 
-### Port already in use
+### Stale ports
 
 Symptom: port already in use or startup fails immediately.
 
 Cause:
-- another process is bound to the requested port; it may belong to a different MileShop workspace.
+- an old Node process is still bound to 3000, 3010, 3020, 3030 or 3040.
 
 Resolution:
-- inspect the listener PID and its command line/workspace before stopping anything; use alternate local ports when avoiding interference with another running workspace.
+- run the stop script or clear the owning process with PowerShell.
 
 ### Docker not running
 
@@ -168,15 +171,15 @@ Cause:
 Resolution:
 - start Docker Desktop and wait until the engine is healthy.
 
-### Wrong repository
+### Wrong working directory
 
 Symptom: package resolution or workspace errors such as missing `package.json` or inconsistent workspaces.
 
 Cause:
-- a command was launched outside `mileshop-platform-inventory-payments` or from the legacy `Proyecto_ventas` workspace.
+- the command was launched outside the monorepo root.
 
 Resolution:
-- run from the root of `mileshop-platform-inventory-payments`; never apply these operations to the legacy workspace.
+- always run from `C:\Users\hecto\OneDrive\Desktop\MileShop\mileshop-platform`.
 
 ### Missing environment variables
 
@@ -191,16 +194,20 @@ Resolution:
 ## 8. Controlled shutdown
 
 ```powershell
-docker compose -f infra/docker-compose.yml down
+Set-Location "C:\Users\hecto\OneDrive\Desktop\MileShop\mileshop-platform"
+.\scripts\stop-local-stack.ps1
 ```
 
-This stops only the PostgreSQL containers; it does not stop application processes or delete the bind-mounted database files. Do not use `docker compose down -v` or remove `infra/.data` unless intentionally discarding local database contents.
+The stop flow does the following:
+- kills stale listeners on the app ports
+- runs `docker compose down` for the Postgres stack
+- leaves the repo in a clean, restartable state
 
 ## 9. Maintainability rules
 
 - keep each service isolated and explicitly configured
 - document runtime ports and env variables in the repo
-- document which processes each startup and shutdown command affects
+- prefer script-driven startup and shutdown instead of ad hoc terminal launches
 - treat each bug as a traceable operational incident with symptom, root cause and fix
 - do not mix local environment artifacts with source-controlled product behavior
 

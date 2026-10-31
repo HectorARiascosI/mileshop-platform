@@ -1,52 +1,24 @@
 import {
+  ConflictException,
   Injectable,
   Logger,
   OnModuleDestroy,
   OnModuleInit,
 } from "@nestjs/common";
 
+import type { PrismaClient } from "../generated/orders-client/index.js";
 import { CatalogReader } from "./catalog.reader.js";
-import { FREE_DELIVERY_THRESHOLD_COP, OrderDomain } from "./orders.domain.js";
+import { OrderDomain } from "./orders.domain.js";
 import type { OrderRecord } from "./orders.domain.js";
-import type {
-  CancellationRefundRecordResult,
-  CancellationResolutionResult,
-  CancellationRequestResult,
-  OrderCancellationResult,
-  OrdersRepository,
-  OutboxFailureResult,
-  PaymentApprovalResult,
-  PaymentRejectionResult,
-} from "./orders.repository.js";
-import {
-  createInventoryReleaseCommand,
-  type InventoryCommand,
-} from "./inventory-command.repository.js";
-import {
-  InvalidOrderError,
-  OrderConflictError,
-  createOrderSchema,
-} from "./orders.validation.js";
-import type {
-  CreateOrderInput,
-  CreatedOrder,
-  Order,
-  OrderCreatedEvent,
-  PendingCancellationRequest,
-} from "./orders.types.js";
+import { type OrdersRepository, type ReservationIntent } from "./orders.repository.js";
+import type { CreateOrderInput, Order, OrderCreatedEvent } from "./orders.types.js";
+import { createOrderSchema } from "./orders.validation.js";
 
+export const ORDER_EVENT_PUBLISHER = "ORDER_EVENT_PUBLISHER";
+export const NOTIFICATION_WORKER_URL = "NOTIFICATION_WORKER_URL";
 export const OUTBOX_MAX_ATTEMPTS = 8;
-export const OUTBOX_LEASE_MS = 30_000;
-const OUTBOX_POLL_INTERVAL_MS = 5_000;
-const OUTBOX_BATCH_SIZE = 25;
-
-export interface OrderEventPublisher {
-  publishCreated(event: OrderCreatedEvent): Promise<void>;
-}
-
-export interface InventoryCommandProcessor {
-  processPendingCommands(): Promise<void>;
-}
+export const OUTBOX_RETRY_BASE_DELAY_MS = 5_000;
+export const OUTBOX_RETRY_MAX_DELAY_MS = 5 * 60_000;
 
 export class InvalidPaymentDecisionError extends Error {
   public constructor(message: string) {
@@ -55,13 +27,203 @@ export class InvalidPaymentDecisionError extends Error {
   }
 }
 
-export class InvalidCancellationResolutionError extends Error {
+export type PendingOrderEvent = {
+  event: OrderCreatedEvent;
+  attemptCount: number;
+  nextAttemptAt: Date;
+};
+
+export type OutboxFailureResult = {
+  attemptCount: number;
+  nextAttemptAt: Date | null;
+};
+
+function getRetryDelayMs(attemptCount: number): number {
+  return Math.min(
+    OUTBOX_RETRY_BASE_DELAY_MS * 2 ** (attemptCount - 1),
+    OUTBOX_RETRY_MAX_DELAY_MS,
+  );
+}
+
+export class NotificationPublishingError extends Error {
   public constructor(message: string) {
     super(message);
-    this.name = "InvalidCancellationResolutionError";
+    this.name = "NotificationPublishingError";
   }
 }
 
+export interface OrderEventPublisher {
+  publishCreated(event: OrderCreatedEvent): Promise<void>;
+}
+
+export interface OrderEventOutbox {
+  append(event: OrderCreatedEvent): Promise<void>;
+  markPublished(eventId: string): Promise<void>;
+  markFailed(eventId: string, reason: string): Promise<OutboxFailureResult>;
+  listPending(now?: Date): Promise<PendingOrderEvent[]>;
+}
+
+@Injectable()
+export class InMemoryOrderEventOutbox implements OrderEventOutbox {
+  private readonly entries = new Map<
+    string,
+    {
+      event: OrderCreatedEvent;
+      status: "PENDING" | "PUBLISHED" | "FAILED";
+      attemptCount: number;
+      nextAttemptAt: Date;
+      lastError?: string;
+    }
+  >();
+
+  public async append(event: OrderCreatedEvent): Promise<void> {
+    if (!this.entries.has(event.eventId)) {
+      this.entries.set(event.eventId, {
+        event,
+        status: "PENDING",
+        attemptCount: 0,
+        nextAttemptAt: new Date(0),
+      });
+    }
+  }
+
+  public async markPublished(eventId: string): Promise<void> {
+    const entry = this.entries.get(eventId);
+    if (entry) {
+      entry.status = "PUBLISHED";
+      delete entry.lastError;
+    }
+  }
+
+  public async markFailed(
+    eventId: string,
+    reason: string,
+    failedAt = new Date(),
+  ): Promise<OutboxFailureResult> {
+    const entry = this.entries.get(eventId);
+    if (!entry) {
+      throw new Error(`Outbox event not found: ${eventId}`);
+    }
+
+    if (entry.status === "PUBLISHED") {
+      return { attemptCount: entry.attemptCount, nextAttemptAt: null };
+    }
+
+    entry.attemptCount += 1;
+    entry.lastError = reason;
+    entry.nextAttemptAt =
+      entry.attemptCount >= OUTBOX_MAX_ATTEMPTS
+        ? failedAt
+        : new Date(failedAt.getTime() + getRetryDelayMs(entry.attemptCount));
+    entry.status = entry.attemptCount >= OUTBOX_MAX_ATTEMPTS ? "FAILED" : "PENDING";
+
+    return {
+      attemptCount: entry.attemptCount,
+      nextAttemptAt: entry.status === "PENDING" ? entry.nextAttemptAt : null,
+    };
+  }
+
+  public async listPending(now = new Date()): Promise<PendingOrderEvent[]> {
+    return [...this.entries.values()]
+      .filter((entry) => entry.status === "PENDING" && entry.nextAttemptAt <= now)
+      .map((entry) => ({
+        event: entry.event,
+        attemptCount: entry.attemptCount,
+        nextAttemptAt: entry.nextAttemptAt,
+      }));
+  }
+}
+
+@Injectable()
+export class PrismaOrderEventOutbox implements OrderEventOutbox {
+  public constructor(private readonly prisma: PrismaClient) {}
+
+  public async append(event: OrderCreatedEvent): Promise<void> {
+    await this.prisma.orderEventOutbox.createMany({
+      data: [{
+        eventId: event.eventId,
+        eventType: event.eventType,
+        aggregateId: event.aggregateId,
+        occurredAt: new Date(event.occurredAt),
+        payload: event.payload,
+        status: "PENDING",
+        attemptCount: 0,
+        nextAttemptAt: new Date(),
+      }],
+      skipDuplicates: true,
+    });
+  }
+
+  public async markPublished(eventId: string): Promise<void> {
+    await this.prisma.orderEventOutbox.update({
+      where: { eventId },
+      data: {
+        status: "PUBLISHED",
+        lastError: null,
+        publishedAt: new Date(),
+      },
+    });
+  }
+
+  public async markFailed(eventId: string, reason: string): Promise<OutboxFailureResult> {
+    while (true) {
+      const current = await this.prisma.orderEventOutbox.findUnique({
+        where: { eventId },
+        select: { attemptCount: true, status: true, nextAttemptAt: true },
+      });
+      if (!current) {
+        throw new Error(`Outbox event not found: ${eventId}`);
+      }
+      if (current.status === "PUBLISHED") {
+        return { attemptCount: current.attemptCount, nextAttemptAt: null };
+      }
+
+      const attemptCount = current.attemptCount + 1;
+      const nextAttemptAt =
+        attemptCount >= OUTBOX_MAX_ATTEMPTS
+          ? null
+          : new Date(Date.now() + getRetryDelayMs(attemptCount));
+      const result = await this.prisma.orderEventOutbox.updateMany({
+        where: { eventId, attemptCount: current.attemptCount, status: { not: "PUBLISHED" } },
+        data: {
+          attemptCount,
+          nextAttemptAt: nextAttemptAt ?? current.nextAttemptAt,
+          status: nextAttemptAt ? "PENDING" : "FAILED",
+          lastError: reason,
+        },
+      });
+
+      if (result.count === 1) {
+        return { attemptCount, nextAttemptAt };
+      }
+    }
+  }
+
+  public async listPending(now = new Date()): Promise<PendingOrderEvent[]> {
+    const rows = await this.prisma.orderEventOutbox.findMany({
+      where: {
+        status: "PENDING",
+        attemptCount: { lt: OUTBOX_MAX_ATTEMPTS },
+        nextAttemptAt: { lte: now },
+      },
+      orderBy: { createdAt: "asc" },
+    });
+
+    return rows.map((row) => ({
+      event: {
+        eventType: row.eventType as OrderCreatedEvent["eventType"],
+        eventId: row.eventId,
+        occurredAt: row.occurredAt.toISOString(),
+        aggregateId: row.aggregateId,
+        payload: row.payload as OrderCreatedEvent["payload"],
+      },
+      attemptCount: row.attemptCount,
+      nextAttemptAt: row.nextAttemptAt,
+    }));
+  }
+}
+
+@Injectable()
 export class HttpOrderEventPublisher implements OrderEventPublisher {
   public constructor(
     private readonly fetcher: typeof fetch,
@@ -76,8 +238,8 @@ export class HttpOrderEventPublisher implements OrderEventPublisher {
       signal: AbortSignal.timeout(3_000),
     });
 
-    if (!response.ok || response.status === 202) {
-      throw new Error(`Notification worker did not finish event delivery (${response.status})`);
+    if (!response.ok) {
+      throw new NotificationPublishingError(`Notification worker rejected OrderCreated.v1: ${response.status}`);
     }
   }
 }
@@ -85,6 +247,7 @@ export class HttpOrderEventPublisher implements OrderEventPublisher {
 @Injectable()
 export class OrdersService implements OnModuleInit, OnModuleDestroy {
   private readonly logger = new Logger(OrdersService.name);
+  private readonly retryIntervalMs = 5_000;
   private recoveryInProgress = false;
   private recoveryTimer?: NodeJS.Timeout;
 
@@ -92,7 +255,7 @@ export class OrdersService implements OnModuleInit, OnModuleDestroy {
     private readonly repository: OrdersRepository,
     private readonly catalog: CatalogReader,
     private readonly eventPublisher: OrderEventPublisher,
-    private readonly inventoryCommandProcessor?: InventoryCommandProcessor,
+    private readonly outbox: OrderEventOutbox = new InMemoryOrderEventOutbox(),
   ) {}
 
   public async onModuleInit(): Promise<void> {
@@ -104,7 +267,7 @@ export class OrdersService implements OnModuleInit, OnModuleDestroy {
           error instanceof Error ? error.stack : undefined,
         );
       });
-    }, OUTBOX_POLL_INTERVAL_MS);
+    }, this.retryIntervalMs);
   }
 
   public onModuleDestroy(): void {
@@ -120,44 +283,16 @@ export class OrdersService implements OnModuleInit, OnModuleDestroy {
 
     this.recoveryInProgress = true;
     try {
-      const claims = await this.repository.claimPendingEvents(
-        new Date(),
-        OUTBOX_LEASE_MS,
-        OUTBOX_BATCH_SIZE,
-      );
-      for (const claim of claims) {
-        try {
-          await this.eventPublisher.publishCreated(claim.event);
-        } catch (error) {
-          const reason = error instanceof Error ? error.message : "Unknown event delivery error";
-          try {
-            const result = await this.repository.markEventFailed(
-              claim.event.eventId,
-              claim.claimToken,
-              reason,
-              new Date(),
-            );
-            this.logPublishFailure(claim.event.eventId, reason, result);
-          } catch (persistenceError) {
-            this.logger.error(
-              `Failed to persist delivery failure for event ${claim.event.eventId}`,
-              persistenceError instanceof Error ? persistenceError.stack : undefined,
-            );
-          }
-          continue;
-        }
+      const pending = await this.outbox.listPending();
 
+      for (const { event } of pending) {
         try {
-          await this.repository.markEventPublished(
-            claim.event.eventId,
-            claim.claimToken,
-            new Date(),
-          );
+          await this.eventPublisher.publishCreated(event);
+          await this.outbox.markPublished(event.eventId);
         } catch (error) {
-          this.logger.error(
-            `Event ${claim.event.eventId} was delivered but its outbox claim could not be completed; it will be retried after lease expiry`,
-            error instanceof Error ? error.stack : undefined,
-          );
+          const reason = error instanceof Error ? error.message : "Notification worker is unavailable";
+          const result = await this.outbox.markFailed(event.eventId, reason);
+          this.logPublishFailure(event.eventId, reason, result);
         }
       }
     } finally {
@@ -165,377 +300,224 @@ export class OrdersService implements OnModuleInit, OnModuleDestroy {
     }
   }
 
-  public async createOrder(
-    input: unknown,
-    idempotencyKey: string | undefined,
-  ): Promise<CreatedOrder> {
-    const parsedBody =
-      typeof input === "object" && input !== null && !Array.isArray(input)
-        ? input
-        : {};
-    const parsed = createOrderSchema.safeParse({ ...parsedBody, idempotencyKey });
+  public async createOrder(input: CreateOrderInput): Promise<Order> {
+    const parsed = createOrderSchema.safeParse(input);
     if (!parsed.success) {
-      throw new InvalidOrderError("Invalid order payload");
-    }
-
-    const command: CreateOrderInput = parsed.data;
-    const requestedSubtotal = command.lines.reduce(
-      (total, line) => total + line.unitPriceCop * line.quantity,
-      0,
-    );
-    if (!Number.isSafeInteger(requestedSubtotal)) {
-      throw new InvalidOrderError("Order total exceeds the supported amount");
-    }
-    const requestedDeliveryFee = requestedSubtotal >= FREE_DELIVERY_THRESHOLD_COP
-      ? 0
-      : Math.max(12_000, Math.round(requestedSubtotal * 0.08));
-    if (!Number.isSafeInteger(requestedSubtotal + requestedDeliveryFee)) {
-      throw new InvalidOrderError("Order total exceeds the supported amount");
-    }
-    const fingerprint = OrderDomain.fingerprint(command);
-    const existing = await this.repository.findByIdempotencyKey(
-      command.customerId,
-      command.idempotencyKey,
-    );
-    if (existing) {
-      return this.returnExistingOrder(existing, fingerprint);
+      throw new Error("Invalid order payload");
     }
 
     const products = await this.catalog.listActiveProducts();
     const productsById = new Map(products.map((product) => [product.id, product]));
     const requestedQuantities = new Map<string, number>();
 
-    const validatedLines = command.lines.map((line) => {
+    const validatedLines = parsed.data.lines.map((line) => {
       const product = productsById.get(line.productId);
       if (!product) {
-        throw new InvalidOrderError(`Product line is not current: ${line.productId}`);
-      }
-      if (product.sku !== line.sku) {
-        throw new InvalidOrderError(`Product identity is not current: ${line.sku}`);
-      }
-      if (product.priceCop !== line.unitPriceCop) {
-        throw new InvalidOrderError(`Product price is not current: ${line.sku}`);
+        throw new Error(`Product line is not current: ${line.productId}`);
       }
 
       const requestedQuantity = (requestedQuantities.get(product.id) ?? 0) + line.quantity;
       if (requestedQuantity > product.stock) {
-        throw new InvalidOrderError(`Insufficient stock: ${line.sku}`);
+        throw new Error(`Insufficient stock: ${line.sku}`);
       }
       requestedQuantities.set(product.id, requestedQuantity);
-      return { ...line, name: product.name };
+      return {
+        ...line,
+        sku: product.sku,
+        name: product.name,
+        unitPriceCop: product.priceCop,
+      };
     });
 
+    const existing = await this.repository.findByIdempotencyKey(parsed.data.idempotencyKey);
+    if (existing) {
+      return this.returnExistingOrder(existing, parsed.data.customerId, validatedLines);
+    }
+
     const record = OrderDomain.createOrder({
-      ...command,
+      ...parsed.data,
       lines: validatedLines,
     });
     const event = this.buildOrderCreatedEvent(record);
-    if (!record.reservationExpiresAt) {
-      throw new Error("New orders must have an inventory reservation expiry");
+
+    if (
+      this.catalog.reserveProducts &&
+      this.repository.createReservationIntent &&
+      this.repository.completeReservationIntent &&
+      this.repository.listPendingReservationIntents
+    ) {
+      const intent: ReservationIntent = {
+        intentId: `${record.orderId}-reservation`,
+        orderId: record.orderId,
+        customerId: record.customerId,
+        idempotencyKey: record.idempotencyKey,
+        status: "PENDING",
+        lines: validatedLines.map((line) => ({
+          productId: line.productId,
+          quantity: line.quantity,
+        })),
+        createdAt: record.createdAt,
+        nextAttemptAt: record.createdAt,
+      };
+      await this.repository.createReservationIntent(intent, record, event);
+      await this.catalog.reserveProducts(record.orderId, intent.lines);
+      await this.repository.completeReservationIntent(intent, record, event);
     }
-    const inventoryCommand: InventoryCommand = {
-      commandId: `${record.orderId}-reserve-inventory`,
-      idempotencyKey: `${record.orderId}:RESERVE`,
-      orderId: record.orderId,
-      commandType: "RESERVE",
-      payload: {
-        lines: record.lines.map(({ productId, quantity }) => ({ productId, quantity })),
-        expiresAt: record.reservationExpiresAt.toISOString(),
-      },
-    };
 
     try {
-      await this.repository.save(record, event, inventoryCommand);
+      if (!(
+        this.catalog.reserveProducts &&
+        this.repository.createReservationIntent &&
+        this.repository.completeReservationIntent &&
+        this.repository.listPendingReservationIntents
+      )) {
+        await this.repository.save(record, event);
+      }
     } catch (error) {
-      const concurrent = await this.repository.findByIdempotencyKey(
-        command.customerId,
-        command.idempotencyKey,
-      );
+      const concurrent = await this.repository.findByIdempotencyKey(parsed.data.idempotencyKey);
       if (!concurrent) {
         throw error;
       }
-      return this.returnExistingOrder(concurrent, fingerprint);
+      return this.returnExistingOrder(concurrent, parsed.data.customerId, validatedLines);
     }
 
-    await this.recoverPendingEvents();
-    return { ...OrderDomain.toOrderView(record), event };
-  }
-
-  public async getOrderById(orderId: string, customerId: string): Promise<Order | null> {
-    const record = await this.repository.findByOrderId(orderId);
-    return record && record.customerId === customerId
-      ? { ...OrderDomain.toOrderView(record) }
-      : null;
-  }
-
-  public async cancelOrder(
-    orderId: string,
-    customerId: string,
-  ): Promise<{ result: OrderCancellationResult; order: Order | null }> {
-    if (!/^[a-zA-Z0-9-]{1,128}$/.test(orderId)) {
-      throw new InvalidOrderError("Invalid order ID");
-    }
-    if (!customerId.trim() || customerId.length > 128) {
-      throw new InvalidOrderError("Verified customer is required");
-    }
-
-    const cancelledAt = new Date();
-    const result = await this.repository.cancelOrder(
-      orderId,
-      customerId,
-      cancelledAt,
-      createInventoryReleaseCommand(orderId),
-    );
-    const record = await this.repository.findByOrderId(orderId);
-    if (result === "cancelled") {
-      if (this.inventoryCommandProcessor) {
-        void this.inventoryCommandProcessor.processPendingCommands().catch((error: unknown) => {
-          this.logger.error(
-            `Immediate inventory release attempt failed for cancelled order ${orderId}; durable retry remains scheduled`,
-            error instanceof Error ? error.stack : undefined,
-          );
-        });
-      } else {
-        this.logger.error(
-          `No immediate inventory command processor is configured for cancelled order ${orderId}; durable retry worker must process it`,
-        );
-      }
-    }
-    return {
-      result,
-      order: record ? OrderDomain.toOrderView(record) : null,
-    };
-  }
-
-  public async requestCancellation(
-    orderId: string,
-    customerId: string,
-  ): Promise<{ result: CancellationRequestResult; order: Order | null }> {
-    if (!/^[a-zA-Z0-9-]{1,128}$/.test(orderId)) {
-      throw new InvalidOrderError("Invalid order ID");
-    }
-    if (!customerId.trim() || customerId.length > 128) {
-      throw new InvalidOrderError("Verified customer is required");
-    }
-
-    const requestedAt = new Date();
-    const result = await this.repository.requestCancellation(
-      orderId,
-      customerId,
-      requestedAt,
-    );
-    const record = await this.repository.findByOrderId(orderId);
-    return {
-      result,
-      order: record?.customerId === customerId
-        ? OrderDomain.toOrderView(record)
-        : null,
-    };
-  }
-
-  public async listPendingCancellationRequests(): Promise<PendingCancellationRequest[]> {
-    return this.repository.listPendingCancellationRequests();
-  }
-
-  public async recordCancellationRefund(
-    orderId: string,
-    adminCustomerId: string,
-    paymentCapturedInput: unknown,
-    externalRefundReferenceInput: unknown,
-  ): Promise<{ result: CancellationRefundRecordResult; order: Order | null }> {
-    if (!/^[a-zA-Z0-9-]{1,128}$/.test(orderId)) {
-      throw new InvalidOrderError("Invalid order ID");
-    }
-    if (!adminCustomerId.trim() || adminCustomerId.length > 128) {
-      throw new InvalidCancellationResolutionError("Verified store administrator is required");
-    }
-    if (typeof paymentCapturedInput !== "boolean") {
-      throw new InvalidCancellationResolutionError("Payment capture status is required");
-    }
-    let externalRefundReference: string | null = null;
-    if (paymentCapturedInput) {
-      if (typeof externalRefundReferenceInput !== "string") {
-        throw new InvalidCancellationResolutionError(
-          "An external refund reference is required when payment was captured",
-        );
-      }
-      externalRefundReference = externalRefundReferenceInput.trim();
-      if (!externalRefundReference || externalRefundReference.length > 200) {
-        throw new InvalidCancellationResolutionError(
-          "An external refund reference between 1 and 200 characters is required",
-        );
-      }
-    } else if (
-      externalRefundReferenceInput !== undefined &&
-      externalRefundReferenceInput !== null &&
-      externalRefundReferenceInput !== ""
-    ) {
-      throw new InvalidCancellationResolutionError(
-        "A refund reference is not allowed when payment was not captured",
-      );
-    }
-
-    const recordedAt = new Date();
-    const result = await this.repository.recordCancellationRefund(
-      orderId,
-      adminCustomerId,
-      paymentCapturedInput,
-      externalRefundReference,
-      recordedAt,
-    );
-    const record = await this.repository.findByOrderId(orderId);
-    return {
-      result,
-      order: record ? OrderDomain.toOrderView(record) : null,
-    };
-  }
-
-  public async resolveCancellationRequest(
-    orderId: string,
-    adminCustomerId: string,
-    actionInput: unknown,
-    noteInput: unknown,
-  ): Promise<{ result: CancellationResolutionResult; order: Order | null }> {
-    if (!/^[a-zA-Z0-9-]{1,128}$/.test(orderId)) {
-      throw new InvalidOrderError("Invalid order ID");
-    }
-    if (!adminCustomerId.trim() || adminCustomerId.length > 128) {
-      throw new InvalidCancellationResolutionError("Verified store administrator is required");
-    }
-    if (actionInput !== "CANCEL" && actionInput !== "KEEP_OPEN") {
-      throw new InvalidCancellationResolutionError("A valid cancellation resolution is required");
-    }
-    if (typeof noteInput !== "string") {
-      throw new InvalidCancellationResolutionError("A resolution note is required");
-    }
-    const note = noteInput.trim();
-    if (!note || note.length > 1000) {
-      throw new InvalidCancellationResolutionError(
-        "A resolution note between 1 and 1000 characters is required",
-      );
-    }
-
-    const resolvedAt = new Date();
-    const result = await this.repository.resolveCancellationRequest(
-      orderId,
-      adminCustomerId,
-      actionInput,
-      note,
-      resolvedAt,
-      createInventoryReleaseCommand(orderId),
-    );
-    const record = await this.repository.findByOrderId(orderId);
-    if (result === "cancelled") {
-      if (this.inventoryCommandProcessor) {
-        void this.inventoryCommandProcessor.processPendingCommands().catch((error: unknown) => {
-          this.logger.error(
-            `Immediate inventory release attempt failed for post-proof cancelled order ${orderId}; durable retry remains scheduled`,
-            error instanceof Error ? error.stack : undefined,
-          );
-        });
-      } else {
-        this.logger.error(
-          `No immediate inventory command processor is configured for post-proof cancelled order ${orderId}; durable retry worker must process it`,
-        );
-      }
-    }
-    return {
-      result,
-      order: record ? OrderDomain.toOrderView(record) : null,
-    };
-  }
-
-  public async approvePayment(
-    orderId: string,
-    adminCustomerId: string,
-  ): Promise<{ result: PaymentApprovalResult; order: Order | null }> {
-    if (!/^[a-zA-Z0-9-]{1,128}$/.test(orderId)) {
-      throw new InvalidOrderError("Invalid order ID");
-    }
-    if (!adminCustomerId.trim() || adminCustomerId.length > 128) {
-      throw new Error("Verified store administrator is required");
-    }
-    const decidedAt = new Date();
-    const inventoryCommand: InventoryCommand = {
-      commandId: `${orderId}-commit-inventory`,
-      idempotencyKey: `${orderId}:COMMIT`,
-      orderId,
-      commandType: "COMMIT",
-      payload: {},
-    };
-    const result = await this.repository.approvePayment(
-      orderId,
-      adminCustomerId,
-      decidedAt,
-      inventoryCommand,
-    );
-    const record = await this.repository.findByOrderId(orderId);
-    return {
-      result,
-      order: record ? OrderDomain.toOrderView(record) : null,
-    };
-  }
-
-  public async rejectPayment(
-    orderId: string,
-    adminCustomerId: string,
-    reasonInput: unknown,
-  ): Promise<{ result: PaymentRejectionResult; order: Order | null }> {
-    if (!/^[a-zA-Z0-9-]{1,128}$/.test(orderId)) {
-      throw new InvalidOrderError("Invalid order ID");
-    }
-    if (!adminCustomerId.trim() || adminCustomerId.length > 128) {
-      throw new InvalidPaymentDecisionError("Verified store administrator is required");
-    }
-    if (typeof reasonInput !== "string") {
-      throw new InvalidPaymentDecisionError("A rejection reason is required");
-    }
-    const reason = reasonInput.trim();
-    if (!reason || reason.length > 1000) {
-      throw new InvalidPaymentDecisionError(
-        "A rejection reason between 1 and 1000 characters is required",
-      );
-    }
-
-    const decidedAt = new Date();
-    const inventoryCommand = createInventoryReleaseCommand(orderId);
-    const result = await this.repository.rejectPayment(
-      orderId,
-      adminCustomerId,
-      reason,
-      decidedAt,
-      inventoryCommand,
-    );
-    const record = await this.repository.findByOrderId(orderId);
-    if (result === "rejected") {
-      if (this.inventoryCommandProcessor) {
-        void this.inventoryCommandProcessor.processPendingCommands().catch((error: unknown) => {
-          this.logger.error(
-            `Immediate inventory release attempt failed for rejected order ${orderId}; durable retry remains scheduled`,
-            error instanceof Error ? error.stack : undefined,
-          );
-        });
-      } else {
-        this.logger.error(
-          `No immediate inventory command processor is configured for rejected order ${orderId}; durable retry worker must process it`,
-        );
-      }
-    }
-    return {
-      result,
-      order: record ? OrderDomain.toOrderView(record) : null,
-    };
-  }
-
-  private returnExistingOrder(record: OrderRecord, fingerprint: string): CreatedOrder {
-    if (record.requestFingerprint !== fingerprint) {
-      throw new OrderConflictError("Idempotency key was reused with a different order payload");
+    try {
+      await this.eventPublisher.publishCreated(event);
+      await this.outbox.markPublished(event.eventId);
+    } catch (error) {
+      const reason = error instanceof Error ? error.message : "Notification worker is unavailable";
+      const result = await this.outbox.markFailed(event.eventId, reason);
+      this.logPublishFailure(event.eventId, reason, result);
     }
 
     return {
       ...OrderDomain.toOrderView(record),
-      event: this.buildOrderCreatedEvent(record),
+      event,
     };
+  }
+
+  public async recoverPendingReservationIntents(now: Date = new Date()): Promise<void> {
+    if (!this.repository.listPendingReservationIntents) {
+      return;
+    }
+    const intents = await this.repository.listPendingReservationIntents(now);
+    for (const intent of intents) {
+      await this.catalog.reserveProducts?.(intent.orderId, intent.lines);
+      const payload = await this.repository.getReservationIntentPayload?.(intent.intentId);
+      if (payload) {
+        await this.repository.completeReservationIntent?.(intent, payload.record, payload.event);
+      }
+    }
+  }
+
+  public async getOrderById(orderId: string): Promise<Order | null> {
+    const record = await this.repository.findByOrderId(orderId);
+    return record ? { ...OrderDomain.toOrderView(record) } : null;
+  }
+
+  public async approvePayment(orderId: string, adminCustomerId: string): Promise<{ result: string; order?: Order | null }> {
+    const current = await this.repository.findByOrderId(orderId);
+    if ((current as any)?.cancelRequestedAt && !(current as any)?.cancelResolvedAt) {
+      return { result: "not-pending", order: await this.getOrderById(orderId) };
+    }
+    const result = await this.repository.approvePayment(
+      orderId,
+      adminCustomerId,
+      new Date(),
+      { commandId: `${orderId}-commit-inventory`, idempotencyKey: `${orderId}:COMMIT`, orderId, commandType: "COMMIT", payload: {} },
+    );
+    return { result, order: await this.getOrderById(orderId) };
+  }
+
+  public async rejectPayment(orderId: string, adminCustomerId: string, reason: string): Promise<{ result: string; order?: Order | null }> {
+    if (!reason.trim()) throw new InvalidPaymentDecisionError("A rejection reason is required");
+    const result = await this.repository.rejectPayment(
+      orderId,
+      adminCustomerId,
+      reason.trim(),
+      new Date(),
+      { commandId: `${orderId}-release-inventory`, idempotencyKey: `${orderId}:RELEASE`, orderId, commandType: "RELEASE", payload: {} },
+    );
+    return { result, order: await this.getOrderById(orderId) };
+  }
+
+  public async requestCancellation(orderId: string, customerId: string): Promise<{ result: string; order?: Order | null }> {
+    const result = await this.repository.requestCancellation(orderId, customerId, new Date());
+    return {
+      result: result === "requested" ? "requested" : result === "already-requested" ? "already-pending" : result,
+      order: await this.getOrderById(orderId),
+    };
+  }
+
+  public async recordCancellationRefund(orderId: string, adminCustomerId: string, paymentCaptured: boolean, refundReference: string | null): Promise<{ result: string }> {
+    const result = await this.repository.recordCancellationRefund(orderId, adminCustomerId, paymentCaptured, refundReference, new Date());
+    return { result };
+  }
+
+  public async resolveCancellationRequest(orderId: string, adminCustomerId: string, resolution: "CANCEL" | "KEEP_OPEN", note: string | null = null): Promise<{ result: string; order?: Order | null }> {
+    const command = resolution === "CANCEL"
+      ? { commandId: `${orderId}-release-inventory`, idempotencyKey: `${orderId}:RELEASE`, orderId, commandType: "RELEASE" as const, payload: {} }
+      : undefined;
+    const result = await this.repository.resolveCancellationRequest(
+      orderId, adminCustomerId, resolution === "KEEP_OPEN" ? "KEEP" : "CANCEL", note, new Date(), command,
+    );
+    const mapped = result === "kept" ? "kept-open" : result;
+    if (result === "cancelled") {
+      await (this.outbox as unknown as { processPendingCommands?: () => Promise<void> }).processPendingCommands?.();
+    }
+    return { result: mapped, order: await this.getOrderById(orderId) };
+  }
+
+  public async cancelOrder(orderId: string, customerId: string): Promise<{ result: string }> {
+    const result = await this.repository.cancelOrder(
+      orderId, customerId, new Date(),
+      { commandId: `${orderId}-release-inventory`, idempotencyKey: `${orderId}:RELEASE`, orderId, commandType: "RELEASE", payload: {} },
+    );
+    return { result };
+  }
+
+  public async listPendingCancellationRequests(): Promise<Order[]> {
+    const repository = this.repository as OrdersRepository & {
+      records?: Map<string, OrderRecord>;
+      getPendingCancellationRequests?: () => Promise<OrderRecord[]>;
+    };
+    const records = repository.records
+      ? [...repository.records.values()].filter((record) => (record as any).cancelRequestedAt && !(record as any).cancelResolvedAt)
+      : [];
+    return records.map((record) => OrderDomain.toOrderView(record));
+  }
+
+  private async returnExistingOrder(
+    record: OrderRecord,
+    customerId: string,
+    requestedLines?: CreateOrderInput["lines"],
+  ): Promise<Order> {
+    if (record.customerId !== customerId) {
+      throw new ConflictException("Idempotency key has already been used");
+    }
+    if (
+      requestedLines &&
+      !this.hasSameRequestedLines(record.lines, requestedLines)
+    ) {
+      throw new ConflictException("Idempotency key has already been used");
+    }
+
+    const event = this.buildOrderCreatedEvent(record);
+    await this.outbox.append(event);
+    return { ...OrderDomain.toOrderView(record), event };
+  }
+
+  private hasSameRequestedLines(
+    persistedLines: OrderRecord["lines"],
+    requestedLines: CreateOrderInput["lines"],
+  ): boolean {
+    const persistSignature = persistedLines
+      .map((line) => `${line.productId}:${line.quantity}`)
+      .sort();
+    const requestSignature = requestedLines
+      .map((line) => `${line.productId}:${line.quantity}`)
+      .sort();
+    return JSON.stringify(persistSignature) === JSON.stringify(requestSignature);
   }
 
   private buildOrderCreatedEvent(record: OrderRecord): OrderCreatedEvent {

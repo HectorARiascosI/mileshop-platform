@@ -1,21 +1,25 @@
-import type {
-  CreateOrderCommand,
-  OrderLine,
-  OrderStatus,
-  PaymentDecisionView,
-} from "./orders.types.js";
+import type { CreateOrderCommand, OrderLine, OrderStatus } from "./orders.types.js";
 
 export const FREE_DELIVERY_THRESHOLD_COP = 150_000;
+export const MINIMUM_DELIVERY_FEE_COP = 12_000;
+export const DELIVERY_FEE_RATE = 0.08;
 
-export type OrderCancellationResolution = "CANCELLED" | "KEPT_OPEN";
+export type OrderCancellationResolution =
+  | "CANCELLED_NO_PAYMENT"
+  | "CANCELLED_PAYMENT_PENDING_REFUND"
+  | "CANCELLED_PAYMENT_REFUNDED";
 
 export function parseOrderCancellationResolution(
-  value: string | null,
+  value: string | null | undefined,
 ): OrderCancellationResolution | null {
-  if (value === null || value === "CANCELLED" || value === "KEPT_OPEN") {
+  if (
+    value === "CANCELLED_NO_PAYMENT" ||
+    value === "CANCELLED_PAYMENT_PENDING_REFUND" ||
+    value === "CANCELLED_PAYMENT_REFUNDED"
+  ) {
     return value;
   }
-  throw new Error(`Unknown cancellation resolution: ${value}`);
+  return null;
 }
 
 export type OrderRecord = {
@@ -23,28 +27,23 @@ export type OrderRecord = {
   orderId: string;
   customerId: string;
   idempotencyKey: string;
-  requestFingerprint: string;
   subtotalCop: number;
   deliveryFeeCop: number;
   totalCop: number;
   status: OrderStatus;
-  reservationExpiresAt: Date | null;
-  cancelRequestedAt: Date | null;
-  cancelResolvedAt: Date | null;
-  cancelResolution: OrderCancellationResolution | null;
-  cancelResolvedByCustomerId: string | null;
-  cancelResolutionNote: string | null;
-  cancelPaymentCaptured: boolean | null;
-  externalRefundRecordedByCustomerId: string | null;
-  externalRefundReference: string | null;
-  externalRefundHandledAt: Date | null;
   createdAt: Date;
   updatedAt: Date;
-  paymentDecision: {
-    decision: PaymentDecisionView["decision"];
-    decidedAt: Date;
-    reason: string | null;
-  } | null;
+  requestFingerprint?: string;
+  reservationExpiresAt?: Date | null;
+  cancelRequestedAt?: Date | null;
+  cancelResolvedAt?: Date | null;
+  cancelResolution?: OrderCancellationResolution | null;
+  cancelResolvedByCustomerId?: string | null;
+  cancelResolutionNote?: string | null;
+  cancelPaymentCaptured?: boolean | null;
+  externalRefundRecordedByCustomerId?: string | null;
+  externalRefundReference?: string | null;
+  externalRefundHandledAt?: Date | null;
   lines: Array<{
     id: string;
     productId: string;
@@ -57,13 +56,13 @@ export type OrderRecord = {
 
 export class OrderDomain {
   public static createOrder(command: CreateOrderCommand): OrderRecord {
-    if (command.lines.length === 0) {
-      throw new Error("Order must include at least one line");
+    const normalizedLines = command.lines.filter((line: CreateOrderCommand["lines"][number]) => line.quantity > 0);
+
+    if (normalizedLines.length === 0) {
+      throw new Error("Order must include at least one valid line");
     }
-    const normalizedLines = command.lines;
 
     const now = new Date();
-    const reservationExpiresAt = new Date(now.getTime() + 6 * 60 * 60 * 1_000);
     const subtotalCop = normalizedLines.reduce<number>(
       (sum: number, line: CreateOrderCommand["lines"][number]) => sum + line.unitPriceCop * line.quantity,
       0,
@@ -71,7 +70,7 @@ export class OrderDomain {
     const deliveryFeeCop =
       subtotalCop >= FREE_DELIVERY_THRESHOLD_COP
         ? 0
-        : Math.max(12_000, Math.round(subtotalCop * 0.08));
+        : Math.max(MINIMUM_DELIVERY_FEE_COP, Math.round(subtotalCop * DELIVERY_FEE_RATE));
 
     const orderId = `order-${crypto.randomUUID()}`;
 
@@ -80,24 +79,14 @@ export class OrderDomain {
       orderId,
       customerId: command.customerId,
       idempotencyKey: command.idempotencyKey,
-      requestFingerprint: OrderDomain.fingerprint(command),
       subtotalCop,
       deliveryFeeCop,
       totalCop: subtotalCop + deliveryFeeCop,
       status: "RESERVING_INVENTORY",
-      reservationExpiresAt,
-      cancelRequestedAt: null,
-      cancelResolvedAt: null,
-      cancelResolution: null,
-      cancelResolvedByCustomerId: null,
-      cancelResolutionNote: null,
-      cancelPaymentCaptured: null,
-      externalRefundRecordedByCustomerId: null,
-      externalRefundReference: null,
-      externalRefundHandledAt: null,
       createdAt: now,
       updatedAt: now,
-      paymentDecision: null,
+      requestFingerprint: command.idempotencyKey,
+      reservationExpiresAt: new Date(now.getTime() + 30 * 60_000),
       lines: normalizedLines.map((line: CreateOrderCommand["lines"][number]) => ({
         id: crypto.randomUUID(),
         productId: line.productId,
@@ -109,18 +98,6 @@ export class OrderDomain {
     };
   }
 
-  public static fingerprint(command: CreateOrderCommand): string {
-    return JSON.stringify({
-      customerId: command.customerId,
-      lines: command.lines.map(({ productId, sku, quantity, unitPriceCop }) => ({
-        productId,
-        sku,
-        quantity,
-        unitPriceCop,
-      })),
-    });
-  }
-
   public static toOrderView(record: OrderRecord): {
     id: string;
     orderId: string;
@@ -129,15 +106,18 @@ export class OrderDomain {
     deliveryFeeCop: number;
     totalCop: number;
     status: OrderStatus;
-    reservationExpiresAt: string | null;
+    reservationExpiresAt: Date | null;
     createdAt: string;
     updatedAt: string;
     lines: OrderLine[];
-    paymentDecision: PaymentDecisionView | null;
-    cancellationRequest: {
+    paymentDecision: null | {
+      decision: string;
+      decidedAt: string;
+      reason: string | null;
+    };
+    cancellationRequest?: {
       requestedAt: string;
-      resolvedAt: string | null;
-      resolution: "CANCELLED" | "KEPT_OPEN" | null;
+      resolution: string | null;
     } | null;
   } {
     return {
@@ -148,23 +128,9 @@ export class OrderDomain {
       deliveryFeeCop: record.deliveryFeeCop,
       totalCop: record.totalCop,
       status: record.status,
-      reservationExpiresAt: record.reservationExpiresAt?.toISOString() ?? null,
+      reservationExpiresAt: record.reservationExpiresAt ?? null,
       createdAt: record.createdAt.toISOString(),
       updatedAt: record.updatedAt.toISOString(),
-      paymentDecision: record.paymentDecision
-        ? {
-            decision: record.paymentDecision.decision,
-            decidedAt: record.paymentDecision.decidedAt.toISOString(),
-            reason: record.paymentDecision.reason,
-          }
-        : null,
-      cancellationRequest: record.cancelRequestedAt
-        ? {
-            requestedAt: record.cancelRequestedAt.toISOString(),
-            resolvedAt: record.cancelResolvedAt?.toISOString() ?? null,
-            resolution: record.cancelResolution,
-          }
-        : null,
       lines: record.lines.map((line) => ({
         id: line.id,
         productId: line.productId,
@@ -173,6 +139,16 @@ export class OrderDomain {
         quantity: line.quantity,
         unitPriceCop: line.unitPriceCop,
       })),
+      paymentDecision: null,
+      cancellationRequest: (record as OrderRecord & {
+        cancelRequestedAt?: Date;
+        cancelResolution?: string | null;
+      }).cancelRequestedAt
+        ? {
+            requestedAt: (record as any).cancelRequestedAt.toISOString(),
+            resolution: (record as any).cancelResolution ?? null,
+          }
+        : null,
     };
   }
 }

@@ -379,7 +379,7 @@ test("payment evidence routes require verified identity and proxy private upload
         contentLength: 13,
       };
     },
-    getOrderById: async (orderId: string, customerId: string, role: string) => {
+    getOrder: async (orderId: string, customerId: string, role: string) => {
       calls.push({ operation: "order", orderId, customerId, role });
       return {
         id: "row-1",

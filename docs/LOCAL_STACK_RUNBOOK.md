@@ -1,7 +1,7 @@
 # MileShop local stack runbook
 
 ## Objective
-Bring up the local database and backend services. The Next.js storefront is started separately.
+Bring up the full local monorepo stack in a stable and repeatable way.
 
 ## Prerequisites
 - Docker Desktop installed and running
@@ -16,19 +16,6 @@ Set-Location (git rev-parse --show-toplevel)
 .\scripts\start-local-stack.ps1
 ```
 
-The startup script checks ports 3000, 3010, 3020, 3030, and 3040 before starting containers or applying migrations. If a port is already in use, it reports the owning process and exits without stopping it. Inspect the stack with `.\scripts\status-local-stack.ps1`; stop a process only after confirming it belongs to MileShop.
-
-The script starts four PostgreSQL containers, applies migrations, starts the five backend services and writes their logs under `.local-stack\logs`. It does not start `apps/web`.
-
-To start the storefront in a second terminal:
-
-```powershell
-$env:PORT = '3001'
-npm run dev --workspace apps/web
-```
-
-Port `3001` avoids the Gateway's default `3000` and matches the local Identity CORS origin.
-
 ## Port map
 - API gateway: http://localhost:3000
 - Notification worker: http://localhost:3010
@@ -40,17 +27,22 @@ Port `3001` avoids the Gateway's default `3000` and matches the local Identity C
 - Postgres orders: localhost:5435
 - Postgres identity: localhost:5436
 
-## Health checks
+## Health and readiness checks
 ```powershell
 Invoke-WebRequest -Uri http://localhost:3000/healthz -UseBasicParsing
+Invoke-WebRequest -Uri http://localhost:3000/readyz -UseBasicParsing
 Invoke-WebRequest -Uri http://localhost:3010/healthz -UseBasicParsing
+Invoke-WebRequest -Uri http://localhost:3010/readyz -UseBasicParsing
 Invoke-WebRequest -Uri http://localhost:3020/healthz -UseBasicParsing
+Invoke-WebRequest -Uri http://localhost:3020/readyz -UseBasicParsing
 Invoke-WebRequest -Uri http://localhost:3030/healthz -UseBasicParsing
+Invoke-WebRequest -Uri http://localhost:3030/readyz -UseBasicParsing
 Invoke-WebRequest -Uri http://localhost:3040/healthz -UseBasicParsing
+Invoke-WebRequest -Uri http://localhost:3040/readyz -UseBasicParsing
 ```
 
 ## Identity service migration
-The startup script applies all service migrations. If provisioning Identity separately, do not reuse another service's `DATABASE_URL`:
+Apply the identity-service Prisma migration separately (do not reuse another service's `DATABASE_URL`):
 
 ```powershell
 $env:DATABASE_URL = "postgresql://identity:identity@localhost:5436/identity?schema=public"
@@ -61,18 +53,11 @@ npm run db:deploy:identity-service
 The migration is also applied automatically by `scripts/start-local-stack.ps1` via `scripts/deploy-local-databases.ps1`.
 
 ## Gateway smoke tests
-
 ```powershell
 Invoke-WebRequest -Uri http://localhost:3000/catalog/products -UseBasicParsing
 ```
 
-For an empty local catalog, seed the sample products once:
-
-```powershell
-$env:DATABASE_URL = "******localhost:5434/catalog?schema=public"
-npm run db:seed:catalog
-Remove-Item Env:DATABASE_URL
-```
+La creación de pedidos requiere sesión autenticada y `Idempotency-Key`; usa `npm run verify:local-purchase` para ejecutar ese flujo completo con las cabeceras correctas. No envíes `customerId` como autoridad desde el cliente.
 
 ## Verificación completa de compra
 
@@ -82,13 +67,16 @@ Con la stack levantada, desde la raíz del repositorio:
 npm run verify:local-purchase
 ```
 
-El script registra un cliente sintético, autentica la solicitud del pedido ante el gateway, envía una clave `Idempotency-Key`, verifica subtotal/envío/total, repite el mismo checkout y confirma que recibe el mismo `orderId`. Después recupera el pedido y reenvía `OrderCreated.v1` al worker para verificar deduplicación por `eventId`. La entrega normal la administra el outbox de `orders-service`; ante fallo del worker el pedido sigue creado y el evento queda programado para reintento.
+El script crea un pedido autenticado por el gateway, repite la misma solicitud con idéntica clave de idempotencia, consulta el pedido y su estado por el gateway y reenvía el mismo `OrderCreated.v1` al worker. Falla si el reintento crea otro pedido, si el subtotal, envío, total o cliente cambian, si el estado inicial no es `PENDING`, o si el worker no responde `duplicate` ante el mismo `eventId`.
 
-GitHub Actions conserva esta misma validación como smoke de CI: espera que Postgres esté saludable, aplica migraciones, siembra el producto sintético, arranca los servicios (el worker en modo `log`) y falla si alguno no responde antes del timeout. El paso final ejecuta `scripts/verify-local-purchase.ps1`; no se debe reemplazar por una comprobación más débil de solo salud.
+El backend es la fuente de verdad de los importes: envío gratis desde COP 150.000; por debajo del umbral, se cobra el mayor entre COP 12.000 y el 8 % del subtotal, redondeado al peso. El carrito muestra una estimación; la confirmación y el detalle usan los importes persistidos.
+
+## Recuperación de notificaciones
+
+`orders-service` guarda el pedido, sus líneas y el evento de outbox en una única transacción PostgreSQL. La publicación HTTP al worker ocurre después del commit; si falla, el servicio conserva el evento y lo reintenta con backoff exponencial: programa el primer reintento para 5 segundos, duplica la espera hasta un máximo de 5 minutos y sondea el outbox cada 5 segundos. El máximo es de 8 intentos totales, incluido el envío inicial. Los eventos agotados quedan con estado `FAILED` y no se reintentan automáticamente; revisa `lastError` e investiga antes de reencolarlos. No hay broker externo.
 
 ## Important notes
 - Always run commands from the repo root, not from the parent folder.
-- If an application port is already occupied, inspect `scripts/status-local-stack.ps1` and identify the owning process before taking action; startup exits on conflicts and does not stop processes automatically.
-- `scripts/stop-local-stack.ps1` forcibly stops listeners on the five default application ports without checking their workspace. Verify each listener belongs to this repository before running it, especially when another MileShop workspace is active.
+- If a port is already occupied, inspect `scripts/status-local-stack.ps1` and identify the owning process before taking action; do not stop an unrelated process.
 - Docker must be live before the Postgres services are started.
 - `npm run db:deploy` applies each Prisma migration with its explicit domain `DATABASE_URL`; do not export one shared `DATABASE_URL` when running migrations manually.

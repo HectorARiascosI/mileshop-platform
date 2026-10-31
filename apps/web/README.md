@@ -20,10 +20,14 @@ npm run typecheck
 
 ```bash
 API_GATEWAY_URL=http://localhost:3000
-NEXT_PUBLIC_API_GATEWAY_URL=http://localhost:3000
+NEXT_PUBLIC_WHATSAPP_BUSINESS_PHONE=
 ```
 
-En local, el servidor usa `API_GATEWAY_URL` para consultar `/catalog/products` y el checkout del navegador usa `NEXT_PUBLIC_API_GATEWAY_URL` para crear pedidos.
+`API_GATEWAY_URL` es una variable de servidor: las páginas y rutas API de Next.js la usan para comunicarse con el gateway sin exponerla al navegador. En Vercel debe configurarse como una URL HTTPS alcanzable desde las funciones, para cada entorno (Preview y Production). No se permite una URL HTTP en producción.
+
+`NEXT_PUBLIC_WHATSAPP_BUSINESS_PHONE` es el número Business público en formato internacional E.164, sin espacios; no es una credencial.
+
+Vercel aloja la aplicación Next.js y sus rutas API, pero no despliega automáticamente los servicios NestJS ni sus bases de datos. El gateway y los servicios deben estar desplegados por separado y ser accesibles desde Vercel; configurar esta variable no constituye por sí solo un despliegue end-to-end.
 
 ## Estructura principal
 

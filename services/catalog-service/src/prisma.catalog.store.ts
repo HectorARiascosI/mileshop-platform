@@ -1,23 +1,22 @@
-import { Prisma, PrismaClient } from "../generated/catalog-client/index.js";
+import { PrismaClient } from "../generated/catalog-client/index.js";
 
 import {
-  InventoryCommandError,
-  inventoryFingerprint,
-  normalizeInventoryLines,
-  validateInventoryOrderId,
-  validateReservationExpiry,
-  type CatalogStore,
-  type InventoryReservationResult,
-  type InventoryReservationStatus,
-  type NormalizedInventoryLine,
-  type Product,
+  InventoryConflictError,
+  ReservationIdempotencyConflictError,
+  normalizeReservationLines,
+} from "./catalog.service.js";
+import type {
+  CatalogStore,
+  InventoryReservation,
+  Product,
+  ReservationRequestLine,
 } from "./catalog.service.js";
 
 export class PrismaCatalogStore implements CatalogStore {
   public constructor(private readonly prisma: PrismaClient) {}
 
   public async listActiveProducts(): Promise<Product[]> {
-    const products = await this.prisma.product.findMany({
+    return this.prisma.product.findMany({
       where: { isActive: true },
       orderBy: { name: "asc" },
       select: {
@@ -27,233 +26,188 @@ export class PrismaCatalogStore implements CatalogStore {
         description: true,
         priceCop: true,
         stock: true,
-        reservedStock: true,
       },
     });
-    return products.map(({ reservedStock, ...product }) => ({
-      ...product,
-      stock: product.stock - reservedStock,
-    }));
   }
 
-  public async reserveInventory(
+  public async reserveProducts(
     orderId: string,
-    lines: NormalizedInventoryLine[],
-    expiresAt: Date,
-  ): Promise<InventoryReservationResult> {
-    validateInventoryOrderId(orderId);
-    const normalizedLines = normalizeInventoryLines(lines);
-    const requestFingerprint = inventoryFingerprint(normalizedLines);
-    const existing = await this.prisma.inventoryReservation.findUnique({
-      where: { orderId },
-    });
-    if (existing) {
-      return this.resolveReservationReplay(existing, requestFingerprint);
-    }
-    validateReservationExpiry(expiresAt);
-
+    lines: ReservationRequestLine[],
+  ): Promise<InventoryReservation> {
+    const requestLines = normalizeReservationLines(lines);
     try {
       return await this.prisma.$transaction(async (transaction) => {
-        const concurrentReservation = await transaction.inventoryReservation.findUnique({
+        const existing = await transaction.inventoryReservation.findUnique({
           where: { orderId },
+          include: { items: { orderBy: { productId: "asc" } } },
         });
-        if (concurrentReservation) {
-          return this.resolveReservationReplay(concurrentReservation, requestFingerprint);
+        if (existing) {
+          return this.returnExistingReservation(existing, requestLines);
         }
 
-        const reservation = await transaction.inventoryReservation.create({
-          data: { orderId, requestFingerprint, expiresAt },
-        });
+        const reservedProducts = [];
+        for (const line of requestLines) {
+          const product = await transaction.product.findFirst({
+            where: { id: line.productId, isActive: true },
+            select: { id: true, sku: true, name: true, priceCop: true },
+          });
+          if (!product) {
+            throw new InventoryConflictError(`Product is not available: ${line.productId}`);
+          }
 
-        for (const line of normalizedLines) {
-          const updated = await transaction.$executeRaw(Prisma.sql`
-            UPDATE "Product"
-            SET "reservedStock" = "reservedStock" + ${line.quantity},
-                "updatedAt" = CURRENT_TIMESTAMP
-            WHERE "id" = ${line.productId}
-              AND "isActive" = TRUE
-              AND ("stock" - "reservedStock") >= ${line.quantity}
-          `);
-          if (updated !== 1) {
-            const product = await transaction.product.findUnique({
-              where: { id: line.productId },
-              select: { isActive: true },
-            });
-            if (!product || !product.isActive) {
-              throw new InventoryCommandError(
-                "NOT_FOUND",
-                `Active product not found: ${line.productId}`,
-              );
-            }
-            throw new InventoryCommandError(
-              "INSUFFICIENT_INVENTORY",
-              `Insufficient inventory for product: ${line.productId}`,
+          const updated = await transaction.product.updateMany({
+            where: {
+              id: product.id,
+              isActive: true,
+              sku: product.sku,
+              name: product.name,
+              priceCop: product.priceCop,
+              stock: { gte: line.quantity },
+            },
+            data: { stock: { decrement: line.quantity } },
+          });
+          if (updated.count !== 1) {
+            throw new InventoryConflictError(
+              `Insufficient stock or catalog changed: ${product.sku}`,
             );
           }
+
+          reservedProducts.push({
+            productId: product.id,
+            sku: product.sku,
+            name: product.name,
+            quantity: line.quantity,
+            unitPriceCop: product.priceCop,
+          });
         }
 
-        await transaction.inventoryReservationLine.createMany({
-          data: normalizedLines.map((line) => ({
-            reservationId: reservation.id,
-            productId: line.productId,
-            quantity: line.quantity,
-          })),
+        const created = await transaction.inventoryReservation.create({
+          data: {
+            orderId,
+            requestLines: requestLines as never,
+            status: "RESERVED",
+            items: { create: reservedProducts },
+            movements: {
+              create: reservedProducts.map((line) => ({
+                productId: line.productId,
+                movementType: "RESERVE",
+                quantityDelta: -line.quantity,
+              })),
+            },
+          },
+          include: { items: { orderBy: { productId: "asc" } } },
         });
+
         return {
-          orderId,
-          status: reservation.status,
-          expiresAt: reservation.expiresAt,
+          orderId: created.orderId,
+          status: "RESERVED",
+          reservedAt: created.createdAt.toISOString(),
+          lines: created.items.map((line) => ({
+            productId: line.productId,
+            sku: line.sku,
+            name: line.name,
+            quantity: line.quantity,
+            unitPriceCop: line.unitPriceCop,
+          })),
         };
       });
     } catch (error) {
-      if (!isUniqueConstraintError(error)) {
-        throw error;
-      }
-      const concurrentReservation = await this.prisma.inventoryReservation.findUnique({
+      // Two service replicas may race to create the same idempotent reservation.
+      // The loser rolls back its stock updates and returns the winner's snapshot.
+      const existing = await this.prisma.inventoryReservation.findUnique({
         where: { orderId },
+        include: { items: { orderBy: { productId: "asc" } } },
       });
-      if (!concurrentReservation) {
-        throw error;
+      if (existing) {
+        return this.returnExistingReservation(existing, requestLines);
       }
-      return this.resolveReservationReplay(concurrentReservation, requestFingerprint);
+      throw error;
     }
   }
 
-  public async commitInventory(orderId: string): Promise<InventoryReservationResult> {
-    validateInventoryOrderId(orderId);
-    return this.prisma.$transaction(async (transaction) => {
-      const updated = await transaction.inventoryReservation.updateMany({
-        where: { orderId, status: "ACTIVE" },
-        data: { status: "COMMITTED" },
-      });
-      if (updated.count !== 1) {
-        return this.resolveFinishedReservation(
-          transaction,
-          orderId,
-          "COMMITTED",
-          "Cannot commit a released reservation",
-        );
-      }
-
-      const reservation = await transaction.inventoryReservation.findUniqueOrThrow({
-        where: { orderId },
-        include: { lines: { orderBy: { productId: "asc" } } },
-      });
-      for (const line of reservation.lines) {
-        const affected = await transaction.$executeRaw(Prisma.sql`
-          UPDATE "Product"
-          SET "stock" = "stock" - ${line.quantity},
-              "reservedStock" = "reservedStock" - ${line.quantity},
-              "updatedAt" = CURRENT_TIMESTAMP
-          WHERE "id" = ${line.productId}
-            AND "stock" >= ${line.quantity}
-            AND "reservedStock" >= ${line.quantity}
-        `);
-        if (affected !== 1) {
-          throw new Error(`Inventory counters are inconsistent for product: ${line.productId}`);
-        }
-      }
-
-      return {
-        orderId,
-        status: "COMMITTED",
-        expiresAt: reservation.expiresAt,
-      };
-    });
+  public async reserveInventory(orderId: string, lines: ReservationRequestLine[], _expiresAt: Date): Promise<InventoryReservation> {
+    const reservation = await this.reserveProducts(orderId, lines);
+    return { ...reservation, status: "ACTIVE" };
   }
 
-  public async releaseInventory(orderId: string): Promise<InventoryReservationResult> {
-    validateInventoryOrderId(orderId);
-    return this.prisma.$transaction(async (transaction) => {
-      const updated = await transaction.inventoryReservation.updateMany({
-        where: { orderId, status: "ACTIVE" },
-        data: { status: "RELEASED" },
-      });
-      if (updated.count !== 1) {
-        return this.resolveFinishedReservation(
-          transaction,
-          orderId,
-          "RELEASED",
-          "Cannot release a committed reservation",
-        );
-      }
-
-      const reservation = await transaction.inventoryReservation.findUniqueOrThrow({
-        where: { orderId },
-        include: { lines: { orderBy: { productId: "asc" } } },
-      });
-      for (const line of reservation.lines) {
-        const affected = await transaction.$executeRaw(Prisma.sql`
-          UPDATE "Product"
-          SET "reservedStock" = "reservedStock" - ${line.quantity},
-              "updatedAt" = CURRENT_TIMESTAMP
-          WHERE "id" = ${line.productId}
-            AND "reservedStock" >= ${line.quantity}
-        `);
-        if (affected !== 1) {
-          throw new Error(`Reserved inventory counter is inconsistent for product: ${line.productId}`);
-        }
-      }
-
-      return {
-        orderId,
-        status: "RELEASED",
-        expiresAt: reservation.expiresAt,
-      };
-    });
+  public async commitInventory(orderId: string): Promise<InventoryReservation> {
+    const reservation = await this.prisma.inventoryReservation.findUnique({ where: { orderId }, include: { items: true } });
+    if (!reservation) throw Object.assign(new Error("Reservation not found"), { code: "NOT_FOUND" });
+    if (reservation.status === "COMMITTED") return this.mapReservation(reservation, "COMMITTED");
+    if (reservation.status !== "RESERVED") throw Object.assign(new Error("Reservation cannot be committed"), { code: "CONFLICT" });
+    await this.prisma.inventoryReservation.update({ where: { orderId }, data: { status: "COMMITTED" } });
+    return this.mapReservation(reservation, "COMMITTED");
   }
 
-  private resolveReservationReplay(
-    reservation: {
-      orderId: string;
-      status: InventoryReservationStatus;
-      requestFingerprint: string;
-      expiresAt: Date;
-    },
-    requestFingerprint: string,
-  ): InventoryReservationResult {
-    if (reservation.requestFingerprint !== requestFingerprint) {
-      throw new InventoryCommandError(
-        "CONFLICT",
-        "The order already has a reservation with a different payload",
-      );
-    }
+  public async releaseInventory(orderId: string): Promise<InventoryReservation> {
+    const reservation = await this.prisma.inventoryReservation.findUnique({ where: { orderId }, include: { items: true } });
+    if (!reservation) throw Object.assign(new Error("Reservation not found"), { code: "NOT_FOUND" });
+    if (reservation.status === "RELEASED") return this.mapReservation(reservation, "RELEASED");
+    if (reservation.status === "COMMITTED") throw Object.assign(new Error("Committed reservation cannot be released"), { code: "CONFLICT" });
+    await this.prisma.$transaction(async (transaction) => {
+      for (const item of reservation.items) {
+        await transaction.product.update({ where: { id: item.productId }, data: { stock: { increment: item.quantity } } });
+      }
+      await transaction.inventoryReservation.update({ where: { orderId }, data: { status: "RELEASED" } });
+    });
+    return this.mapReservation(reservation, "RELEASED");
+  }
+
+  private mapReservation(
+    reservation: { orderId: string; createdAt: Date; items: Array<{ productId: string; sku: string; name: string; quantity: number; unitPriceCop: number }> },
+    status: InventoryReservation["status"],
+  ): InventoryReservation {
     return {
       orderId: reservation.orderId,
-      status: reservation.status,
-      expiresAt: reservation.expiresAt,
+      status,
+      reservedAt: reservation.createdAt.toISOString(),
+      lines: reservation.items.map((line) => ({ ...line })),
     };
   }
 
-  private async resolveFinishedReservation(
-    transaction: Prisma.TransactionClient,
-    orderId: string,
-    replayStatus: InventoryReservationStatus,
-    conflictMessage: string,
-  ): Promise<InventoryReservationResult> {
-    const reservation = await transaction.inventoryReservation.findUnique({
-      where: { orderId },
-    });
-    if (!reservation) {
-      throw new InventoryCommandError(
-        "NOT_FOUND",
-        `Reservation not found for order: ${orderId}`,
+  private returnExistingReservation(
+    existing: {
+      orderId: string;
+      status: string;
+      requestLines: unknown;
+      createdAt: Date;
+      items: Array<{
+        productId: string;
+        sku: string;
+        name: string;
+        quantity: number;
+        unitPriceCop: number;
+      }>;
+    },
+    requestLines: ReservationRequestLine[],
+  ): InventoryReservation {
+    let existingRequest: ReservationRequestLine[];
+    try {
+      existingRequest = normalizeReservationLines(
+        existing.requestLines as ReservationRequestLine[],
       );
+    } catch {
+      throw new ReservationIdempotencyConflictError();
     }
-    if (reservation.status !== replayStatus) {
-      throw new InventoryCommandError("CONFLICT", conflictMessage);
+
+    if (
+      JSON.stringify(existingRequest) !== JSON.stringify(requestLines) ||
+      existing.status !== "RESERVED"
+    ) {
+      throw new ReservationIdempotencyConflictError();
     }
+
     return {
-      orderId,
-      status: reservation.status,
-      expiresAt: reservation.expiresAt,
+      orderId: existing.orderId,
+      status: "RESERVED",
+      reservedAt: existing.createdAt.toISOString(),
+      lines: existing.items.map((line) => ({
+        productId: line.productId,
+        sku: line.sku,
+        name: line.name,
+        quantity: line.quantity,
+        unitPriceCop: line.unitPriceCop,
+      })),
     };
   }
-}
-
-function isUniqueConstraintError(error: unknown): boolean {
-  return typeof error === "object" &&
-    error !== null &&
-    "code" in error &&
-    error.code === "P2002";
 }

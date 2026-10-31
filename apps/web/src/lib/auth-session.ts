@@ -8,13 +8,26 @@ export type SessionTokens = {
   refreshToken: string;
 };
 
-export type RefreshSessionResult = "refreshed" | "unauthenticated" | "unavailable";
-export type RefreshExchangeResult =
-  | { status: "refreshed"; tokens: SessionTokens }
-  | { status: "unauthenticated" }
-  | { status: "unavailable" };
+export function isValidEmail(value: string): boolean {
+  return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(value.trim());
+}
 
-type FetchLike = (input: string, init?: RequestInit) => Promise<Response>;
+export function normalizeEmail(value: string): string {
+  return value.trim().toLowerCase();
+}
+
+export function isValidPassword(value: string, minLength = 8): boolean {
+  return value.length >= minLength;
+}
+
+export function isValidPhone(value: string): boolean {
+  const trimmed = value.trim();
+  return trimmed.length >= 7 && /^[0-9+()\s-]+$/.test(trimmed);
+}
+
+export function parseJsonBody<T>(request: Request): Promise<T> {
+  return request.json() as Promise<T>;
+}
 
 export async function setSessionCookies({ accessToken, refreshToken }: SessionTokens): Promise<void> {
   const cookieStore = await cookies();
@@ -46,71 +59,44 @@ export async function clearSessionCookies(): Promise<void> {
 export async function exchangeRefreshToken(
   gatewayUrl: string,
   refreshToken: string,
-  fetcher: FetchLike = fetch,
-): Promise<RefreshExchangeResult> {
-  let response: Response;
+  fetcher: typeof fetch = fetch,
+): Promise<
+  | { status: "refreshed"; tokens: SessionTokens }
+  | { status: "unauthenticated" }
+  | { status: "unavailable" }
+> {
   try {
-    response = await fetcher(`${gatewayUrl}/auth/refresh`, {
+    const response = await fetcher(`${gatewayUrl.replace(/\/$/, "")}/auth/refresh`, {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: { "content-type": "application/json" },
       body: JSON.stringify({ refreshToken }),
-      signal: AbortSignal.timeout(3_000),
     });
+
+    if (response.status === 401) {
+      return { status: "unauthenticated" };
+    }
+    if (!response.ok) {
+      return { status: "unavailable" };
+    }
+
+    const data = await response.json() as Partial<SessionTokens>;
+    if (
+      typeof data.accessToken !== "string" ||
+      data.accessToken.length === 0 ||
+      typeof data.refreshToken !== "string" ||
+      data.refreshToken.length === 0
+    ) {
+      return { status: "unavailable" };
+    }
+
+    return {
+      status: "refreshed",
+      tokens: {
+        accessToken: data.accessToken,
+        refreshToken: data.refreshToken,
+      },
+    };
   } catch {
     return { status: "unavailable" };
   }
-
-  if (response.status === 401) {
-    return { status: "unauthenticated" };
-  }
-  if (!response.ok) {
-    return { status: "unavailable" };
-  }
-
-  let tokens: unknown;
-  try {
-    tokens = await response.json();
-  } catch {
-    return { status: "unavailable" };
-  }
-
-  if (
-    !tokens ||
-    typeof tokens !== "object" ||
-    !("accessToken" in tokens) ||
-    typeof tokens.accessToken !== "string" ||
-    !tokens.accessToken ||
-    !("refreshToken" in tokens) ||
-    typeof tokens.refreshToken !== "string" ||
-    !tokens.refreshToken
-  ) {
-    return { status: "unavailable" };
-  }
-
-  return {
-    status: "refreshed",
-    tokens: { accessToken: tokens.accessToken, refreshToken: tokens.refreshToken },
-  };
-}
-
-export async function refreshSession(gatewayUrl: string): Promise<RefreshSessionResult> {
-  const cookieStore = await cookies();
-  const refreshToken = cookieStore.get("refreshToken")?.value?.trim();
-
-  if (!refreshToken) {
-    await clearSessionCookies();
-    return "unauthenticated";
-  }
-
-  const result = await exchangeRefreshToken(gatewayUrl, refreshToken);
-  if (result.status === "unauthenticated") {
-    await clearSessionCookies();
-    return result.status;
-  }
-  if (result.status === "unavailable") {
-    return result.status;
-  }
-
-  await setSessionCookies(result.tokens);
-  return result.status;
 }

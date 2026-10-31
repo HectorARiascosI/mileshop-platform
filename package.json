@@ -27,7 +27,12 @@
     "db:deploy:notification-worker": "npm run db:deploy --workspace @mileshop/notification-worker",
     "db:deploy:orders-service": "npm run db:deploy --workspace @mileshop/orders-service",
     "db:seed:catalog": "npm run db:seed --workspace @mileshop/catalog-service",
-    "lint": "npm run lint:web",
+    "lint": "npm run lint:web && npm run lint:api-gateway && npm run lint:catalog-service && npm run lint:orders-service && npm run lint:identity-service && npm run lint:notification-worker",
+    "lint:api-gateway": "npm run lint --workspace @mileshop/api-gateway",
+    "lint:catalog-service": "npm run lint --workspace @mileshop/catalog-service",
+    "lint:identity-service": "npm run lint --workspace @mileshop/identity-service",
+    "lint:notification-worker": "npm run lint --workspace @mileshop/notification-worker",
+    "lint:orders-service": "npm run lint --workspace @mileshop/orders-service",
     "lint:web": "npm run lint --workspace apps/web",
     "test": "npm run test:web && npm run test:api-gateway && npm run test:notification-worker && npm run test:catalog-service && npm run test:orders-service && npm run test:identity-service",
     "test:api-gateway": "npm run test --workspace @mileshop/api-gateway",
@@ -47,5 +52,8 @@
     "@prisma/client@6.12.0": true,
     "@prisma/engines@6.12.0": true,
     "esbuild@0.28.2": true
+  },
+  "overrides": {
+    "minimatch": "^11.0.1"
   }
 }

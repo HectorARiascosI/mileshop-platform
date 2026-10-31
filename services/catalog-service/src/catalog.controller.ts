@@ -1,36 +1,26 @@
 import {
   BadRequestException,
+  Body,
   ConflictException,
   Controller,
   Get,
   Headers,
+  HttpCode,
   Inject,
-  NotFoundException,
   Post,
-  Body,
-  UseGuards,
+  ServiceUnavailableException,
+  UnauthorizedException,
 } from "@nestjs/common";
-import { z } from "zod";
 
-import { CatalogService, InventoryCommandError } from "./catalog.service.js";
-import { InventoryCommandGuard } from "./inventory-command.guard.js";
-
-const inventoryLineSchema = z.object({
-  productId: z.string().trim().min(1).max(200),
-  quantity: z.number().int().positive().safe(),
-}).strict();
-
-const reserveInventorySchema = z.object({
-  commandId: z.string().trim().min(1).max(200),
-  orderId: z.string().trim().min(1).max(200),
-  lines: z.array(inventoryLineSchema).min(1).max(100),
-  expiresAt: z.iso.datetime(),
-}).strict();
-
-const settleInventorySchema = z.object({
-  commandId: z.string().trim().min(1).max(200),
-  orderId: z.string().trim().min(1).max(200),
-}).strict();
+import {
+  CatalogService,
+  InventoryConflictError,
+  ReservationIdempotencyConflictError,
+} from "./catalog.service.js";
+import type {
+  InventoryReservation,
+  ReservationRequestLine,
+} from "./catalog.service.js";
 
 @Controller()
 export class CatalogController {
@@ -43,90 +33,66 @@ export class CatalogController {
     return { status: "ok" };
   }
 
+  @Get("readyz")
+  public readiness(): { status: "ready" } {
+    return { status: "ready" };
+  }
+
   @Get("products")
   public async products(): Promise<{ data: Awaited<ReturnType<CatalogService["listProducts"]>> }> {
     return { data: await this.catalog.listProducts() };
   }
 
-  @Post("internal/inventory/reservations")
-  @UseGuards(InventoryCommandGuard)
-  public async reserveInventory(
-    @Body() body: unknown,
-    @Headers("idempotency-key") idempotencyKey: string | undefined,
-  ): Promise<{ data: Awaited<ReturnType<CatalogService["reserveInventory"]>> }> {
-    const input = this.parse(reserveInventorySchema, body);
-    this.validateIdempotencyKey(idempotencyKey, input.orderId);
-    return {
-      data: await this.runInventoryCommand(() =>
-        this.catalog.reserveInventory(input.orderId, input.lines, new Date(input.expiresAt))),
-    };
-  }
-
-  @Post("internal/inventory/reservations/commit")
-  @UseGuards(InventoryCommandGuard)
-  public async commitInventory(
-    @Body() body: unknown,
-    @Headers("idempotency-key") idempotencyKey: string | undefined,
-  ): Promise<{ data: Awaited<ReturnType<CatalogService["commitInventory"]>> }> {
-    const input = this.parse(settleInventorySchema, body);
-    this.validateIdempotencyKey(idempotencyKey, input.orderId);
-    return {
-      data: await this.runInventoryCommand(() =>
-        this.catalog.commitInventory(input.orderId)),
-    };
-  }
-
-  @Post("internal/inventory/reservations/release")
-  @UseGuards(InventoryCommandGuard)
-  public async releaseInventory(
-    @Body() body: unknown,
-    @Headers("idempotency-key") idempotencyKey: string | undefined,
-  ): Promise<{ data: Awaited<ReturnType<CatalogService["releaseInventory"]>> }> {
-    const input = this.parse(settleInventorySchema, body);
-    this.validateIdempotencyKey(idempotencyKey, input.orderId);
-    return {
-      data: await this.runInventoryCommand(() =>
-        this.catalog.releaseInventory(input.orderId)),
-    };
-  }
-
-  private parse<Output>(
-    schema: z.ZodType<Output>,
-    body: unknown,
-  ): Output {
-    const parsed = schema.safeParse(body);
-    if (!parsed.success) {
-      throw new BadRequestException(parsed.error.issues);
+  @Post("internal/reservations")
+  @HttpCode(200)
+  public async reserveProducts(
+    @Body() input: unknown,
+    @Headers("x-catalog-reservation-token") token: string | undefined,
+  ): Promise<{ data: InventoryReservation }> {
+    const expectedToken = process.env.CATALOG_RESERVATION_TOKEN;
+    if (!expectedToken) {
+      throw new ServiceUnavailableException("Catalog reservation is not configured");
     }
-    return parsed.data;
-  }
-
-  private validateIdempotencyKey(
-    idempotencyKey: string | undefined,
-    orderId: string,
-  ): void {
-    if (idempotencyKey !== orderId) {
-      throw new BadRequestException("Idempotency-Key must match the order ID");
+    if (!token || token !== expectedToken) {
+      throw new UnauthorizedException("Invalid service credentials");
     }
-  }
 
-  private async runInventoryCommand<T>(command: () => Promise<T>): Promise<T> {
+    if (
+      typeof input !== "object" ||
+      input === null ||
+      !("orderId" in input) ||
+      typeof input.orderId !== "string" ||
+      !("lines" in input) ||
+      !Array.isArray(input.lines)
+    ) {
+      throw new BadRequestException("Invalid reservation request");
+    }
+
+    const lines: ReservationRequestLine[] = [];
+    for (const line of input.lines) {
+      if (
+        typeof line !== "object" ||
+        line === null ||
+        !("productId" in line) ||
+        typeof line.productId !== "string" ||
+        !("quantity" in line) ||
+        typeof line.quantity !== "number"
+      ) {
+        throw new BadRequestException("Invalid reservation line");
+      }
+      lines.push({ productId: line.productId, quantity: line.quantity });
+    }
+
     try {
-      return await command();
+      return { data: await this.catalog.reserveProducts(input.orderId, lines) };
     } catch (error) {
-      if (!(error instanceof InventoryCommandError)) {
-        throw error;
-      }
-      if (error.code === "INVALID_COMMAND") {
-        throw new BadRequestException(error.message);
-      }
-      if (error.code === "NOT_FOUND") {
-        throw new NotFoundException(error.message);
-      }
-      if (error.code === "INSUFFICIENT_INVENTORY") {
+      if (
+        error instanceof InventoryConflictError ||
+        error instanceof ReservationIdempotencyConflictError
+      ) {
         throw new ConflictException(error.message);
       }
-      throw new ConflictException(error.message);
+      throw error;
     }
   }
 }

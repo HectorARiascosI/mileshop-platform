@@ -1,219 +1,100 @@
 import type { OrderRecord } from "./orders.domain.js";
 import type { OrderCreatedEvent } from "./orders.types.js";
-import {
-  InMemoryInventoryCommandRepository,
-  type InventoryCommand,
-  createInventoryReleaseCommand,
-} from "./inventory-command.repository.js";
-import type { PendingCancellationRequest } from "./orders.types.js";
-
-export type ClaimedOrderEvent = {
-  event: OrderCreatedEvent;
-  attemptCount: number;
-  claimToken: string;
-};
-
-export type OutboxFailureResult = {
-  attemptCount: number;
-  nextAttemptAt: Date | null;
-};
-
-export type PaymentApprovalResult =
-  | "approved"
-  | "already-approved"
-  | "not-found"
-  | "not-pending"
-  | "decision-conflict";
-
-export type PaymentRejectionResult =
-  | "rejected"
-  | "already-rejected"
-  | "not-found"
-  | "not-pending"
-  | "decision-conflict";
-
-export type OrderCancellationResult =
-  | "cancelled"
-  | "already-cancelled"
-  | "not-found"
-  | "not-cancellable";
-
-export type CancellationRequestResult =
-  | "requested"
-  | "already-pending"
-  | "already-resolved"
-  | "not-found"
-  | "not-eligible";
-
-export type CancellationRefundRecordResult =
-  | "recorded"
-  | "already-recorded"
-  | "not-found"
-  | "not-pending"
-  | "conflict";
-
-export type CancellationResolutionAction = "CANCEL" | "KEEP_OPEN";
-
-export type CancellationResolutionResult =
-  | "cancelled"
-  | "kept-open"
-  | "already-resolved"
-  | "refund-not-recorded"
-  | "not-found"
-  | "not-pending";
+import type { ClaimedInventoryCommand, InventoryCommand, InventoryCommandFailureResult } from "./inventory-command.repository.js";
 
 export interface OrdersRepository {
-  save(
-    record: OrderRecord,
-    event: OrderCreatedEvent,
-    inventoryCommand: InventoryCommand,
-  ): Promise<void>;
+  save(record: OrderRecord, event: OrderCreatedEvent): Promise<void>;
   findByOrderId(orderId: string): Promise<OrderRecord | null>;
-  findByIdempotencyKey(customerId: string, idempotencyKey: string): Promise<OrderRecord | null>;
-  approvePayment(
-    orderId: string,
-    adminCustomerId: string,
-    decidedAt: Date,
-    inventoryCommand: InventoryCommand,
-  ): Promise<PaymentApprovalResult>;
-  rejectPayment(
-    orderId: string,
-    adminCustomerId: string,
-    reason: string,
-    decidedAt: Date,
-    inventoryCommand: InventoryCommand,
-  ): Promise<PaymentRejectionResult>;
-  cancelOrder(
-    orderId: string,
-    customerId: string,
-    cancelledAt: Date,
-    inventoryCommand: InventoryCommand,
-  ): Promise<OrderCancellationResult>;
-  requestCancellation(
-    orderId: string,
-    customerId: string,
-    requestedAt: Date,
-  ): Promise<CancellationRequestResult>;
-  listPendingCancellationRequests(): Promise<PendingCancellationRequest[]>;
-  recordCancellationRefund(
-    orderId: string,
-    adminCustomerId: string,
-    paymentCaptured: boolean,
-    externalRefundReference: string | null,
-    recordedAt: Date,
-  ): Promise<CancellationRefundRecordResult>;
-  resolveCancellationRequest(
-    orderId: string,
-    adminCustomerId: string,
-    action: CancellationResolutionAction,
-    note: string,
-    resolvedAt: Date,
-    inventoryCommand: InventoryCommand,
-  ): Promise<CancellationResolutionResult>;
+  findByIdempotencyKey(idempotencyKey: string): Promise<OrderRecord | null>;
+  createReservationIntent?(intent: ReservationIntent, record: OrderRecord, event: OrderCreatedEvent): Promise<void>;
+  completeReservationIntent?(intent: ReservationIntent, record: OrderRecord, event: OrderCreatedEvent): Promise<void>;
+  listPendingReservationIntents?(now: Date): Promise<ReservationIntent[]>;
+  getReservationIntentPayload?(intentId: string): Promise<{ record: OrderRecord; event: OrderCreatedEvent } | null>;
   expireDueOrders(now: Date, limit: number): Promise<number>;
-  claimPendingEvents(now: Date, leaseMilliseconds: number, limit: number): Promise<ClaimedOrderEvent[]>;
-  markEventPublished(eventId: string, claimToken: string, publishedAt: Date): Promise<void>;
-  markEventFailed(
-    eventId: string,
-    claimToken: string,
-    reason: string,
-    failedAt: Date,
-  ): Promise<OutboxFailureResult>;
+  approvePayment(orderId: string, adminCustomerId: string, decidedAt: Date, command: InventoryCommand): Promise<"approved" | "already-approved" | "decision-conflict" | "not-pending" | "cancel-requested">;
+  rejectPayment(orderId: string, adminCustomerId: string, reason: string, decidedAt: Date, command: InventoryCommand): Promise<"rejected" | "already-rejected" | "decision-conflict" | "not-pending" | "cancel-requested">;
+  markCommandCompleted(commandId: string, claimToken: string, completedAt: Date): Promise<void>;
+  requestCancellation(orderId: string, customerId: string, requestedAt: Date): Promise<"requested" | "not-pending-proof" | "not-owner" | "already-resolved" | "already-requested">;
+  recordCancellationRefund(orderId: string, adminCustomerId: string, paymentCaptured: boolean, refundReference: string | null, recordedAt: Date): Promise<"recorded" | "not-pending">;
+  resolveCancellationRequest(orderId: string, adminCustomerId: string, resolution: "CANCEL" | "KEEP", note: string | null, resolvedAt: Date, command?: InventoryCommand): Promise<"cancelled" | "kept" | "refund-required" | "refund-not-recorded" | "not-pending">;
+  cancelOrder(orderId: string, customerId: string, cancelledAt: Date, command: InventoryCommand): Promise<"cancelled" | "already-cancelled" | "not-cancellable" | "not-owner" | "not-found" | "not-active">;
 }
 
-export class InMemoryOrdersRepository
-  extends InMemoryInventoryCommandRepository
-  implements OrdersRepository {
+export type ReservationIntent = {
+  intentId: string;
+  orderId: string;
+  customerId: string;
+  idempotencyKey: string;
+  status: "PENDING" | "COMPLETED";
+  lines: Array<{ productId: string; quantity: number }>;
+  createdAt: Date;
+  nextAttemptAt: Date;
+};
+
+export interface OrderEventStore {
+  append(event: OrderCreatedEvent): Promise<void>;
+}
+
+export class InMemoryOrdersRepository implements OrdersRepository {
   private readonly records = new Map<string, OrderRecord>();
-  private readonly idempotencyIndex = new Map<string, string>();
-  private readonly events = new Map<
+  private readonly commands = new Map<string, { command: InventoryCommand; status: string; claimToken: string | null; nextAttemptAt: Date }>();
+  private readonly orderIdsByIdempotencyKey = new Map<string, string>();
+  private readonly reservationIntents = new Map<string, ReservationIntent>();
+  private readonly recordIntents = new Map<
     string,
-    {
-      event: OrderCreatedEvent;
-      status: "PENDING" | "PROCESSING" | "PUBLISHED" | "FAILED";
-      attemptCount: number;
-      nextAttemptAt: Date;
-      claimToken: string | null;
-      leaseExpiresAt: Date | null;
-    }
+    { record: OrderRecord; event: OrderCreatedEvent }
   >();
 
-  public async save(
-    record: OrderRecord,
-    event: OrderCreatedEvent,
-    inventoryCommand: InventoryCommand,
-  ): Promise<void> {
-    const idempotencyIndexKey = `${record.customerId}:${record.idempotencyKey}`;
-    if (this.idempotencyIndex.has(idempotencyIndexKey)) {
-      throw new Error("Duplicate idempotency key");
-    }
+  public constructor(private readonly outbox?: OrderEventStore) {}
 
-    this.records.set(record.orderId, structuredClone(record));
-    this.idempotencyIndex.set(idempotencyIndexKey, record.orderId);
-    this.add(inventoryCommand);
-    this.events.set(event.eventId, {
-      event: structuredClone(event),
+  public async expireDueOrders(_now: Date, _limit: number): Promise<number> {
+    return 0;
+  }
+
+  public add(command: InventoryCommand): void {
+    this.commands.set(command.commandId, {
+      command: structuredClone(command),
       status: "PENDING",
-      attemptCount: 0,
-      nextAttemptAt: new Date(0),
       claimToken: null,
-      leaseExpiresAt: null,
+      nextAttemptAt: new Date(0),
     });
   }
 
-  public override async markCommandCompleted(
-    commandId: string,
-    claimToken: string,
-    completedAt: Date,
-  ): Promise<void> {
-    const entry = this.commands.get(commandId);
-    if (!entry || entry.command.commandType !== "RESERVE") {
-      if (entry?.command.commandType === "COMMIT") {
-        const record = this.records.get(entry.command.orderId);
-        if (
-          !record ||
-          (record.status !== "PAYMENT_APPROVED_FINALIZING" && record.status !== "CONFIRMED")
-        ) {
-          throw new Error(`Order payment finalization transition lost: ${entry.command.orderId}`);
-        }
-        await super.markCommandCompleted(commandId, claimToken, completedAt);
-        if (record.status === "PAYMENT_APPROVED_FINALIZING") {
-          record.status = "CONFIRMED";
-          record.updatedAt = completedAt;
-        }
-        return;
-      }
-      return super.markCommandCompleted(commandId, claimToken, completedAt);
+  public async claimPendingCommands(
+    now: Date,
+    leaseMilliseconds: number,
+    limit: number,
+  ): Promise<ClaimedInventoryCommand[]> {
+    const claims: ClaimedInventoryCommand[] = [];
+    for (const entry of this.commands.values()) {
+      if (claims.length >= limit) break;
+      if (entry.status !== "PENDING" || entry.nextAttemptAt > now) continue;
+      entry.status = "PROCESSING";
+      entry.claimToken = crypto.randomUUID();
+      claims.push({ command: structuredClone(entry.command), attemptCount: 1, claimToken: entry.claimToken });
     }
-
-    await super.markCommandCompleted(commandId, claimToken, completedAt);
-    const record = this.records.get(entry.command.orderId);
-    if (!record || record.status !== "RESERVING_INVENTORY") {
-      throw new Error(`Order reservation transition lost: ${entry.command.orderId}`);
-    }
-    record.status = "AWAITING_PAYMENT_PROOF";
-    record.updatedAt = completedAt;
+    return claims;
   }
 
-  public override async markCommandRejected(
-    commandId: string,
-    claimToken: string,
-    reason: string,
-    rejectedAt: Date,
-    terminalOrderStatus: "RESERVATION_FAILED" | "RESERVATION_EXPIRED" = "RESERVATION_FAILED",
-  ): Promise<void> {
-    const entry = this.commands.get(commandId);
-    if (!entry || entry.command.commandType !== "RESERVE") {
-      return super.markCommandRejected(commandId, claimToken, reason, rejectedAt);
+  public async markCommandRejected(commandId: string, _claimToken: string, _reason: string, _rejectedAt: Date, terminalOrderStatus?: "RESERVATION_FAILED" | "RESERVATION_EXPIRED"): Promise<void> {
+    const command = this.commands.get(commandId)?.command;
+    const record = command ? this.records.get(command.orderId) : undefined;
+    if (record && terminalOrderStatus) record.status = terminalOrderStatus;
+  }
+  public async markCommandFailed(): Promise<InventoryCommandFailureResult> {
+    return { attemptCount: 1, nextAttemptAt: new Date() };
+  }
+
+  public async save(record: OrderRecord, event: OrderCreatedEvent, command?: InventoryCommand): Promise<void> {
+    const existingOrderId = this.orderIdsByIdempotencyKey.get(record.idempotencyKey);
+    if (existingOrderId && existingOrderId !== record.orderId) {
+      throw new Error("Order idempotency key already exists");
     }
 
-    await super.markCommandRejected(commandId, claimToken, reason, rejectedAt);
-    const record = this.records.get(entry.command.orderId);
-    if (!record || record.status !== "RESERVING_INVENTORY") {
-      throw new Error(`Order reservation transition lost: ${entry.command.orderId}`);
-    }
-    record.status = terminalOrderStatus;
-    record.updatedAt = rejectedAt;
+    await this.outbox?.append(event);
+    this.records.set(record.orderId, record);
+    this.orderIdsByIdempotencyKey.set(record.idempotencyKey, record.orderId);
+    if (command) this.add(command);
   }
 
   public async findByOrderId(orderId: string): Promise<OrderRecord | null> {
@@ -221,336 +102,110 @@ export class InMemoryOrdersRepository
     return record ? structuredClone(record) : null;
   }
 
-  public async findByIdempotencyKey(
-    customerId: string,
-    idempotencyKey: string,
-  ): Promise<OrderRecord | null> {
-    const orderId = this.idempotencyIndex.get(`${customerId}:${idempotencyKey}`);
+  public async findByIdempotencyKey(idempotencyKey: string): Promise<OrderRecord | null> {
+    const orderId = this.orderIdsByIdempotencyKey.get(idempotencyKey);
     return orderId ? this.findByOrderId(orderId) : null;
   }
 
-  public async approvePayment(
-    orderId: string,
-    adminCustomerId: string,
-    decidedAt: Date,
-    inventoryCommand: InventoryCommand,
-  ): Promise<PaymentApprovalResult> {
-    const record = this.records.get(orderId);
-    if (!record) {
-      return "not-found";
-    }
-    if (record.cancelRequestedAt && !record.cancelResolvedAt) {
-      return "not-pending";
-    }
-    if (record.paymentDecision) {
-      if (
-        record.paymentDecision.decision === "APPROVED" &&
-        (record.status === "PAYMENT_APPROVED_FINALIZING" || record.status === "CONFIRMED")
-      ) {
-        return "already-approved";
-      }
-      return "decision-conflict";
-    }
-    if (record.status !== "PAYMENT_REVIEW_PENDING") {
-      return "not-pending";
-    }
+  public async createReservationIntent(
+    intent: ReservationIntent,
+    record: OrderRecord,
+    event: OrderCreatedEvent,
+  ): Promise<void> {
+    this.reservationIntents.set(intent.intentId, structuredClone(intent));
+    this.recordIntents.set(intent.intentId, { record, event });
+  }
 
-    this.add(inventoryCommand);
-    record.paymentDecision = {
-      decision: "APPROVED",
-      decidedAt,
-      reason: null,
-    };
+  public async completeReservationIntent(
+    intent: ReservationIntent,
+    record: OrderRecord,
+    event: OrderCreatedEvent,
+  ): Promise<void> {
+    record.status = "AWAITING_PAYMENT_PROOF";
+    await this.save(record, event);
+    this.reservationIntents.set(intent.intentId, { ...intent, status: "COMPLETED" });
+  }
+
+  public async listPendingReservationIntents(now: Date): Promise<ReservationIntent[]> {
+    return [...this.reservationIntents.values()]
+      .filter((intent) => intent.status === "PENDING" && intent.nextAttemptAt <= now)
+      .map((intent) => structuredClone(intent));
+  }
+
+  public async getReservationIntentPayload(
+    intentId: string,
+  ): Promise<{ record: OrderRecord; event: OrderCreatedEvent } | null> {
+    const payload = this.recordIntents.get(intentId);
+    return payload
+      ? structuredClone(payload)
+      : null;
+  }
+
+  public async approvePayment(orderId: string, _adminCustomerId: string, _decidedAt: Date, command: InventoryCommand): Promise<any> {
+    const record = this.records.get(orderId);
+    if (!record || record.status !== "PAYMENT_REVIEW_PENDING") return "not-pending";
     record.status = "PAYMENT_APPROVED_FINALIZING";
-    record.updatedAt = decidedAt;
+    this.add(command);
     return "approved";
   }
 
-  public async rejectPayment(
-    orderId: string,
-    adminCustomerId: string,
-    reason: string,
-    decidedAt: Date,
-    inventoryCommand: InventoryCommand,
-  ): Promise<PaymentRejectionResult> {
+  public async rejectPayment(orderId: string, _adminCustomerId: string, _reason: string, _decidedAt: Date, command: InventoryCommand): Promise<any> {
     const record = this.records.get(orderId);
-    if (!record) {
-      return "not-found";
-    }
-    if (record.cancelRequestedAt && !record.cancelResolvedAt) {
-      return "not-pending";
-    }
-    if (record.paymentDecision) {
-      if (
-        record.paymentDecision.decision === "REJECTED" &&
-        record.status === "CANCELLED"
-      ) {
-        return "already-rejected";
-      }
-      return "decision-conflict";
-    }
-    if (record.status !== "PAYMENT_REVIEW_PENDING") {
-      return "not-pending";
-    }
-
-    this.add(inventoryCommand);
-    record.paymentDecision = {
-      decision: "REJECTED",
-      decidedAt,
-      reason,
-    };
+    if (!record || record.status !== "PAYMENT_REVIEW_PENDING") return "not-pending";
     record.status = "CANCELLED";
-    record.updatedAt = decidedAt;
+    this.add(command);
     return "rejected";
   }
 
-  public async cancelOrder(
-    orderId: string,
-    customerId: string,
-    cancelledAt: Date,
-    inventoryCommand: InventoryCommand,
-  ): Promise<OrderCancellationResult> {
-    const record = this.records.get(orderId);
-    if (!record || record.customerId !== customerId) {
-      return "not-found";
-    }
-    if (record.status === "CANCELLED" && record.paymentDecision === null) {
-      return "already-cancelled";
-    }
-    if (
-      record.status !== "AWAITING_PAYMENT_PROOF" ||
-      record.paymentDecision !== null ||
-      record.reservationExpiresAt === null ||
-      record.reservationExpiresAt.getTime() <= cancelledAt.getTime()
-    ) {
-      return "not-cancellable";
-    }
-
-    this.add(inventoryCommand);
-    record.status = "CANCELLED";
-    record.updatedAt = cancelledAt;
-    return "cancelled";
+  public async markCommandCompleted(commandId: string): Promise<void> {
+    const entry = this.commands.get(commandId);
+    if (entry) entry.status = "COMPLETED";
   }
 
-  public async requestCancellation(
-    orderId: string,
-    customerId: string,
-    requestedAt: Date,
-  ): Promise<CancellationRequestResult> {
+  public async requestCancellation(orderId: string, customerId: string, requestedAt: Date): Promise<any> {
     const record = this.records.get(orderId);
-    if (!record || record.customerId !== customerId) {
-      return "not-found";
-    }
-    if (record.cancelRequestedAt) {
-      return record.cancelResolvedAt ? "already-resolved" : "already-pending";
-    }
-    if (record.status !== "PAYMENT_REVIEW_PENDING" || record.paymentDecision !== null) {
-      return "not-eligible";
-    }
-    record.cancelRequestedAt = requestedAt;
-    record.updatedAt = requestedAt;
+    if (!record || record.customerId !== customerId) return "not-owner";
+    if ((record as any).cancelRequestedAt) return "already-requested";
+    if (record.status !== "PAYMENT_REVIEW_PENDING") return "not-pending-proof";
+    (record as any).cancelRequestedAt = requestedAt;
     return "requested";
   }
 
-  public async listPendingCancellationRequests(): Promise<PendingCancellationRequest[]> {
-    return [...this.records.values()]
-      .filter(
-        (record) =>
-          record.status === "PAYMENT_REVIEW_PENDING" &&
-          record.cancelRequestedAt !== null &&
-          record.cancelResolvedAt === null,
-      )
-      .map((record) => ({
-        orderId: record.orderId,
-        customerId: record.customerId,
-        totalCop: record.totalCop,
-        createdAt: record.createdAt.toISOString(),
-        requestedAt: record.cancelRequestedAt!.toISOString(),
-        paymentCaptured: record.cancelPaymentCaptured,
-        refundHandledAt: record.externalRefundHandledAt?.toISOString() ?? null,
-        externalRefundReference: record.externalRefundReference,
-        refundRecordedByCustomerId: record.externalRefundRecordedByCustomerId,
-      }))
-      .sort((left, right) => left.requestedAt.localeCompare(right.requestedAt));
-  }
-
-  public async recordCancellationRefund(
-    orderId: string,
-    adminCustomerId: string,
-    paymentCaptured: boolean,
-    externalRefundReference: string | null,
-    recordedAt: Date,
-  ): Promise<CancellationRefundRecordResult> {
+  public async recordCancellationRefund(orderId: string, adminCustomerId: string, paymentCaptured: boolean, refundReference: string | null, recordedAt: Date): Promise<any> {
     const record = this.records.get(orderId);
-    if (!record) {
-      return "not-found";
-    }
-    if (
-      record.status !== "PAYMENT_REVIEW_PENDING" ||
-      !record.cancelRequestedAt ||
-      record.cancelResolvedAt
-    ) {
-      return "not-pending";
-    }
-    if (record.cancelPaymentCaptured !== null) {
-      return record.cancelPaymentCaptured === paymentCaptured &&
-        record.externalRefundReference === externalRefundReference
-        ? "already-recorded"
-        : "conflict";
-    }
-
-    record.cancelPaymentCaptured = paymentCaptured;
-    record.externalRefundRecordedByCustomerId = adminCustomerId;
-    record.externalRefundReference = externalRefundReference;
-    record.externalRefundHandledAt = paymentCaptured ? recordedAt : null;
-    record.updatedAt = recordedAt;
+    if (!record || record.status !== "PAYMENT_REVIEW_PENDING") return "not-pending";
+    Object.assign(record as any, {
+      cancelPaymentCaptured: paymentCaptured,
+      externalRefundRecordedByCustomerId: adminCustomerId,
+      externalRefundReference: refundReference,
+      externalRefundHandledAt: recordedAt,
+    });
     return "recorded";
   }
 
-  public async resolveCancellationRequest(
-    orderId: string,
-    adminCustomerId: string,
-    action: CancellationResolutionAction,
-    note: string,
-    resolvedAt: Date,
-    inventoryCommand: InventoryCommand,
-  ): Promise<CancellationResolutionResult> {
+  public async resolveCancellationRequest(orderId: string, adminCustomerId: string, resolution: "CANCEL" | "KEEP", note: string | null, resolvedAt: Date, command?: InventoryCommand): Promise<any> {
     const record = this.records.get(orderId);
-    if (!record) {
-      return "not-found";
+    if (!record || !(record as any).cancelRequestedAt || (record as any).cancelResolvedAt) return "not-pending";
+    if (resolution === "KEEP") {
+      Object.assign(record as any, { cancelResolvedAt: resolvedAt, cancelResolution: "KEPT_OPEN", cancelResolvedByCustomerId: adminCustomerId, cancelResolutionNote: note });
+      return "kept";
     }
-    if (record.cancelRequestedAt && record.cancelResolvedAt) {
-      return "already-resolved";
-    }
-    if (
-      record.status !== "PAYMENT_REVIEW_PENDING" ||
-      !record.cancelRequestedAt ||
-      record.paymentDecision !== null
-    ) {
-      return "not-pending";
-    }
-    if (action === "CANCEL") {
-      if (record.cancelPaymentCaptured === null) {
-        return "refund-not-recorded";
-      }
-      if (
-        record.cancelPaymentCaptured &&
-        (!record.externalRefundHandledAt || !record.externalRefundReference)
-      ) {
-        return "refund-not-recorded";
-      }
-      this.add(inventoryCommand);
-      record.status = "CANCELLED";
-    }
-    record.cancelResolvedAt = resolvedAt;
-    record.cancelResolution = action === "CANCEL" ? "CANCELLED" : "KEPT_OPEN";
-    record.cancelResolvedByCustomerId = adminCustomerId;
-    record.cancelResolutionNote = note;
-    record.updatedAt = resolvedAt;
-    return action === "CANCEL" ? "cancelled" : "kept-open";
+    if (!(record as any).cancelPaymentCaptured) return "refund-not-recorded";
+    record.status = "CANCELLED";
+    Object.assign(record as any, { cancelResolvedAt: resolvedAt, cancelResolution: "CANCELLED", cancelResolvedByCustomerId: adminCustomerId, cancelResolutionNote: note });
+    if (command) this.add(command);
+    return "cancelled";
   }
 
-  public async expireDueOrders(now: Date, limit: number): Promise<number> {
-    let expiredCount = 0;
-    for (const record of this.records.values()) {
-      if (expiredCount >= limit) {
-        break;
-      }
-      if (
-        record.status !== "AWAITING_PAYMENT_PROOF" ||
-        record.paymentDecision !== null ||
-        record.reservationExpiresAt === null ||
-        record.reservationExpiresAt.getTime() > now.getTime()
-      ) {
-        continue;
-      }
-
-      this.add(createInventoryReleaseCommand(record.orderId));
-      record.status = "RESERVATION_EXPIRED";
-      record.updatedAt = now;
-      expiredCount += 1;
-    }
-    return expiredCount;
-  }
-
-  public async claimPendingEvents(
-    now: Date,
-    leaseMilliseconds: number,
-    limit: number,
-  ): Promise<ClaimedOrderEvent[]> {
-    const claims: ClaimedOrderEvent[] = [];
-
-    for (const entry of this.events.values()) {
-      if (claims.length >= limit) {
-        break;
-      }
-
-      const isPending = entry.status === "PENDING" && entry.nextAttemptAt <= now;
-      const isExpired = entry.status === "PROCESSING" &&
-        entry.leaseExpiresAt !== null &&
-        entry.leaseExpiresAt <= now;
-      if (isExpired && entry.attemptCount >= 8) {
-        entry.status = "FAILED";
-        entry.claimToken = null;
-        entry.leaseExpiresAt = null;
-        continue;
-      }
-      if (!isPending && !isExpired) {
-        continue;
-      }
-      if (entry.attemptCount >= 8) {
-        continue;
-      }
-
-      const claimToken = crypto.randomUUID();
-      entry.status = "PROCESSING";
-      entry.attemptCount += 1;
-      entry.claimToken = claimToken;
-      entry.leaseExpiresAt = new Date(now.getTime() + leaseMilliseconds);
-      claims.push({
-        event: structuredClone(entry.event),
-        attemptCount: entry.attemptCount,
-        claimToken,
-      });
-    }
-
-    return claims;
-  }
-
-  public async markEventPublished(
-    eventId: string,
-    claimToken: string,
-    _publishedAt: Date,
-  ): Promise<void> {
-    const entry = this.events.get(eventId);
-    if (!entry || entry.status !== "PROCESSING" || entry.claimToken !== claimToken) {
-      throw new Error(`Outbox claim lost for event: ${eventId}`);
-    }
-    entry.status = "PUBLISHED";
-    entry.claimToken = null;
-    entry.leaseExpiresAt = null;
-  }
-
-  public async markEventFailed(
-    eventId: string,
-    claimToken: string,
-    _reason: string,
-    failedAt: Date,
-  ): Promise<OutboxFailureResult> {
-    const entry = this.events.get(eventId);
-    if (!entry || entry.status !== "PROCESSING" || entry.claimToken !== claimToken) {
-      throw new Error(`Outbox claim lost for event: ${eventId}`);
-    }
-
-    const nextAttemptAt = entry.attemptCount >= 8
-      ? null
-      : new Date(failedAt.getTime() + Math.min(5_000 * 2 ** (entry.attemptCount - 1), 300_000));
-    entry.status = nextAttemptAt ? "PENDING" : "FAILED";
-    entry.claimToken = null;
-    entry.leaseExpiresAt = null;
-    if (nextAttemptAt) {
-      entry.nextAttemptAt = nextAttemptAt;
-    }
-    return { attemptCount: entry.attemptCount, nextAttemptAt };
+  public async cancelOrder(orderId: string, customerId: string, cancelledAt: Date, command: InventoryCommand): Promise<any> {
+    const record = this.records.get(orderId);
+    if (!record) return "not-found";
+    if (record.customerId !== customerId) return "not-owner";
+    if (record.status === "CANCELLED") return "already-cancelled";
+    if (record.status !== "AWAITING_PAYMENT_PROOF") return "not-cancellable";
+    record.status = "CANCELLED";
+    record.updatedAt = cancelledAt;
+    this.add(command);
+    return "cancelled";
   }
 }

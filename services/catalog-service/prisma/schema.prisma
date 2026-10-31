@@ -9,48 +9,53 @@ datasource db {
 }
 
 model Product {
-  id            String                     @id @default(cuid())
-  sku           String                     @unique
-  name          String
-  description   String
-  priceCop      Int
-  stock         Int
-  reservedStock Int                        @default(0)
-  isActive      Boolean                    @default(true)
-  createdAt     DateTime                   @default(now())
-  updatedAt     DateTime                   @updatedAt
-  reservations  InventoryReservationLine[]
+  id          String   @id @default(cuid())
+  sku         String   @unique
+  name        String
+  description String
+  priceCop    Int
+  stock       Int
+  isActive    Boolean  @default(true)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
 
   @@index([isActive, name])
 }
 
-enum InventoryReservationStatus {
-  ACTIVE
-  COMMITTED
-  RELEASED
-}
-
 model InventoryReservation {
-  id                 String                     @id @default(cuid())
-  orderId            String                     @unique
-  requestFingerprint String
-  status             InventoryReservationStatus @default(ACTIVE)
-  expiresAt          DateTime
-  createdAt          DateTime                   @default(now())
-  updatedAt          DateTime                   @updatedAt
-  lines              InventoryReservationLine[]
+  id           String                     @id @default(cuid())
+  orderId      String                     @unique
+  requestLines Json
+  status       String                     @default("RESERVED")
+  createdAt    DateTime                   @default(now())
+  items        InventoryReservationLine[]
+  movements    InventoryMovement[]
 
-  @@index([status, expiresAt])
+  @@index([status, createdAt])
 }
 
 model InventoryReservationLine {
-  id            String               @id @default(cuid())
-  reservationId String
-  productId     String
-  quantity      Int
-  reservation   InventoryReservation @relation(fields: [reservationId], references: [id], onDelete: Cascade)
-  product       Product              @relation(fields: [productId], references: [id], onDelete: Restrict)
+  id             String               @id @default(cuid())
+  reservationId  String
+  productId      String
+  sku            String
+  name           String
+  quantity       Int
+  unitPriceCop   Int
+  reservation    InventoryReservation @relation(fields: [reservationId], references: [id], onDelete: Cascade)
 
   @@unique([reservationId, productId])
-  @@index([productId])
+}
+
+model InventoryMovement {
+  id             String               @id @default(cuid())
+  reservationId  String
+  productId      String
+  movementType   String
+  quantityDelta  Int
+  createdAt      DateTime             @default(now())
+  reservation    InventoryReservation @relation(fields: [reservationId], references: [id], onDelete: Restrict)
+
+  @@unique([reservationId, productId, movementType])
+  @@index([productId, createdAt])
 }

@@ -5,7 +5,8 @@ import {
   InMemoryNotificationStore,
   LoggingNotificationSender,
   NotificationWorker,
-  type NotificationStore,
+  type NotificationSender,
+  WebhookNotificationSender,
 } from "./notification.worker.js";
 import { NotificationsController } from "./notifications.controller.js";
 import { PrismaNotificationStore } from "./prisma.notification.store.js";
@@ -15,7 +16,6 @@ import { PrismaService } from "./prisma.service.js";
   controllers: [NotificationsController],
   providers: [
     InMemoryNotificationStore,
-    LoggingNotificationSender,
     PrismaService,
     {
       provide: "PRISMA_CLIENT",
@@ -33,12 +33,24 @@ import { PrismaService } from "./prisma.service.js";
     },
     {
       provide: "NOTIFICATION_SENDER",
-      useExisting: LoggingNotificationSender,
+      useFactory: (): NotificationSender => {
+        const mode = process.env.NOTIFICATION_SENDER_MODE ?? "webhook";
+        if (mode === "log") {
+          return new LoggingNotificationSender();
+        }
+        if (mode !== "webhook") {
+          throw new Error(`Unsupported NOTIFICATION_SENDER_MODE: ${mode}`);
+        }
+        if (!process.env.NOTIFICATION_WEBHOOK_URL) {
+          throw new Error("NOTIFICATION_WEBHOOK_URL is required in webhook mode");
+        }
+        return new WebhookNotificationSender();
+      },
     },
     {
       provide: "NOTIFICATION_WORKER",
       inject: ["NOTIFICATION_STORE", "NOTIFICATION_SENDER"],
-      useFactory: (store: NotificationStore, sender: LoggingNotificationSender) =>
+      useFactory: (store: InMemoryNotificationStore, sender: NotificationSender) =>
         new NotificationWorker(store, sender),
     },
   ],

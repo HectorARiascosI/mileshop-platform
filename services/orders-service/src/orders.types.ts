@@ -4,10 +4,10 @@ export type OrderStatus =
   | "AWAITING_PAYMENT_PROOF"
   | "PAYMENT_REVIEW_PENDING"
   | "PAYMENT_APPROVED_FINALIZING"
-  | "RESERVATION_FAILED"
   | "CONFIRMED"
+  | "CANCELLED"
   | "RESERVATION_EXPIRED"
-  | "CANCELLED";
+  | "RESERVATION_FAILED";
 
 export type OrderLineInput = {
   productId: string;
@@ -34,46 +34,6 @@ export type OrderLine = {
   unitPriceCop: number;
 };
 
-export type PaymentDecisionView = {
-  decision: "APPROVED" | "REJECTED";
-  decidedAt: string;
-  reason: string | null;
-};
-
-export type OrderCancellationRequestView = {
-  requestedAt: string;
-  resolvedAt: string | null;
-  resolution: "CANCELLED" | "KEPT_OPEN" | null;
-};
-
-export type PendingCancellationRequest = {
-  orderId: string;
-  customerId: string;
-  totalCop: number;
-  createdAt: string;
-  requestedAt: string;
-  paymentCaptured: boolean | null;
-  refundHandledAt: string | null;
-  externalRefundReference: string | null;
-  refundRecordedByCustomerId: string | null;
-};
-
-export type Order = {
-  id: string;
-  orderId: string;
-  customerId: string;
-  subtotalCop: number;
-  deliveryFeeCop: number;
-  totalCop: number;
-  status: OrderStatus;
-  reservationExpiresAt: string | null;
-  createdAt: string;
-  updatedAt: string;
-  lines: OrderLine[];
-  paymentDecision: PaymentDecisionView | null;
-  cancellationRequest: OrderCancellationRequestView | null;
-};
-
 export type OrderCreatedEvent = {
   eventType: "OrderCreated.v1";
   eventId: string;
@@ -95,4 +55,17 @@ export type OrderCreatedEvent = {
   };
 };
 
-export type CreatedOrder = Order & { event: OrderCreatedEvent };
+export type Order = {
+  id: string;
+  orderId: string;
+  customerId: string;
+  subtotalCop: number;
+  deliveryFeeCop: number;
+  totalCop: number;
+  status: OrderStatus;
+  reservationExpiresAt: Date | null;
+  createdAt: string;
+  updatedAt: string;
+  lines: OrderLine[];
+  event?: OrderCreatedEvent;
+};

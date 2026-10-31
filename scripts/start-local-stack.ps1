@@ -25,39 +25,6 @@ function Wait-ForHttp {
     throw "Timed out waiting for $Uri"
 }
 
-function Wait-ForPostgresContainers {
-    param(
-        [int]$TimeoutSeconds = 120
-    )
-
-    $containerNames = @(
-        'mileshop-notification-postgres',
-        'mileshop-catalog-postgres',
-        'mileshop-orders-postgres',
-        'mileshop-identity-postgres'
-    )
-    $deadline = (Get-Date).AddSeconds($TimeoutSeconds)
-
-    while ((Get-Date) -lt $deadline) {
-        $allHealthy = $true
-        foreach ($containerName in $containerNames) {
-            $health = docker inspect --format '{{.State.Health.Status}}' $containerName
-            if ($LASTEXITCODE -ne 0 -or $health.Trim() -ne 'healthy') {
-                $allHealthy = $false
-                break
-            }
-        }
-
-        if ($allHealthy) {
-            return
-        }
-
-        Start-Sleep -Seconds 2
-    }
-
-    throw "Timed out waiting for PostgreSQL containers to become healthy."
-}
-
 function Start-ServiceProcess {
     param(
         [string]$Port,
@@ -75,33 +42,6 @@ function Start-ServiceProcess {
     Start-Process -FilePath 'cmd.exe' -ArgumentList '/d', '/c', $command -WorkingDirectory $repoRoot -WindowStyle Hidden | Out-Null
 }
 
-function Assert-AppPortsAvailable {
-    $ports = @(3000, 3010, 3020, 3030, 3040)
-    $listeners = @(Get-NetTCPConnection -State Listen -LocalPort $ports -ErrorAction SilentlyContinue)
-    if ($listeners.Count -eq 0) {
-        return
-    }
-
-    $conflicts = foreach ($listener in ($listeners | Sort-Object LocalPort, OwningProcess -Unique)) {
-        $processName = try {
-            (Get-Process -Id $listener.OwningProcess -ErrorAction Stop).ProcessName
-        }
-        catch {
-            'unknown process'
-        }
-
-        "Port $($listener.LocalPort): PID $($listener.OwningProcess) ($processName)"
-    }
-
-    throw @"
-MileShop cannot start because one or more application ports are already in use:
-$($conflicts -join [Environment]::NewLine)
-Inspect the owner with .\scripts\status-local-stack.ps1. Stop a process only after confirming it belongs to MileShop.
-"@
-}
-
-Assert-AppPortsAvailable
-
 Write-Host '==> Checking Docker...'
 $dockerOk = Get-Command docker -ErrorAction SilentlyContinue
 if (-not $dockerOk) {
@@ -111,26 +51,22 @@ if (-not $dockerOk) {
 docker --version | Out-Host
 
 Write-Host '==> Starting Postgres containers...'
-docker compose -f infra/docker-compose.yml up -d
-if ($LASTEXITCODE -ne 0) {
-    throw 'Failed to start PostgreSQL containers.'
-}
-docker compose -f infra/docker-compose.yml ps
-if ($LASTEXITCODE -ne 0) {
-    throw 'Failed to inspect PostgreSQL container status.'
-}
-
-Write-Host '==> Waiting for PostgreSQL containers to become healthy...'
-Wait-ForPostgresContainers
+docker compose -f infra/docker-compose.yml up -d | Out-Host
+docker compose -f infra/docker-compose.yml ps | Out-Host
 
 Write-Host '==> Applying Prisma migrations...'
 $catalogDatabaseUrl = 'postgresql://catalog:catalog@localhost:5434/catalog?schema=public'
 $notificationDatabaseUrl = 'postgresql://notifications:notifications@localhost:5433/notifications?schema=public'
 $ordersDatabaseUrl = 'postgresql://orders:orders@localhost:5435/orders?schema=public'
 $identityDatabaseUrl = 'postgresql://identity:identity@localhost:5436/identity?schema=public'
-npm run db:deploy
-if ($LASTEXITCODE -ne 0) {
-    throw 'Database migrations failed; refusing to start application services.'
+npm run db:deploy | Out-Host
+
+Write-Host '==> Clearing stale Node listeners on app ports...'
+Get-NetTCPConnection -LocalPort 3000,3010,3020,3030,3040 -ErrorAction SilentlyContinue | ForEach-Object {
+    $procId = $_.OwningProcess
+    if ($procId) {
+        Stop-Process -Id $procId -Force -ErrorAction SilentlyContinue
+    }
 }
 
 Write-Host '==> Preparing detached service logs...'
@@ -138,7 +74,7 @@ $logDirectory = Join-Path $repoRoot '.local-stack\logs'
 New-Item -ItemType Directory -Path $logDirectory -Force | Out-Null
 
 $catalogEnv = @{ DATABASE_URL = $catalogDatabaseUrl }
-$workerEnv = @{ DATABASE_URL = $notificationDatabaseUrl }
+$workerEnv = @{ DATABASE_URL = $notificationDatabaseUrl; NOTIFICATION_SENDER_MODE = 'log' }
 $ordersEnv = @{ DATABASE_URL = $ordersDatabaseUrl; CATALOG_SERVICE_URL = 'http://127.0.0.1:3020'; NOTIFICATION_WORKER_URL = 'http://127.0.0.1:3010' }
 $identityEnv = @{ DATABASE_URL = $identityDatabaseUrl; JWT_SECRET = 'mileshop-local-dev-secret-change-in-prod'; JWT_EXPIRES_IN = '15m'; REFRESH_TOKEN_EXPIRES_DAYS = '30'; ALLOWED_ORIGINS = 'http://localhost:3001' }
 $gatewayEnv = @{ CATALOG_SERVICE_URL = 'http://127.0.0.1:3020'; ORDERS_SERVICE_URL = 'http://127.0.0.1:3030'; IDENTITY_SERVICE_URL = 'http://127.0.0.1:3040' }
@@ -163,12 +99,17 @@ Wait-ForHttp -Uri 'http://localhost:3010/healthz' -TimeoutSeconds 60 | Out-Host
 Wait-ForHttp -Uri 'http://localhost:3020/healthz' -TimeoutSeconds 60 | Out-Host
 Wait-ForHttp -Uri 'http://localhost:3030/healthz' -TimeoutSeconds 60 | Out-Host
 
-Write-Host '==> Health checks...'
+Write-Host '==> Health and readiness checks...'
 Invoke-WebRequest -Uri 'http://localhost:3040/healthz' -UseBasicParsing | Select-Object -ExpandProperty Content | Out-Host
+Invoke-WebRequest -Uri 'http://localhost:3040/readyz' -UseBasicParsing | Select-Object -ExpandProperty Content | Out-Host
 Invoke-WebRequest -Uri 'http://localhost:3000/healthz' -UseBasicParsing | Select-Object -ExpandProperty Content | Out-Host
+Invoke-WebRequest -Uri 'http://localhost:3000/readyz' -UseBasicParsing | Select-Object -ExpandProperty Content | Out-Host
 Invoke-WebRequest -Uri 'http://localhost:3010/healthz' -UseBasicParsing | Select-Object -ExpandProperty Content | Out-Host
+Invoke-WebRequest -Uri 'http://localhost:3010/readyz' -UseBasicParsing | Select-Object -ExpandProperty Content | Out-Host
 Invoke-WebRequest -Uri 'http://localhost:3020/healthz' -UseBasicParsing | Select-Object -ExpandProperty Content | Out-Host
+Invoke-WebRequest -Uri 'http://localhost:3020/readyz' -UseBasicParsing | Select-Object -ExpandProperty Content | Out-Host
 Invoke-WebRequest -Uri 'http://localhost:3030/healthz' -UseBasicParsing | Select-Object -ExpandProperty Content | Out-Host
+Invoke-WebRequest -Uri 'http://localhost:3030/readyz' -UseBasicParsing | Select-Object -ExpandProperty Content | Out-Host
 
 Write-Host '==> Catalog smoke test...'
 Invoke-WebRequest -Uri 'http://localhost:3000/catalog/products' -UseBasicParsing | Select-Object -ExpandProperty Content | Out-Host

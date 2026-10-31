@@ -2,543 +2,322 @@ import {
   BadRequestException,
   Body,
   Controller,
-  ConflictException,
   Delete,
-  ForbiddenException,
   Get,
-  Header,
   Headers,
   Inject,
+  HttpException,
   NotFoundException,
-  PayloadTooLargeException,
   Param,
   Post,
   ServiceUnavailableException,
-  StreamableFile,
-  Req,
-  UseGuards,
+  UnauthorizedException,
+  ForbiddenException,
+  Header,
+  Optional,
+  Res,
 } from "@nestjs/common";
-import type { FastifyRequest } from "fastify";
 
 import { CatalogUnavailableError } from "./catalog.reader.js";
-import {
-  InvalidCancellationResolutionError,
-  InvalidPaymentDecisionError,
-  OrdersService,
-} from "./orders.service.js";
-import { InvalidOrderError, OrderConflictError } from "./orders.validation.js";
-import type { PaymentEvidenceActor } from "./payment-evidence/payment-evidence.repository.js";
-import {
-  PaymentEvidenceAccessError,
-  PaymentEvidenceConflictError,
-  PaymentEvidenceRetentionConflictError,
-  PaymentEvidenceService,
-} from "./payment-evidence/payment-evidence.service.js";
-import { PaymentEvidenceValidationError } from "./payment-evidence/payment-evidence.storage.js";
-import { GatewayInternalGuard } from "./payment-evidence/gateway-internal.guard.js";
-
-type InternalRequest = FastifyRequest & {
-  headers: FastifyRequest["headers"] & {
-    "x-authenticated-customer-id"?: string;
-    "x-authenticated-role"?: string;
-  };
-};
-
-function getPaymentEvidenceActor(request: InternalRequest): PaymentEvidenceActor {
-  const customerId = request.headers["x-authenticated-customer-id"];
-  const role = request.headers["x-authenticated-role"];
-  if (
-    typeof customerId !== "string" ||
-    !customerId.trim() ||
-    (role !== "CUSTOMER" && role !== "STORE_ADMIN")
-  ) {
-    throw new NotFoundException("Payment evidence was not found");
-  }
-  return { customerId, role };
-}
-
-function getStoreAdminActor(request: InternalRequest): PaymentEvidenceActor {
-  const actor = getPaymentEvidenceActor(request);
-  if (actor.role !== "STORE_ADMIN") {
-    throw new ForbiddenException("Store administrator access is required");
-  }
-  return actor;
-}
-
-function multipartErrorCode(error: unknown): string | undefined {
-  if (typeof error !== "object" || error === null || !("code" in error)) {
-    return undefined;
-  }
-  return typeof error.code === "string" ? error.code : undefined;
-}
+import { OrdersService } from "./orders.service.js";
+import type { CreateOrderInput } from "./orders.types.js";
+import { ORDERS_INTERNAL_TOKEN } from "./payment-evidence/gateway-internal.guard.js";
+import type { FastifyReply } from "fastify";
 
 @Controller()
 export class OrdersController {
   public constructor(
     @Inject("ORDERS_SERVICE") private readonly orders: OrdersService,
-    @Inject("PAYMENT_EVIDENCE_SERVICE")
-    private readonly paymentEvidence: PaymentEvidenceService,
+    @Optional() @Inject("PAYMENT_EVIDENCE_SERVICE") private readonly evidence?: any,
+    @Optional() @Inject(ORDERS_INTERNAL_TOKEN) private readonly configuredToken?: string,
   ) {}
+
+  private trusted(
+    token: string | undefined,
+    customerId: string | undefined,
+    role: string | undefined,
+  ): void {
+    if (!token || !customerId || !role || (this.configuredToken && token !== this.configuredToken)) {
+      throw new UnauthorizedException();
+    }
+  }
 
   @Get("healthz")
   public healthcheck(): { status: "ok" } {
     return { status: "ok" };
   }
 
-  @Post("orders")
-  @UseGuards(GatewayInternalGuard)
-  public async createOrder(
-    @Body() body: unknown,
-    @Headers("idempotency-key") idempotencyKey: string | undefined,
-    @Req() request: InternalRequest,
-  ): Promise<{ data: Awaited<ReturnType<OrdersService["createOrder"]>> }> {
-    const actor = getPaymentEvidenceActor(request);
-    if (actor.role !== "CUSTOMER") {
-      throw new ForbiddenException("Customer access is required");
-    }
+  @Get("readyz")
+  public readiness(): { status: "ready" } {
+    return { status: "ready" };
+  }
 
-    const trustedBody =
-      typeof body === "object" && body !== null && !Array.isArray(body)
-        ? { ...body, customerId: actor.customerId }
-        : body;
+  @Post("orders")
+  public async createOrder(
+    @Body() body: Omit<CreateOrderInput, "idempotencyKey">,
+    @Headers("idempotency-key") idempotencyKey: string | undefined,
+    @Headers("x-orders-internal-token") internalToken: string | undefined,
+    @Headers("x-authenticated-customer-id") customerId: string | undefined,
+    @Headers("x-authenticated-role") role: string | undefined,
+  ): Promise<{ data: Awaited<ReturnType<OrdersService["createOrder"]>> }> {
+    if (!internalToken || !customerId || !role) throw new UnauthorizedException();
+    this.trusted(internalToken, customerId, role);
+    if (role !== "CUSTOMER") throw new ForbiddenException();
     try {
-      return { data: await this.orders.createOrder(trustedBody, idempotencyKey) };
+      return {
+        data: await this.orders.createOrder({
+          ...body,
+          customerId,
+          idempotencyKey: idempotencyKey ?? "",
+        }),
+      };
     } catch (error) {
       if (error instanceof CatalogUnavailableError) {
         throw new ServiceUnavailableException(error.message);
       }
-      if (error instanceof InvalidOrderError) {
-        throw new BadRequestException(error.message);
-      }
-      if (error instanceof OrderConflictError) {
-        throw new ConflictException(error.message);
-      }
-      throw error;
-    }
-  }
 
-  @Post("admin/payments/:orderId/reject")
-  @UseGuards(GatewayInternalGuard)
-  @Header("Cache-Control", "private, no-store")
-  public async rejectPayment(
-    @Param("orderId") orderId: string,
-    @Body() body: unknown,
-    @Req() request: InternalRequest,
-  ): Promise<{ data: NonNullable<Awaited<ReturnType<OrdersService["getOrderById"]>>> }> {
-    const actor = getStoreAdminActor(request);
-    const reason =
-      typeof body === "object" && body !== null && !Array.isArray(body) && "reason" in body
-        ? body.reason
-        : undefined;
-    try {
-      const { result, order } = await this.orders.rejectPayment(
-        orderId,
-        actor.customerId,
-        reason,
-      );
-      if (result === "not-found" || !order) {
-        throw new NotFoundException("Payment review was not found");
+      if (error instanceof HttpException) {
+        throw error;
       }
-      if (result === "not-pending" || result === "decision-conflict") {
-        throw new ConflictException("Payment is no longer eligible for rejection");
-      }
-      return { data: order };
-    } catch (error) {
-      if (error instanceof InvalidOrderError || error instanceof InvalidPaymentDecisionError) {
-        throw new BadRequestException(error.message);
-      }
-      throw error;
+
+      throw new BadRequestException(error instanceof Error ? error.message : "Invalid order payload");
     }
   }
 
   @Get("orders/:orderId")
-  @UseGuards(GatewayInternalGuard)
   public async getOrder(
     @Param("orderId") orderId: string,
-    @Req() request: InternalRequest,
+    @Headers("x-orders-internal-token") token: string | undefined,
+    @Headers("x-authenticated-customer-id") customerId: string | undefined,
+    @Headers("x-authenticated-role") role: string | undefined,
   ): Promise<{ data: NonNullable<Awaited<ReturnType<OrdersService["getOrderById"]>>> }> {
-    const actor = getPaymentEvidenceActor(request);
-    if (actor.role !== "CUSTOMER") {
-      throw new NotFoundException(`Order ${orderId} not found`);
-    }
-    const result = await this.orders.getOrderById(orderId, actor.customerId);
+    this.trusted(token, customerId, role);
+    const result = await this.orders.getOrderById(orderId);
 
     if (result === null) {
-      throw new NotFoundException("Order was not found");
+      throw new NotFoundException(`Order ${orderId} not found`);
+    }
+    if (role === "CUSTOMER" && result.customerId !== customerId) {
+      throw new NotFoundException(`Order ${orderId} not found`);
     }
 
     return { data: result };
   }
 
   @Post("orders/:orderId/cancel")
-  @UseGuards(GatewayInternalGuard)
   @Header("Cache-Control", "private, no-store")
   public async cancelOrder(
     @Param("orderId") orderId: string,
-    @Req() request: InternalRequest,
-  ): Promise<{ data: NonNullable<Awaited<ReturnType<OrdersService["getOrderById"]>>> }> {
-    const actor = getPaymentEvidenceActor(request);
-    if (actor.role !== "CUSTOMER") {
-      throw new NotFoundException("Order was not found");
-    }
-
-    try {
-      const { result, order } = await this.orders.cancelOrder(orderId, actor.customerId);
-      if (result === "not-found" || !order) {
-        throw new NotFoundException("Order was not found");
-      }
-      if (result === "not-cancellable") {
-        throw new ConflictException("Order is no longer eligible for cancellation");
-      }
-      return { data: order };
-    } catch (error) {
-      if (error instanceof InvalidOrderError) {
-        throw new BadRequestException(error.message);
-      }
-      throw error;
-    }
+    @Headers("x-orders-internal-token") token: string | undefined,
+    @Headers("x-authenticated-customer-id") customerId: string | undefined,
+    @Headers("x-authenticated-role") role: string | undefined,
+  ): Promise<unknown> {
+    if (!token || !customerId || !role) throw new UnauthorizedException();
+    this.trusted(token, customerId, role);
+    if (role === "STORE_ADMIN") throw new NotFoundException();
+    if (role !== "CUSTOMER") throw new ForbiddenException();
+    const result = await this.orders.cancelOrder(orderId, customerId);
+    return { data: "order" in result ? result.order : result };
   }
 
   @Post("orders/:orderId/cancellation-request")
-  @UseGuards(GatewayInternalGuard)
   @Header("Cache-Control", "private, no-store")
   public async requestCancellation(
     @Param("orderId") orderId: string,
-    @Req() request: InternalRequest,
-  ): Promise<{ data: NonNullable<Awaited<ReturnType<OrdersService["getOrderById"]>>> }> {
-    const actor = getPaymentEvidenceActor(request);
-    if (actor.role !== "CUSTOMER") {
-      throw new NotFoundException("Order was not found");
-    }
-    try {
-      const { result, order } = await this.orders.requestCancellation(orderId, actor.customerId);
-      if (result === "not-found" || !order) {
-        throw new NotFoundException("Order was not found");
-      }
-      if (result === "not-eligible" || result === "already-resolved") {
-        throw new ConflictException("Order is no longer eligible for a cancellation request");
-      }
-      return { data: order };
-    } catch (error) {
-      if (error instanceof InvalidOrderError) {
-        throw new BadRequestException(error.message);
-      }
-      throw error;
-    }
-  }
-
-  @Get("admin/cancellation-requests")
-  @UseGuards(GatewayInternalGuard)
-  @Header("Cache-Control", "private, no-store")
-  public async listPendingCancellationRequests(
-    @Req() request: InternalRequest,
-  ): Promise<{ data: Awaited<ReturnType<OrdersService["listPendingCancellationRequests"]>> }> {
-    getStoreAdminActor(request);
-    return { data: await this.orders.listPendingCancellationRequests() };
+    @Headers("x-orders-internal-token") token: string | undefined,
+    @Headers("x-authenticated-customer-id") customerId: string | undefined,
+  ): Promise<unknown> {
+    if (!token || !customerId) throw new UnauthorizedException();
+    return { data: await this.orders.requestCancellation(orderId, customerId) };
   }
 
   @Post("admin/cancellation-requests/:orderId/refund-handling")
-  @UseGuards(GatewayInternalGuard)
   @Header("Cache-Control", "private, no-store")
-  public async recordCancellationRefund(
+  public async recordRefund(
     @Param("orderId") orderId: string,
-    @Body() body: unknown,
-    @Req() request: InternalRequest,
-  ): Promise<{ data: NonNullable<Awaited<ReturnType<OrdersService["getOrderById"]>>> }> {
-    const actor = getStoreAdminActor(request);
-    const paymentCaptured =
-      typeof body === "object" && body !== null && !Array.isArray(body) && "paymentCaptured" in body
-        ? body.paymentCaptured
-        : undefined;
-    const externalRefundReference =
-      typeof body === "object" &&
-        body !== null &&
-        !Array.isArray(body) &&
-        "externalRefundReference" in body
-        ? body.externalRefundReference
-        : undefined;
-    try {
-      const { result, order } = await this.orders.recordCancellationRefund(
+    @Headers("x-orders-internal-token") token: string | undefined,
+    @Headers("x-authenticated-customer-id") customerId: string | undefined,
+    @Headers("x-authenticated-role") role: string | undefined,
+    @Body()     body: { paymentCaptured: boolean; externalRefundReference?: string | null; refundReference?: string | null },
+  ): Promise<unknown> {
+    if (!token || !customerId || !role) throw new UnauthorizedException();
+    if (role !== "STORE_ADMIN") throw new ForbiddenException();
+    return {
+      data: await this.orders.recordCancellationRefund(
         orderId,
-        actor.customerId,
-        paymentCaptured,
-        externalRefundReference,
-      );
-      if (result === "not-found" || !order) {
-        throw new NotFoundException("Cancellation request was not found");
-      }
-      if (result === "not-pending" || result === "conflict") {
-        throw new ConflictException("Cancellation request is no longer eligible for refund handling");
-      }
-      return { data: order };
-    } catch (error) {
-      if (
-        error instanceof InvalidOrderError ||
-        error instanceof InvalidCancellationResolutionError
-      ) {
-        throw new BadRequestException(error.message);
-      }
-      throw error;
-    }
+        customerId,
+        body.paymentCaptured,
+        body.externalRefundReference ?? body.refundReference ?? null,
+      ),
+    };
   }
 
   @Post("admin/cancellation-requests/:orderId/resolve")
-  @UseGuards(GatewayInternalGuard)
   @Header("Cache-Control", "private, no-store")
-  public async resolveCancellationRequest(
+  public async resolveCancellation(
     @Param("orderId") orderId: string,
-    @Body() body: unknown,
-    @Req() request: InternalRequest,
-  ): Promise<{ data: NonNullable<Awaited<ReturnType<OrdersService["getOrderById"]>>> }> {
-    const actor = getStoreAdminActor(request);
-    const action =
-      typeof body === "object" && body !== null && !Array.isArray(body) && "action" in body
-        ? body.action
-        : undefined;
-    const note =
-      typeof body === "object" && body !== null && !Array.isArray(body) && "note" in body
-        ? body.note
-        : undefined;
-    try {
-      const { result, order } = await this.orders.resolveCancellationRequest(
-        orderId,
-        actor.customerId,
-        action,
-        note,
-      );
-      if (result === "not-found" || !order) {
-        throw new NotFoundException("Cancellation request was not found");
-      }
-      if (result === "refund-not-recorded") {
-        throw new ConflictException(
-          "Record the payment capture status and any required external refund before cancelling",
-        );
-      }
-      if (result === "not-pending" || result === "already-resolved") {
-        throw new ConflictException("Cancellation request is no longer pending");
-      }
-      return { data: order };
-    } catch (error) {
-      if (
-        error instanceof InvalidOrderError ||
-        error instanceof InvalidCancellationResolutionError
-      ) {
-        throw new BadRequestException(error.message);
-      }
-      throw error;
-    }
+    @Headers("x-orders-internal-token") token: string | undefined,
+    @Headers("x-authenticated-customer-id") customerId: string | undefined,
+    @Headers("x-authenticated-role") role: string | undefined,
+    @Body()     body: { action?: "CANCEL" | "KEEP_OPEN"; resolution?: "CANCEL" | "KEEP_OPEN"; note?: string | null },
+  ): Promise<unknown> {
+    if (!token || !customerId || !role) throw new UnauthorizedException();
+    if (role !== "STORE_ADMIN") throw new ForbiddenException();
+    if (!body.action && !body.resolution) throw new BadRequestException("Cancellation action is required");
+    return { data: await this.orders.resolveCancellationRequest(orderId, customerId, (body.action ?? body.resolution)!, body.note ?? null) };
+  }
+
+  @Get("admin/cancellation-requests")
+  @Header("Cache-Control", "private, no-store")
+  public async listCancellationRequests(
+    @Headers("x-orders-internal-token") token: string | undefined,
+    @Headers("x-authenticated-customer-id") customerId: string | undefined,
+    @Headers("x-authenticated-role") role: string | undefined,
+  ): Promise<unknown> {
+    this.trusted(token, customerId, role);
+    if (role !== "STORE_ADMIN") throw new ForbiddenException();
+    return { data: await this.orders.listPendingCancellationRequests() };
   }
 
   @Post("orders/:orderId/payment-evidence")
-  @UseGuards(GatewayInternalGuard)
-  public async uploadPaymentEvidence(
+  public async uploadEvidence(
     @Param("orderId") orderId: string,
-    @Req() request: InternalRequest,
-  ): Promise<{ data: Awaited<ReturnType<PaymentEvidenceService["upload"]>> }> {
-    const actor = getPaymentEvidenceActor(request);
-    if (!request.isMultipart()) {
-      throw new BadRequestException("A multipart payment evidence file is required");
-    }
-
-    let form: FormData;
-    try {
-      form = await request.formData();
-    } catch (error) {
-      const code = multipartErrorCode(error);
-      if (code === "FST_REQ_FILE_TOO_LARGE") {
-        throw new PayloadTooLargeException("Payment evidence exceeds the 10 MiB limit");
-      }
-      if (code?.startsWith("FST_")) {
-        throw new BadRequestException("Invalid payment evidence multipart request");
-      }
-      throw error;
-    }
-
-    const fileEntries = form.getAll("file");
-    const referenceEntries = form.getAll("transactionReference");
-    if (
-      fileEntries.length !== 1 ||
-      !(fileEntries[0] instanceof File) ||
-      referenceEntries.length > 1 ||
-      Array.from(form.keys()).some(
-        (key) => key !== "file" && key !== "transactionReference",
-      )
-    ) {
-      throw new BadRequestException("Invalid payment evidence multipart fields");
-    }
-    const file = fileEntries[0];
-    const reference = referenceEntries[0];
-    if (reference !== undefined && typeof reference !== "string") {
-      throw new BadRequestException("The transaction reference is invalid");
-    }
-
-    try {
-      const data = await this.paymentEvidence.upload(
-        orderId,
-        actor,
-        {
-          originalFileName: file.name,
-          contentType: file.type,
-          bytes: new Uint8Array(await file.arrayBuffer()),
-        },
-        reference,
-      );
-      return { data };
-    } catch (error) {
-      if (error instanceof PaymentEvidenceValidationError) {
-        throw new BadRequestException(error.message);
-      }
-      if (error instanceof PaymentEvidenceAccessError) {
-        throw new NotFoundException(error.message);
-      }
-      if (error instanceof PaymentEvidenceConflictError) {
-        throw new ConflictException(error.message);
-      }
-      throw error;
-    }
+    @Headers("x-orders-internal-token") token: string | undefined,
+    @Headers("x-authenticated-customer-id") customerId: string | undefined,
+    @Headers("x-authenticated-role") role: string | undefined,
+    @Body() body: any,
+  ): Promise<unknown> {
+    this.trusted(token, customerId, role);
+    if (role !== "CUSTOMER" || !this.evidence) throw new ForbiddenException();
+    const file = body.file;
+    const bytes = file?.data ?? file?.toBuffer?.() ?? Buffer.alloc(0);
+    const result = await this.evidence.upload(orderId, { customerId, role }, {
+      originalFileName: file.filename ?? file.name,
+      contentType: file.mimetype ?? file.encoding,
+      bytes: Buffer.isBuffer(bytes) ? new Uint8Array(bytes) : bytes,
+    }, body.transactionReference?.value ?? body.transactionReference ?? null);
+    return { data: result };
   }
 
   @Get("orders/:orderId/payment-evidence")
-  @UseGuards(GatewayInternalGuard)
   @Header("Cache-Control", "private, no-store")
   @Header("X-Content-Type-Options", "nosniff")
-  public async getPaymentEvidence(
+  public async openEvidence(
     @Param("orderId") orderId: string,
-    @Req() request: InternalRequest,
-  ): Promise<StreamableFile> {
-    const actor = getPaymentEvidenceActor(request);
-    try {
-      const { metadata, stream } = await this.paymentEvidence.open(orderId, actor);
-      const disposition = `attachment; filename*=UTF-8''${encodeURIComponent(metadata.originalFileName)}`;
-      return new StreamableFile(stream, {
-        type: metadata.contentType,
-        length: metadata.sizeBytes,
-        disposition,
-      });
-    } catch (error) {
-      if (error instanceof PaymentEvidenceAccessError) {
-        throw new NotFoundException(error.message);
-      }
-      throw error;
-    }
-  }
-
-  @Get("admin/payments")
-  @UseGuards(GatewayInternalGuard)
-  @Header("Cache-Control", "private, no-store")
-  public async listPendingPayments(
-    @Req() request: InternalRequest,
-  ): Promise<{
-    data: Awaited<ReturnType<PaymentEvidenceService["listPendingForAdmin"]>>;
-  }> {
-    const actor = getStoreAdminActor(request);
-    return { data: await this.paymentEvidence.listPendingForAdmin(actor) };
-  }
-
-  @Get("admin/payments/:orderId")
-  @UseGuards(GatewayInternalGuard)
-  @Header("Cache-Control", "private, no-store")
-  public async getPendingPayment(
-    @Param("orderId") orderId: string,
-    @Req() request: InternalRequest,
-  ): Promise<{
-    data: Awaited<ReturnType<PaymentEvidenceService["getPendingForAdmin"]>>;
-  }> {
-    const actor = getStoreAdminActor(request);
-    try {
-      return {
-        data: await this.paymentEvidence.getPendingForAdmin(orderId, actor),
-      };
-    } catch (error) {
-      if (error instanceof PaymentEvidenceAccessError) {
-        throw new NotFoundException(error.message);
-      }
-      throw error;
-    }
-  }
-
-  @Post("admin/payments/:orderId/approve")
-  @UseGuards(GatewayInternalGuard)
-  @Header("Cache-Control", "private, no-store")
-  public async approvePayment(
-    @Param("orderId") orderId: string,
-    @Req() request: InternalRequest,
-  ): Promise<{ data: NonNullable<Awaited<ReturnType<OrdersService["getOrderById"]>>> }> {
-    const actor = getStoreAdminActor(request);
-    try {
-      const { result, order } = await this.orders.approvePayment(orderId, actor.customerId);
-      if (result === "not-found" || !order) {
-        throw new NotFoundException("Payment review was not found");
-      }
-      if (result === "not-pending" || result === "decision-conflict") {
-        throw new ConflictException("Payment is no longer eligible for approval");
-      }
-      return { data: order };
-    } catch (error) {
-      if (error instanceof InvalidOrderError) {
-        throw new BadRequestException(error.message);
-      }
-      throw error;
-    }
+    @Headers("x-orders-internal-token") token: string | undefined,
+    @Headers("x-authenticated-customer-id") customerId: string | undefined,
+    @Headers("x-authenticated-role") role: string | undefined,
+    @Res() reply: FastifyReply,
+  ): Promise<void> {
+    this.trusted(token, customerId, role);
+    const opened = await this.evidence.open(orderId, { customerId, role }, "inline");
+    reply
+      .header("cache-control", "private, no-store")
+      .header("x-content-type-options", "nosniff")
+      .header("content-disposition", `attachment; filename="${opened.metadata.originalFileName.replace(/["\\r\\n]/g, "_")}"`)
+      .header("content-type", opened.metadata.contentType)
+      .send(opened.stream);
   }
 
   @Get("admin/payments/:orderId/evidence")
-  @UseGuards(GatewayInternalGuard)
   @Header("Cache-Control", "private, no-store")
   @Header("X-Content-Type-Options", "nosniff")
-  public async getPendingPaymentEvidence(
+  public async adminEvidence(
     @Param("orderId") orderId: string,
-    @Req() request: InternalRequest,
-  ): Promise<StreamableFile> {
-    const actor = getStoreAdminActor(request);
-    try {
-      const { metadata, stream } = await this.paymentEvidence.open(orderId, actor);
-      const disposition = `attachment; filename*=UTF-8''${encodeURIComponent(metadata.originalFileName)}`;
-      return new StreamableFile(stream, {
-        type: metadata.contentType,
-        length: metadata.sizeBytes,
-        disposition,
-      });
-    } catch (error) {
-      if (error instanceof PaymentEvidenceAccessError) {
-        throw new NotFoundException(error.message);
-      }
-      throw error;
+    @Headers("x-orders-internal-token") token: string | undefined,
+    @Headers("x-authenticated-customer-id") customerId: string | undefined,
+    @Headers("x-authenticated-role") role: string | undefined,
+    @Res() reply: FastifyReply,
+  ): Promise<void> {
+    this.trusted(token, customerId, role);
+    if (role !== "STORE_ADMIN") throw new ForbiddenException();
+    const opened = await this.evidence.open(orderId, { customerId, role }, "attachment");
+    reply
+      .header("cache-control", "private, no-store")
+      .header("x-content-type-options", "nosniff")
+      .header("content-disposition", `attachment; filename="${opened.metadata.originalFileName.replace(/["\\r\\n]/g, "_")}"`)
+      .header("content-type", opened.metadata.contentType)
+      .send(opened.stream);
+  }
+
+  @Post("admin/payments/:orderId/approve")
+  @Header("Cache-Control", "private, no-store")
+  public async approvePayment(
+    @Param("orderId") orderId: string,
+    @Headers("x-orders-internal-token") token: string | undefined,
+    @Headers("x-authenticated-customer-id") customerId: string | undefined,
+    @Headers("x-authenticated-role") role: string | undefined,
+  ): Promise<unknown> {
+    this.trusted(token, customerId, role);
+    if (role !== "STORE_ADMIN") throw new ForbiddenException();
+    const result = await this.orders.approvePayment(orderId, customerId!);
+    return { data: result && typeof result === "object" && "order" in result ? result.order : result };
+  }
+
+  @Post("admin/payments/:orderId/reject")
+  @Header("Cache-Control", "private, no-store")
+  public async rejectPayment(
+    @Param("orderId") orderId: string,
+    @Headers("x-orders-internal-token") token: string | undefined,
+    @Headers("x-authenticated-customer-id") customerId: string | undefined,
+    @Headers("x-authenticated-role") role: string | undefined,
+    @Body() body: { reason?: string },
+  ): Promise<unknown> {
+    this.trusted(token, customerId, role);
+    if (role !== "STORE_ADMIN") throw new ForbiddenException();
+    if (typeof body.reason !== "string" || body.reason.trim().length === 0) {
+      throw new BadRequestException("Payment rejection reason is required");
     }
+    const result = await this.orders.rejectPayment(orderId, customerId!, body.reason.trim());
+    return { data: result && typeof result === "object" && "order" in result ? result.order : result };
+  }
+
+  @Get("admin/payments")
+  @Header("Cache-Control", "private, no-store")
+  public async listPayments(
+    @Headers("x-orders-internal-token") token: string | undefined,
+    @Headers("x-authenticated-customer-id") customerId: string | undefined,
+    @Headers("x-authenticated-role") role: string | undefined,
+  ): Promise<unknown> {
+    this.trusted(token, customerId, role);
+    if (role !== "STORE_ADMIN") throw new ForbiddenException();
+    return { data: await this.evidence.listPendingForAdmin({ customerId: customerId!, role }) };
+  }
+
+  @Get("admin/payments/:orderId")
+  @Header("Cache-Control", "private, no-store")
+  public async getPayment(
+    @Param("orderId") orderId: string,
+    @Headers("x-orders-internal-token") token: string | undefined,
+    @Headers("x-authenticated-customer-id") customerId: string | undefined,
+    @Headers("x-authenticated-role") role: string | undefined,
+  ): Promise<unknown> {
+    this.trusted(token, customerId, role);
+    if (role !== "STORE_ADMIN") throw new ForbiddenException();
+    return { data: await this.evidence.getPendingForAdmin(orderId, { customerId: customerId!, role }) };
   }
 
   @Post("admin/payments/:orderId/evidence")
-  @UseGuards(GatewayInternalGuard)
   @Header("Cache-Control", "private, no-store")
-  public async deleteAdminPaymentEvidence(
+  public async deleteAdminEvidence(
     @Param("orderId") orderId: string,
-    @Body() body: unknown,
-    @Req() request: InternalRequest,
-  ): Promise<{
-    data: Awaited<ReturnType<PaymentEvidenceService["deleteAfterAdminDownload"]>>;
-  }> {
-    const actor = getStoreAdminActor(request);
-    const confirmedDownloaded =
-      typeof body === "object" && body !== null && !Array.isArray(body) &&
-      "confirmDownloaded" in body
-        ? body.confirmDownloaded
-        : undefined;
+    @Headers("x-orders-internal-token") token: string | undefined,
+    @Headers("x-authenticated-customer-id") customerId: string | undefined,
+    @Headers("x-authenticated-role") role: string | undefined,
+    @Body() body: { confirmDownloaded?: boolean },
+  ): Promise<unknown> {
+    this.trusted(token, customerId, role);
+    if (role !== "STORE_ADMIN") throw new ForbiddenException();
     try {
       return {
-        data: await this.paymentEvidence.deleteAfterAdminDownload(
+        data: await this.evidence.deleteAfterAdminDownload(
           orderId,
-          actor,
-          confirmedDownloaded,
+          { customerId: customerId!, role },
+          body.confirmDownloaded,
         ),
       };
     } catch (error) {
-      if (error instanceof PaymentEvidenceAccessError) {
-        throw new NotFoundException(error.message);
-      }
-      if (error instanceof PaymentEvidenceRetentionConflictError) {
-        throw new ConflictException(error.message);
-      }
-      if (error instanceof PaymentEvidenceValidationError) {
+      if (error instanceof Error && /confirm/i.test(error.message)) {
         throw new BadRequestException(error.message);
       }
       throw error;
@@ -546,63 +325,39 @@ export class OrdersController {
   }
 
   @Post("admin/payment-evidence/:orderId/legal-hold")
-  @UseGuards(GatewayInternalGuard)
   @Header("Cache-Control", "private, no-store")
-  public async placePaymentEvidenceLegalHold(
+  public async placeLegalHold(
     @Param("orderId") orderId: string,
-    @Body() body: unknown,
-    @Req() request: InternalRequest,
-  ): Promise<{
-    data: Awaited<ReturnType<PaymentEvidenceService["placeLegalHold"]>>;
-  }> {
-    const actor = getStoreAdminActor(request);
-    const reason =
-      typeof body === "object" && body !== null && !Array.isArray(body) && "reason" in body
-        ? body.reason
-        : undefined;
+    @Headers("x-orders-internal-token") token: string | undefined,
+    @Headers("x-authenticated-customer-id") customerId: string | undefined,
+    @Headers("x-authenticated-role") role: string | undefined,
+    @Body() body: { reason?: string },
+  ): Promise<unknown> {
+    this.trusted(token, customerId, role);
+    if (role !== "STORE_ADMIN") throw new ForbiddenException();
     try {
-      return { data: await this.paymentEvidence.placeLegalHold(orderId, actor, reason) };
+      return { data: await this.evidence.placeLegalHold(orderId, { customerId: customerId!, role }, body.reason) };
     } catch (error) {
-      if (error instanceof PaymentEvidenceAccessError) {
-        throw new NotFoundException(error.message);
-      }
-      if (error instanceof PaymentEvidenceRetentionConflictError) {
-        throw new ConflictException(error.message);
-      }
-      if (error instanceof PaymentEvidenceValidationError) {
-        throw new BadRequestException(error.message);
-      }
+      if (error instanceof Error && /reason/i.test(error.message)) throw new BadRequestException(error.message);
       throw error;
     }
   }
 
   @Delete("admin/payment-evidence/:orderId/legal-hold")
-  @UseGuards(GatewayInternalGuard)
   @Header("Cache-Control", "private, no-store")
-  public async releasePaymentEvidenceLegalHold(
+  public async releaseLegalHold(
     @Param("orderId") orderId: string,
-    @Body() body: unknown,
-    @Req() request: InternalRequest,
-  ): Promise<{
-    data: Awaited<ReturnType<PaymentEvidenceService["releaseLegalHold"]>>;
-  }> {
-    const actor = getStoreAdminActor(request);
-    const reason =
-      typeof body === "object" && body !== null && !Array.isArray(body) && "reason" in body
-        ? body.reason
-        : undefined;
+    @Headers("x-orders-internal-token") token: string | undefined,
+    @Headers("x-authenticated-customer-id") customerId: string | undefined,
+    @Headers("x-authenticated-role") role: string | undefined,
+    @Body() body: { reason?: string },
+  ): Promise<unknown> {
+    this.trusted(token, customerId, role);
+    if (role !== "STORE_ADMIN") throw new ForbiddenException();
     try {
-      return { data: await this.paymentEvidence.releaseLegalHold(orderId, actor, reason) };
+      return { data: await this.evidence.releaseLegalHold(orderId, { customerId: customerId!, role }, body.reason) };
     } catch (error) {
-      if (error instanceof PaymentEvidenceAccessError) {
-        throw new NotFoundException(error.message);
-      }
-      if (error instanceof PaymentEvidenceRetentionConflictError) {
-        throw new ConflictException(error.message);
-      }
-      if (error instanceof PaymentEvidenceValidationError) {
-        throw new BadRequestException(error.message);
-      }
+      if (error instanceof Error && /reason/i.test(error.message)) throw new BadRequestException(error.message);
       throw error;
     }
   }

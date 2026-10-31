@@ -6,14 +6,14 @@ Este documento describe primero el estado implementado y verificable en el repos
 
 La fuente de evidencia es:
 
-- `apps/web` para storefront, API routes de sesión, checkout y revisión administrativa de pagos;
+- `apps/web` para storefront, carrito, login, registro y checkout;
 - `services/api-gateway` para la entrada HTTP pública y la composición;
 - `services/identity-service` para autenticación, sesión y perfiles de cliente;
-- `services/catalog-service` para productos, disponibilidad y reservas atómicas de inventario;
-- `services/orders-service` para el ciclo de vida del pedido, outboxes y revisión/retención de comprobantes;
+- `services/catalog-service` para productos y stock;
+- `services/orders-service` para la persistencia y las reglas del pedido;
 - `services/notification-worker` para deduplicación y procesamiento de `OrderCreated.v1`;
 - los schemas Prisma y las migraciones de cada servicio para el modelo de datos;
-- `CONTRIBUTING.md` y `docs/STACK_OPERATIONS.md` para el runtime local.
+- los scripts de `scripts/` para el runtime local.
 
 ## 2. Estado implementado
 
@@ -21,8 +21,7 @@ La fuente de evidencia es:
 
 ```mermaid
 flowchart LR
-    Customer[Cliente] --> Web[apps/web\nNext.js storefront]
-    StoreAdmin[Administrador de tienda] --> Web
+    Customer[Cliente registrado] --> Web[apps/web\nNext.js storefront]
     Web --> Gateway[API Gateway\n:3000]
     Gateway --> Identity[Identity Service\n:3040]
     Gateway --> Catalog[Catalog Service\n:3020]
@@ -34,7 +33,7 @@ flowchart LR
     Worker --> NotificationDb[(Notifications PostgreSQL\n:5433)]
 ```
 
-El panel `/admin/payments` permite revisar comprobantes y resolver pagos; no existe un adaptador de WhatsApp ni un panel de administración del catálogo.
+No existe actualmente un panel administrativo ni un adaptador de WhatsApp en este monorepo.
 
 ### 2.1.1 Mapa de contextos DDD actual
 
@@ -42,20 +41,19 @@ El panel `/admin/payments` permite revisar comprobantes y resolver pagos; no exi
 flowchart LR
     Customer[Cliente autenticado\ncontexto de identidad]
     IdentityCtx[Identidad\nautenticación y sesión]
-    CatalogCtx[Catálogo\nproductos, disponibilidad y reservas]
-    OrdersCtx[Pedidos\nreservas, pagos, cancelaciones y outboxes]
+    CatalogCtx[Catálogo\nproductos y stock]
+    OrdersCtx[Pedidos\nvalidación, importes, persistencia e idempotencia]
     NotificationCtx[Notificaciones\neventId y entrega]
 
     Customer -->|registro y login| IdentityCtx
-    Customer -->|consulta y checkout| CatalogCtx
-    Customer -->|customerId verificado + líneas| OrdersCtx
-    IdentityCtx -->|GET /auth/me verifica identidad y rol| Gateway
-    Gateway -->|claims verificadas + token interno| OrdersCtx
-    OrdersCtx -->|OrderCreated.v1 por HTTP desde outbox| NotificationCtx
-    OrdersCtx -->|RESERVE / COMMIT / RELEASE por outbox| CatalogCtx
+    Customer -->|consulta catálogo| CatalogCtx
+    Customer -->|checkout por API Gateway| OrdersCtx
+    IdentityCtx -->|Gateway verifica JWT y pasa customerId| OrdersCtx
+    OrdersCtx -->|OrderCreated.v1 por HTTP + outbox| NotificationCtx
+    OrdersCtx -.->|productId y snapshot de línea| CatalogCtx
 ```
 
-Los servicios se comunican mediante HTTP; las bases de datos no se comparten. Gateway valida identidad y rol con Identity y reenvía el contexto verificado mediante el canal interno autenticado. Orders persiste snapshots de producto y comandos durables; Catálogo es autoridad de la reserva.
+La relación punteada representa una consulta HTTP del servicio de pedidos al catálogo para validar estado, SKU, precio y stock. El pedido almacena un snapshot de las líneas y no crea una foreign key entre bases de datos. El `customerId` que llega al servicio de pedidos está verificado por el servidor mediante `AuthMiddleware` en el gateway.
 
 ### 2.2 Componentes y ownership
 
@@ -68,16 +66,15 @@ flowchart TB
     Orders[orders-service]
     Worker[notification-worker]
     Contracts[packages/contracts]
-    IdentityDb[(Customer + RefreshToken + OwnerBootstrap)]
-    CatalogDb[(Product + InventoryReservation)]
-    OrdersDb[(Order + PaymentEvidence + Decisions + Outboxes)]
+    IdentityDb[(Customer + RefreshToken)]
+    CatalogDb[(Product)]
+    OrdersDb[(Order + OrderLine)]
     NotificationDb[(NotificationDelivery)]
 
-    Web -->|storefront, checkout y admin/payments| Gateway
-    Gateway -->|POST /auth/register\nPOST /auth/login\nPOST /auth/refresh\nPOST /auth/logout\nGET /auth/me| Identity
+    Web -->|POST /auth/register\nPOST /auth/login\nGET /catalog/products\nPOST /orders| Gateway
+    Gateway -->|POST /auth/register\nPOST /auth/login\nPOST /auth/refresh\nPOST /auth/logout\nGET /auth/me\nPOST /auth/verify-token| Identity
     Gateway -->|GET /products| Catalog
-    Gateway -->|pedidos, comprobantes y operaciones admin| Orders
-    Orders -->|RESERVE / COMMIT / RELEASE| Catalog
+    Gateway -->|POST /orders\nGET /orders/:orderId| Orders
     Orders -->|POST /events/order-created| Worker
     Web -.-> Contracts
     Identity --> IdentityDb
@@ -90,10 +87,11 @@ Ownership actual:
 
 | Área | Responsable | Evidencia |
 | --- | --- | --- |
-| Identidad, sesión y rol | `identity-service` | `services/identity-service/prisma/schema.prisma` |
-| Productos y reservas de inventario | `catalog-service` | `services/catalog-service/prisma/schema.prisma` |
-| Pedidos, comprobantes, decisiones, comandos y eventos outbox | `orders-service` | `services/orders-service/prisma/schema.prisma` |
-| Entrega idempotente con lease | `notification-worker` | `NotificationDelivery` y `eventId` único |
+| Identidad y sesión | `identity-service` | `services/identity-service/prisma/schema.prisma` |
+| Productos activos | `catalog-service` | `services/catalog-service/prisma/schema.prisma` |
+| Pedido y líneas | `orders-service` | `services/orders-service/prisma/schema.prisma` |
+| Outbox y reintentos de publicación | `orders-service` | `OrderEventOutbox`, `eventId` único y recuperación periódica |
+| Deduplicación de entrega | `notification-worker` | `NotificationDelivery` y `eventId` único |
 | Composición pública | `api-gateway` | `gateway.controller.ts` y `orders.service.ts` |
 | Checkout y autenticación web | `apps/web` | `catalog-shell.tsx`, `login/page.tsx` y `register/page.tsx` |
 
@@ -103,15 +101,8 @@ Ownership actual:
 | --- | --- | --- |
 | Gateway | `GET /healthz` | estado del gateway |
 | Gateway | `GET /catalog/products` | catálogo activo compuesto desde catálogo |
-| Gateway | `POST /orders` | valida JWT, exige `Idempotency-Key` y delega la creación |
-| Gateway | `GET /orders/:orderId` | recupera el pedido propio del cliente autenticado |
-| Gateway | `POST /orders/:orderId/cancel` | cancela un pedido elegible antes del comprobante |
-| Gateway | `POST /orders/:orderId/cancellation-request` | solicita cancelación para revisión administrativa |
-| Gateway | `POST /orders/:orderId/payment-evidence` | recibe el comprobante privado del cliente |
-| Gateway | `GET /admin/payments` | lista pagos pendientes para `STORE_ADMIN` |
-| Gateway | `POST /admin/payments/:orderId/approve` / `reject` | registra la decisión administrativa |
-| Gateway | `GET` / `POST /admin/payments/:orderId/evidence` | descarga o elimina la copia privada del comprobante |
-| Gateway | `/admin/cancellation-requests/*` | revisa solicitudes y registra resolución/reembolso externo |
+| Gateway | `POST /orders` | requiere JWT y `Idempotency-Key`; delega la creación y publicación al servicio de pedidos |
+| Gateway | `GET /orders/:orderId` | requiere JWT y solo retorna pedidos del cliente autenticado |
 | Gateway | `POST /auth/register` | proxy hacia identity-service, crea cuenta |
 | Gateway | `POST /auth/login` | proxy hacia identity-service, devuelve tokens |
 | Gateway | `POST /auth/refresh` | proxy hacia identity-service, renueva access token |
@@ -123,18 +114,14 @@ Ownership actual:
 | Identity | `POST /auth/refresh` | valida refresh token opaco, emite nuevo JWT |
 | Identity | `POST /auth/logout` | invalida refresh token en DB |
 | Identity | `GET /auth/me` | retorna perfil del cliente desde JWT |
-| Catalog | `POST /internal/inventory/reservations` | reserva inventario de forma atómica e idempotente |
-| Catalog | `POST /internal/inventory/reservations/commit` | compromete una reserva al aprobar el pago |
-| Catalog | `POST /internal/inventory/reservations/release` | libera reserva al cancelar, vencer o rechazar |
+| Identity | `POST /auth/verify-token` | verifica JWT y retorna payload (uso interno del gateway) |
 | Catalog | `GET /healthz` | estado del catálogo |
 | Catalog | `GET /products` | productos activos ordenados por nombre |
 | Orders | `GET /healthz` | estado de pedidos |
-| Orders | `POST /orders` | persiste pedido, evento y comando de reserva en transacción |
-| Orders | `/orders/:orderId/payment-evidence` | carga y descarga evidencia según identidad/propiedad |
-| Orders | `/admin/payments/*` | cola, detalle, decisión y retención de evidencia para administradores |
-| Orders | `/admin/cancellation-requests/*` | revisión de cancelaciones y registro de gestión de reembolso |
+| Orders | `POST /orders` | valida líneas contra catálogo, calcula subtotal/envío/total, persiste en `PENDING` y devuelve el evento; requiere clave de idempotencia |
+| Orders | `GET /orders/:orderId` | recupera pedido, estado, importes y líneas |
 | Worker | `GET /healthz` | estado de notificaciones |
-| Worker | `POST /events/order-created` | reclama con lease, deduplica y procesa el evento |
+| Worker | `POST /events/order-created` | reclama, deduplica y procesa el evento |
 
 ### 2.3.1 Flujo de navegación implementado
 
@@ -148,25 +135,21 @@ flowchart LR
     Checkout -->|sin sesión activa| Login
     Checkout -->|carrito vacío| Cart
     Login -->|sin cuenta| Register
-    Admin[Administrador] --> Payments[Admin de pagos]
-    Payments --> Review[Revisión de comprobantes]
 ```
 
-El storefront y la revisión de pagos existen en `apps/web`. El administrador de tienda usa el rol `STORE_ADMIN`; no existe un editor administrativo de catálogo.
+Este es el flujo de cliente que existe hoy en `apps/web`. No se dibuja un flujo administrativo porque todavía no existe `Admin Console` en este proyecto.
 
 ### 2.4 Secuencia real de compra
 
 ```mermaid
 sequenceDiagram
     participant C as Cliente
-    participant W as Next.js API routes
+    participant W as Web
     participant G as API Gateway :3000
     participant ID as Identity :3040
     participant CAT as Catalog :3020
     participant ORD as Orders :3030
     participant N as Worker :3010
-    participant Admin as Administradora
-    participant ODB as Orders DB
     participant NDB as Notifications DB
 
     C->>W: abre catálogo
@@ -177,55 +160,32 @@ sequenceDiagram
     C->>W: login o registro
     W->>G: POST /auth/login
     G->>ID: POST /auth/login
-    ID-->>G: access token + refresh token
-    G-->>W: respuesta de autenticación
-    W-->>C: Set-Cookie httpOnly
-    C->>W: confirma carrito con cookie de sesión
+    ID-->>G: JWT (15 min) + refresh token
+    G-->>W: httpOnly cookie con tokens
+    C->>W: POST /api/orders (cookie httpOnly + Idempotency-Key UUID)
+    Note over W,G: El proxy Next.js lee la cookie y envía el access token como Authorization
     W->>G: POST /orders (Authorization: Bearer JWT)
-    G->>ID: GET /auth/me con el access token
-    ID-->>G: customerId, email y rol verificados
-    G->>ORD: POST /orders (customerId verificado)
-    ORD->>CAT: GET /products para validar producto y precio
+    G->>ID: POST /auth/verify-token
+    ID-->>G: payload del token verificado
+    G->>ORD: POST /orders (customerId verificado + Idempotency-Key)
+    ORD->>CAT: GET /products\nvalida producto, SKU, precio y stock disponible
     CAT-->>ORD: producto activo y disponibilidad
-    ORD->>ORD: valida payload y calcula subtotal, envío y total
-    ORD->>ODB: transacción: pedido, líneas, OrderEventOutbox y RESERVE PENDING
-    ORD->>CAT: worker de inventario envía RESERVE
-    CAT->>CAT: reserva stock de forma atómica
-    CAT-->>ORD: reserva confirmada
-    ORD->>ODB: actualiza estado AWAITING_PAYMENT_PROOF
-    ORD->>ODB: reclama evento con lease y token
+    ORD->>ORD: valida, calcula subtotal/envío/total y persiste pedido PENDING
+    ORD->>ORD: agrega evento al outbox
     ORD->>N: POST /events/order-created
-    alt worker envía o ya había enviado
-        N->>NDB: crea o reclama eventId con lease
-        N->>NDB: envía y marca SENT
-        N-->>ORD: sent o duplicate
-        ORD->>ODB: marca evento PUBLISHED
-    else worker ocupado, indisponible o timeout
-        N-->>ORD: 202 processing o error
-        ORD->>ODB: libera claim y agenda reintento con backoff
-    end
-    ORD-->>G: pedido persistido
-    G-->>W: orderId, total y evento
-    opt repetición del mismo checkout
-        W->>G: POST /orders con el mismo Idempotency-Key
-        G->>ID: verifica token y rol
-        G->>ORD: reenvía comando autenticado
-        ORD->>ODB: busca cliente + clave
-        ODB-->>ORD: pedido original
-        ORD-->>G: devuelve pedido sin crear otro evento
-        G-->>W: mismo orderId
-    end
-    C->>W: carga comprobante antes del vencimiento
-    W->>G: POST /orders/:orderId/payment-evidence
-    G->>ORD: persiste archivo privado y metadatos
-    ORD->>ODB: PAYMENT_REVIEW_PENDING
-    Admin->>W: revisa pago en /admin/payments
-    W->>G: POST /admin/payments/:orderId/approve o /reject
-    G->>ORD: registra decisión de STORE_ADMIN
-    ORD->>CAT: COMMIT si se aprueba; RELEASE si se rechaza
+    N->>NDB: crea eventId único
+    N->>NDB: marca entrega SENT
+    N-->>ORD: estado de notificación
+    ORD-->>G: orderId, estado e importes persistidos
+    G-->>W: resultado del pedido
+    W->>G: GET /orders/:orderId
+    G->>ID: verifica JWT
+    G->>ORD: GET /orders/:orderId
+    ORD-->>G: estado e importes persistidos
+    G-->>W: pedido propio del cliente
 ```
 
-La clave de idempotencia se conserva en `sessionStorage` durante reintentos del mismo carrito. `orders-service` guarda pedido, líneas, evento y comando de reserva en la transacción inicial. El outbox de inventario reintenta comandos durables e idempotentes; la reserva tiene vencimiento, y cancelar, vencer o rechazar libera unidades. Aprobar compromete la reserva. El outbox de eventos reintenta con backoff; la entrega es al menos una vez y `notification-worker` deduplica por `eventId`.
+`orders-service` es propietario de la creación del pedido, su clave de idempotencia y el outbox persistente. El pedido, sus líneas y el evento de outbox se guardan en una transacción PostgreSQL; la publicación HTTP al worker comienza después del commit. Si la publicación falla, el pedido sigue en `PENDING` y el servicio reintenta con backoff hasta ocho intentos; el checkout consulta el estado real y no presupone confirmación.
 
 ### 2.5 Modelo de datos implementado
 
@@ -237,29 +197,16 @@ erDiagram
         string name
         string phone
         string passwordHash
-        enum role
         datetime createdAt
         datetime updatedAt
-    }
-    PAYMENT_EVIDENCE_LEGAL_HOLD {
-        string id PK
-        string paymentEvidenceId FK
-        string setByCustomerId
-        string reason
-        datetime setAt
-        datetime releasedAt
     }
     REFRESH_TOKEN {
         string id PK
         string token UK
         string customerId FK
+        boolean revoked
         datetime expiresAt
         datetime createdAt
-    }
-    OWNER_BOOTSTRAP {
-        string id PK
-        string customerId FK
-        datetime grantedAt
     }
     PRODUCT {
         string id PK
@@ -268,36 +215,19 @@ erDiagram
         string description
         int priceCop
         int stock
-        int reservedStock
         boolean isActive
         datetime createdAt
         datetime updatedAt
     }
-    INVENTORY_RESERVATION {
-        string id PK
-        string orderId UK
-        string requestFingerprint
-        enum status
-        datetime expiresAt
-    }
-    INVENTORY_RESERVATION_LINE {
-        string id PK
-        string reservationId FK
-        string productId FK
-        int quantity
-    }
     ORDER {
         string id PK
         string orderId UK
+        string idempotencyKey UK
         string customerId
-        string idempotencyKey
-        string requestFingerprint
         int subtotalCop
         int deliveryFeeCop
         int totalCop
         string status
-        datetime reservationExpiresAt
-        datetime cancelRequestedAt
         datetime createdAt
         datetime updatedAt
     }
@@ -310,106 +240,60 @@ erDiagram
         int unitPriceCop
         string orderId FK
     }
-    PAYMENT_EVIDENCE {
-        string id PK
-        string orderId FK
-        string storageKey UK
-        string contentType
-        int sizeBytes
-        datetime retentionUntil
-        boolean legalHold
-        datetime deletedAt
-    }
-    PAYMENT_DECISION {
-        string id PK
-        string orderId FK
-        enum decision
-        string adminCustomerId
-        datetime decidedAt
-    }
-    INVENTORY_COMMAND_OUTBOX {
-        string commandId PK
-        string idempotencyKey UK
-        string orderId FK
-        enum commandType
-        enum status
-        int attemptCount
-        datetime nextAttemptAt
-    }
     NOTIFICATION_DELIVERY {
         string id PK
         string eventId UK
         enum status
         int attempts
-        string claimToken
-        datetime leaseExpiresAt
         string lastError
         datetime processedAt
         datetime createdAt
         datetime updatedAt
     }
     ORDER_EVENT_OUTBOX {
-        string eventId PK
+        string id PK
+        string eventId UK
         string eventType
         string aggregateId
         json payload
-        enum status
+        string status
         int attemptCount
         datetime nextAttemptAt
-        string claimToken
-        datetime leaseExpiresAt
+        datetime publishedAt
+        datetime createdAt
+        datetime updatedAt
     }
-    CUSTOMER ||--o{ REFRESH_TOKEN : has
-    CUSTOMER ||--o| OWNER_BOOTSTRAP : grants
-    PRODUCT ||--o{ INVENTORY_RESERVATION_LINE : reserved
-    INVENTORY_RESERVATION ||--|{ INVENTORY_RESERVATION_LINE : contains
+    CUSTOMER ||--|{ REFRESH_TOKEN : has
     ORDER ||--|{ ORDER_LINE : contains
-    ORDER ||--o| PAYMENT_EVIDENCE : receives
-    PAYMENT_EVIDENCE ||--o{ PAYMENT_EVIDENCE_LEGAL_HOLD : retained_by
-    ORDER ||--o| PAYMENT_DECISION : receives
-    ORDER ||--o{ INVENTORY_COMMAND_OUTBOX : schedules
 ```
 
-`productId` en `OrderLine` es una referencia de negocio almacenada como snapshot; no existe foreign key entre bases de catálogo y pedidos. `CUSTOMER`, `REFRESH_TOKEN` y `OWNER_BOOTSTRAP` pertenecen a Identity (`:5436`); las tablas de reservas pertenecen a Catalog (`:5434`); pagos y comandos pertenecen a Orders (`:5435`). En la base de Catálogo, `stock` es la existencia física y `reservedStock` la parte reservada; las respuestas públicas exponen las unidades disponibles. No hay tablas para direcciones, promociones, banners, variantes o edición administrativa de catálogo.
+`productId` en `OrderLine` es una referencia de negocio almacenada como snapshot; no existe foreign key entre la base de catálogo y la base de pedidos. `CUSTOMER` y `REFRESH_TOKEN` pertenecen a la base de datos de identidad (`:5436`), aislada de las demás. No hay tablas implementadas para direcciones, promociones, banners, variantes o administradores.
 
 ### 2.6 Estado del pedido implementado
 
 ```mermaid
 stateDiagram-v2
-    [*] --> RESERVING_INVENTORY: crear pedido
-    RESERVING_INVENTORY --> AWAITING_PAYMENT_PROOF: reserva confirmada
-    RESERVING_INVENTORY --> RESERVATION_FAILED: rechazo definitivo de inventario
-    AWAITING_PAYMENT_PROOF --> PAYMENT_REVIEW_PENDING: comprobante recibido
-    AWAITING_PAYMENT_PROOF --> CANCELLED: cancelación directa elegible
-    AWAITING_PAYMENT_PROOF --> RESERVATION_EXPIRED: vence sin comprobante
-    PAYMENT_REVIEW_PENDING --> PAYMENT_APPROVED_FINALIZING: aprobación administrativa
-    PAYMENT_APPROVED_FINALIZING --> CONFIRMED: reserva comprometida
-    PAYMENT_REVIEW_PENDING --> CANCELLED: rechazo administrativo
-    RESERVATION_FAILED --> [*]
-    RESERVATION_EXPIRED --> [*]
-    CANCELLED --> [*]
-    CONFIRMED --> [*]
+    [*] --> PENDING: createOrder válido
+    PENDING --> [*]: lectura actual
 ```
 
-El estado se persiste como texto en Orders y el dominio restringe las transiciones conocidas. Las solicitudes de cancelación tras subir comprobante son metadatos de revisión; no cambian inmediatamente el estado del pedido. El reembolso, si aplica, se gestiona fuera del sistema y su referencia queda registrada por el administrador.
+El estado inicial es `PENDING`. Aunque el tipo de dominio incluye `CONFIRMED` y `CANCELLED`, todavía no existen endpoints ni transiciones implementadas para confirmar o cancelar. La publicación del evento no cambia el estado del pedido. Estados adicionales como `READY_FOR_DISPATCH` y `COMPLETED` son objetivo, no comportamiento actual.
 
 ### 2.7 Evento `OrderCreated.v1`
 
 ```mermaid
 flowchart LR
-    Persisted[Pedido + evento confirmados en transacción] --> Pending[Outbox PENDING]
-    Pending --> Claim[claimToken + lease]
-    Claim --> Worker[Notification Worker por HTTP]
-    Worker --> Sent[NotificationDelivery SENT]
-    Worker --> Active[202 PROCESSING]
-    Worker --> Failed[fallo de entrega]
-    Active --> Retry[reintento al expirar lease]
-    Failed --> Backoff[backoff exponencial]
-    Backoff --> Pending
-    Claim --> Published[Outbox PUBLISHED]
+    Persisted[Order persistido] --> Outbox[OrderEventOutbox PENDING]
+    Outbox --> Event[OrderCreated.v1]
+    Event --> Worker[Notification Worker]
+    Worker --> Claim[eventId único]
+    Claim --> Sent[SENT]
+    Worker --> Failed[fallo de publicación]
+    Failed --> Retry[outbox reintenta con backoff]
+    Retry --> Worker
 ```
 
-El evento se construye y persiste en `services/orders-service`. El worker deduplica mediante `NotificationDelivery.eventId` y evita reclamar de nuevo mientras exista un lease vigente. El transporte sigue siendo HTTP; no se utiliza un broker externo.
+El evento se construye desde `services/orders-service/src/orders.service.ts`; el pedido, sus líneas y la fila outbox se persisten en una única transacción antes de cualquier envío HTTP. La outbox registra el payload, el número de intentos y el próximo reintento; tras ocho intentos fallidos requiere intervención. El worker deduplica mediante `NotificationDelivery.eventId`. No hay broker externo.
 
 ### 2.8 Despliegue local
 
@@ -420,19 +304,18 @@ flowchart TB
     Docker --> NDB[(notification-postgres :5433)]
     Docker --> ODB[(orders-postgres :5435)]
     Docker --> IDB[(identity-postgres :5436)]
-    Start[scripts/start-local-stack.ps1] -->|Docker Compose| CDB
-    Start -->|Docker Compose| NDB
-    Start -->|Docker Compose| ODB
-    Start -->|Docker Compose| IDB
-    Start -->|migraciones y procesos| Apps[Gateway + Identity + Catalog + Orders + Worker]
-    Web[apps/web\nNext dev separado] --> Gateway
+    Start[scripts/start-local-stack.ps1] -->|migraciones| CDB
+    Start -->|migraciones| NDB
+    Start -->|migraciones| ODB
+    Start -->|migraciones| IDB
+    Start -->|procesos independientes| Apps[Gateway + Identity + Catalog + Orders + Worker]
     Apps --> CDB
     Apps --> NDB
     Apps --> ODB
     Apps --> IDB
 ```
 
-El script inicia los cuatro PostgreSQL, aplica migraciones, lanza procesos backend independientes con logs en `.local-stack/logs`, espera los cinco `/healthz` y ejecuta un smoke test del catálogo. El storefront Next.js se inicia aparte. `scripts/stop-local-stack.ps1` detiene procesos que escuchan en los puertos predeterminados y baja los contenedores: verifica primero los PID, especialmente si otro workspace de MileShop está activo.
+El script inicia migraciones, lanza procesos independientes con logs en `.local-stack/logs`, espera los cinco `/healthz` y ejecuta el smoke test del catálogo. `scripts/stop-local-stack.ps1` detiene listeners y Postgres.
 
 ### 2.9 Pipeline de CI implementado
 
@@ -446,22 +329,20 @@ flowchart LR
     Lint --> Test[npm run test]
     Test --> Build[npm run build]
     Build --> Compose[docker compose config]
-    Compose --> Stack[Compose + migraciones + seed]
-    Stack --> Smoke[servicios + compra autenticada + deduplicación]
-    Smoke --> Green[release-quality verde]
+    Compose --> Green[release-quality verde]
 ```
 
-La pipeline real está en `.github/workflows/ci.yml`. Además de calidad y compilación, levanta una stack efímera y verifica el flujo de compra autenticado con un cliente sintético. No despliega a cloud ni promueve automáticamente una release.
+La pipeline real está en `.github/workflows/ci.yml`. Valida calidad y compilación, pero todavía no despliega a cloud ni promueve automáticamente una release.
 
 ## 3. Diseño objetivo pendiente
 
 Estos elementos pertenecen al producto planificado y no deben aparecer en los diagramas de estado actual hasta que exista código, schema, contrato y prueba:
 
-- administración editorial del catálogo;
+- panel administrativo y ownership editorial;
 - promociones, banners, notas, categorías y variantes;
-- preparación de despacho y finalización logística del pedido;
+- estados avanzados del pedido y sus transiciones;
 - adaptador real de WhatsApp;
-- broker externo (el productor ya dispone de outbox transaccional y usa HTTP);
+- broker externo;
 - despliegue remoto, observabilidad y backup productivos.
 
 ## 4. Matriz de trazabilidad documental

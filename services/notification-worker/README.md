@@ -1,16 +1,16 @@
 # Notification Worker
 
-Servicio independiente que recibe `OrderCreated.v1`, registra entregas en su PostgreSQL y deduplica por `eventId`. El adaptador externo de notificación todavía no está implementado; por ahora, el worker registra el evento de forma estructurada.
+Servicio independiente que recibe `OrderCreated.v1`, registra entregas en su PostgreSQL y deduplica por `eventId`. Admite un destino HTTP genérico cuando se configura el modo `webhook`; no integra aún un proveedor real de WhatsApp o correo.
 
-## Entrega y recuperación
+## Configuración de entrega
 
-- Una reclamación `PROCESSING` tiene un lease de 30 segundos y un token exclusivo.
-- Un evento ya enviado responde como duplicado; una entrega aún activa responde `202 Accepted` para que el productor la reintente después.
-- Las reclamaciones vencidas y fallidas se pueden volver a procesar; solo el token vigente puede confirmar o fallar una entrega.
-- La entrega entre servicios es al menos una vez. Cualquier futuro proveedor externo debe aceptar `eventId` como clave idempotente para cubrir fallos después de enviar y antes de persistir `SENT`.
+- `NOTIFICATION_SENDER_MODE=webhook` requiere `NOTIFICATION_WEBHOOK_URL`; `NOTIFICATION_WEBHOOK_SECRET` es opcional y se envía en `x-notification-secret`.
+- `NOTIFICATION_SENDER_MODE=log` registra el evento y lo marca como procesado. El stack local lo selecciona explícitamente para que el smoke test no dependa de un proveedor externo; no debe usarse como entrega productiva.
+- El modo por defecto es `webhook`. Si falta su URL o el modo no es reconocido, el worker falla al iniciar en vez de aceptar eventos que no puede entregar.
 
 Antes de activar tráfico productivo debe completar:
 
-- adaptador externo de notificación;
+- broker o transporte asíncrono definido y health check;
+- adaptador de proveedor de notificación;
 - pruebas de contrato e integracion;
 - logs estructurados, metricas y rollback.

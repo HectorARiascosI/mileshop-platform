@@ -9,6 +9,7 @@ Desde la raiz del repositorio:
 ```powershell
 $env:CATALOG_SERVICE_URL = "http://localhost:3020"
 $env:ORDERS_SERVICE_URL = "http://localhost:3030"
+$env:IDENTITY_SERVICE_URL = "http://localhost:3040"
 npm run start:dev --workspace @mileshop/api-gateway
 ```
 
@@ -17,25 +18,18 @@ Variables:
 - `PORT`: puerto HTTP del gateway, por defecto `3000`.
 - `CATALOG_SERVICE_URL`: URL interna de `catalog-service`, por defecto `http://localhost:3020`.
 - `ORDERS_SERVICE_URL`: URL interna de `orders-service`, por defecto `http://localhost:3030`.
+- `IDENTITY_SERVICE_URL`: URL interna de `identity-service`, por defecto `http://localhost:3040`.
 
-## Autenticación y sesión
+Endpoints iniciales:
 
-Endpoints de identidad expuestos por el gateway:
-
+- `GET /healthz`
+- `GET /catalog/products`
+- `POST /orders` (requiere JWT y el encabezado `Idempotency-Key`)
+- `GET /orders/:orderId` (requiere JWT; oculta pedidos de otros clientes)
 - `POST /auth/register`
 - `POST /auth/login`
 - `POST /auth/refresh`
 - `POST /auth/logout`
 - `GET /auth/me`
 
-`POST /orders` valida el access token consultando `identity-service`. Un token ausente, inválido o expirado produce `401 Unauthorized`. Si identidad no responde, devuelve un error de servidor o entrega una respuesta inválida, el gateway responde `503 Service Unavailable`; una interrupción de identidad no debe tratarse como si el cliente hubiera cerrado sesión.
-
-La aplicación web guarda access y refresh tokens en cookies `httpOnly`. `GET /api/auth/me` intenta renovar la sesión si el access token expiró; solo elimina las cookies cuando identidad rechaza el refresh token con `401`. Errores de red y respuestas de servidor conservan las cookies para permitir reintentar.
-
-Endpoints iniciales:
-
-- `GET /healthz`
-- `GET /catalog/products`
-- `POST /orders`
-
-`POST /orders` exige autenticación y `Idempotency-Key` UUID. El gateway toma `customerId` del token validado, valida la forma de las líneas y reenvía la clave al servicio de pedidos. El gateway no publica directamente eventos; `orders-service` los guarda junto al pedido y administra la entrega outbox.
+El gateway verifica la sesión, obtiene el `customerId` de la identidad validada y lo pasa a `orders-service`; nunca acepta un `customerId` del cuerpo como autoridad. El servicio de pedidos calcula y persiste los importes, el estado y la clave idempotente. La consulta de un pedido valida su propietario antes de devolverlo.
