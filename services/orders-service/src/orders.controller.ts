@@ -3,7 +3,9 @@ import {
   Body,
   Controller,
   Get,
+  Headers,
   Inject,
+  HttpException,
   NotFoundException,
   Param,
   Post,
@@ -25,13 +27,30 @@ export class OrdersController {
     return { status: "ok" };
   }
 
+  @Get("readyz")
+  public readiness(): { status: "ready" } {
+    return { status: "ready" };
+  }
+
   @Post("orders")
-  public async createOrder(@Body() body: CreateOrderInput): Promise<{ data: Awaited<ReturnType<OrdersService["createOrder"]>> }> {
+  public async createOrder(
+    @Body() body: Omit<CreateOrderInput, "idempotencyKey">,
+    @Headers("idempotency-key") idempotencyKey: string | undefined,
+  ): Promise<{ data: Awaited<ReturnType<OrdersService["createOrder"]>> }> {
     try {
-      return { data: await this.orders.createOrder(body) };
+      return {
+        data: await this.orders.createOrder({
+          ...body,
+          idempotencyKey: idempotencyKey ?? "",
+        }),
+      };
     } catch (error) {
       if (error instanceof CatalogUnavailableError) {
         throw new ServiceUnavailableException(error.message);
+      }
+
+      if (error instanceof HttpException) {
+        throw error;
       }
 
       throw new BadRequestException(error instanceof Error ? error.message : "Invalid order payload");
@@ -39,7 +58,9 @@ export class OrdersController {
   }
 
   @Get("orders/:orderId")
-  public async getOrder(@Param("orderId") orderId: string): Promise<{ data: NonNullable<Awaited<ReturnType<OrdersService["getOrderById"]>>> }> {
+  public async getOrder(
+    @Param("orderId") orderId: string,
+  ): Promise<{ data: NonNullable<Awaited<ReturnType<OrdersService["getOrderById"]>>> }> {
     const result = await this.orders.getOrderById(orderId);
 
     if (result === null) {

@@ -1,9 +1,16 @@
 import type { CreateOrderCommand, OrderLine, OrderStatus } from "./orders.types.js";
 
+export const FREE_DELIVERY_THRESHOLD_COP = 150_000;
+export const MINIMUM_DELIVERY_FEE_COP = 12_000;
+export const DELIVERY_FEE_RATE = 0.08;
+
 export type OrderRecord = {
   id: string;
   orderId: string;
   customerId: string;
+  idempotencyKey: string;
+  subtotalCop: number;
+  deliveryFeeCop: number;
   totalCop: number;
   status: OrderStatus;
   createdAt: Date;
@@ -27,10 +34,14 @@ export class OrderDomain {
     }
 
     const now = new Date();
-    const totalCop = normalizedLines.reduce<number>(
+    const subtotalCop = normalizedLines.reduce<number>(
       (sum: number, line: CreateOrderCommand["lines"][number]) => sum + line.unitPriceCop * line.quantity,
       0,
     );
+    const deliveryFeeCop =
+      subtotalCop >= FREE_DELIVERY_THRESHOLD_COP
+        ? 0
+        : Math.max(MINIMUM_DELIVERY_FEE_COP, Math.round(subtotalCop * DELIVERY_FEE_RATE));
 
     const orderId = `order-${crypto.randomUUID()}`;
 
@@ -38,7 +49,10 @@ export class OrderDomain {
       id: crypto.randomUUID(),
       orderId,
       customerId: command.customerId,
-      totalCop,
+      idempotencyKey: command.idempotencyKey,
+      subtotalCop,
+      deliveryFeeCop,
+      totalCop: subtotalCop + deliveryFeeCop,
       status: "PENDING",
       createdAt: now,
       updatedAt: now,
@@ -57,6 +71,8 @@ export class OrderDomain {
     id: string;
     orderId: string;
     customerId: string;
+    subtotalCop: number;
+    deliveryFeeCop: number;
     totalCop: number;
     status: OrderStatus;
     createdAt: string;
@@ -67,6 +83,8 @@ export class OrderDomain {
       id: record.id,
       orderId: record.orderId,
       customerId: record.customerId,
+      subtotalCop: record.subtotalCop,
+      deliveryFeeCop: record.deliveryFeeCop,
       totalCop: record.totalCop,
       status: record.status,
       createdAt: record.createdAt.toISOString(),

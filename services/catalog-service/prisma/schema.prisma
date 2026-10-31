@@ -21,3 +21,41 @@ model Product {
 
   @@index([isActive, name])
 }
+
+model InventoryReservation {
+  id           String                     @id @default(cuid())
+  orderId      String                     @unique
+  requestLines Json
+  status       String                     @default("RESERVED")
+  createdAt    DateTime                   @default(now())
+  items        InventoryReservationLine[]
+  movements    InventoryMovement[]
+
+  @@index([status, createdAt])
+}
+
+model InventoryReservationLine {
+  id             String               @id @default(cuid())
+  reservationId  String
+  productId      String
+  sku            String
+  name           String
+  quantity       Int
+  unitPriceCop   Int
+  reservation    InventoryReservation @relation(fields: [reservationId], references: [id], onDelete: Cascade)
+
+  @@unique([reservationId, productId])
+}
+
+model InventoryMovement {
+  id             String               @id @default(cuid())
+  reservationId  String
+  productId      String
+  movementType   String
+  quantityDelta  Int
+  createdAt      DateTime             @default(now())
+  reservation    InventoryReservation @relation(fields: [reservationId], references: [id], onDelete: Restrict)
+
+  @@unique([reservationId, productId, movementType])
+  @@index([productId, createdAt])
+}

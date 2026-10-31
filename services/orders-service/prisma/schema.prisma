@@ -9,27 +9,63 @@ datasource db {
 }
 
 model Order {
-  id        String      @id @default(cuid())
-  orderId   String      @unique
-  customerId String
-  totalCop  Int
-  status    String      @default("PENDING")
-  createdAt DateTime    @default(now())
-  updatedAt DateTime    @updatedAt
-  lines     OrderLine[]
+  id              String      @id @default(cuid())
+  orderId         String      @unique
+  idempotencyKey  String      @unique
+  customerId      String
+  subtotalCop     Int
+  deliveryFeeCop  Int
+  totalCop        Int
+  status          String      @default("PENDING")
+  createdAt       DateTime    @default(now())
+  updatedAt       DateTime    @updatedAt
+  lines           OrderLine[]
 
   @@index([customerId, createdAt])
 }
 
 model OrderLine {
-  id          String @id @default(cuid())
-  productId   String
-  sku         String
-  name        String
-  quantity    Int
+  id           String @id @default(cuid())
+  productId    String
+  sku          String
+  name         String
+  quantity     Int
   unitPriceCop Int
-  order       Order  @relation(fields: [orderId], references: [id])
-  orderId     String
+  order        Order  @relation(fields: [orderId], references: [id])
+  orderId      String
 
   @@index([orderId, productId])
+}
+
+model OrderEventOutbox {
+  id            String    @id @default(cuid())
+  eventId       String    @unique
+  eventType     String
+  aggregateId   String
+  occurredAt    DateTime
+  payload       Json
+  status        String    @default("PENDING")
+  attemptCount  Int       @default(0)
+  nextAttemptAt DateTime  @default(now())
+  lastError     String?
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+  publishedAt   DateTime?
+
+  @@index([status, nextAttemptAt, createdAt])
+}
+
+model ReservationIntent {
+  intentId      String   @id
+  orderId       String   @unique
+  customerId    String
+  idempotencyKey String  @unique
+  status        String   @default("PENDING")
+  lines         Json
+  payload       Json
+  createdAt     DateTime @default(now())
+  nextAttemptAt DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  @@index([status, nextAttemptAt, createdAt])
 }

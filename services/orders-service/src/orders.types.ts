@@ -10,6 +10,7 @@ export type OrderLineInput = {
 
 export type CreateOrderCommand = {
   customerId: string;
+  idempotencyKey: string;
   lines: OrderLineInput[];
 };
 
@@ -24,13 +25,37 @@ export type OrderLine = {
   unitPriceCop: number;
 };
 
+export type OrderCreatedEvent = {
+  eventType: "OrderCreated.v1";
+  eventId: string;
+  occurredAt: string;
+  aggregateId: string;
+  payload: {
+    customerId: string;
+    subtotalCop: number;
+    deliveryFeeCop: number;
+    totalCop: number;
+    currency: "COP";
+    lines: Array<{
+      productId: string;
+      sku: string;
+      name: string;
+      quantity: number;
+      unitPriceCop: number;
+    }>;
+  };
+};
+
 export type Order = {
   id: string;
   orderId: string;
   customerId: string;
+  subtotalCop: number;
+  deliveryFeeCop: number;
   totalCop: number;
   status: OrderStatus;
   createdAt: string;
   updatedAt: string;
   lines: OrderLine[];
+  event?: OrderCreatedEvent;
 };
