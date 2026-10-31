@@ -12,11 +12,21 @@ $databases = @(
 
 foreach ($database in $databases) {
     Write-Host "==> Applying migration: $($database.Name)"
+    if ($database.Name -eq 'catalog-service') {
+        $catalogDatabaseUrl = $database.Url
+    }
     $env:DATABASE_URL = $database.Url
     npm run $database.WorkspaceScript | Out-Host
     if ($LASTEXITCODE -ne 0) {
         throw "Migration failed for $($database.Name)."
     }
+}
+
+Write-Host '==> Seeding catalog data.'
+$env:DATABASE_URL = $catalogDatabaseUrl
+npm run db:seed:catalog | Out-Host
+if ($LASTEXITCODE -ne 0) {
+    throw 'Catalog seed failed.'
 }
 
 Write-Host '==> Database migrations complete.'
