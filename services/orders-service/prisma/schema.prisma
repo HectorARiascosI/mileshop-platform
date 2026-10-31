@@ -8,6 +8,13 @@ datasource db {
   url      = env("DATABASE_URL")
 }
 
+enum OrderEventOutboxStatus {
+  PENDING
+  PROCESSING
+  PUBLISHED
+  FAILED
+}
+
 model Order {
   id              String      @id @default(cuid())
   orderId         String      @unique
@@ -150,7 +157,7 @@ model OrderEventOutbox {
   aggregateId   String
   occurredAt    DateTime
   payload       Json
-  status        String    @default("PENDING")
+  status        OrderEventOutboxStatus @default(PENDING)
   attemptCount  Int       @default(0)
   nextAttemptAt DateTime  @default(now())
   lastError     String?
