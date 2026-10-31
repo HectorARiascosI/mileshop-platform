@@ -1,3 +1,7 @@
+DROP TABLE IF EXISTS "InventoryReservationLine" CASCADE;
+DROP TABLE IF EXISTS "InventoryReservation" CASCADE;
+DROP TYPE IF EXISTS "InventoryReservationStatus";
+
 CREATE TABLE "InventoryReservation" (
     "id" TEXT NOT NULL,
     "orderId" TEXT NOT NULL,
