@@ -1,7 +1,15 @@
+import { createPreviewProtectedFetch } from "./preview-protected-fetch";
+
 type ApiGatewayUrlOptions = {
   gatewayUrl?: string;
   isProduction?: boolean;
 };
+
+export function fetchApiGateway(input: RequestInfo | URL, init?: RequestInit): Promise<Response> {
+  return createPreviewProtectedFetch(
+    process.env.VERCEL_GATEWAY_BYPASS_SECRET,
+  )(input, init);
+}
 
 export function getApiGatewayEndpoint(
   path: string,

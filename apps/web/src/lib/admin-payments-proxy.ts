@@ -1,5 +1,7 @@
 import { cookies } from "next/headers";
 
+import { fetchApiGateway } from "./api-gateway-url";
+
 const PRIVATE_HEADERS = { "Cache-Control": "private, no-store" };
 
 function jsonError(message: string, status: number): Response {
@@ -24,7 +26,7 @@ export async function proxyAdminPayments(
   const gatewayUrl = process.env.API_GATEWAY_URL ?? "http://localhost:3000";
   let upstream: Response;
   try {
-    upstream = await fetch(`${gatewayUrl.replace(/\/$/, "")}${path}`, {
+    upstream = await fetchApiGateway(`${gatewayUrl.replace(/\/$/, "")}${path}`, {
       method,
       headers: {
         authorization: `Bearer ${accessToken}`,

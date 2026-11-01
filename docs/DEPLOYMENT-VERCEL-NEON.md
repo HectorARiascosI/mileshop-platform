@@ -59,12 +59,14 @@ Configúralas por proyecto y por entorno (`Production`, `Preview` y `Development
 
 | Proyecto | Variables |
 |---|---|
-| Storefront | `API_GATEWAY_URL` (URL HTTPS del Gateway terminada en `/api`), `NEXT_PUBLIC_WHATSAPP_BUSINESS_PHONE` (número Business internacional, sin `+`, espacios ni guiones). |
-| API Gateway | `CATALOG_SERVICE_URL`, `IDENTITY_SERVICE_URL`, `ORDERS_SERVICE_URL` (cada una HTTPS y terminada en `/api`), `ORDERS_INTERNAL_TOKEN`, `CATALOG_INVENTORY_COMMAND_TOKEN`, `ALLOWED_ORIGINS` (origen HTTPS del storefront). |
+| Storefront | `API_GATEWAY_URL` (URL HTTPS del Gateway terminada en `/api`), `VERCEL_GATEWAY_BYPASS_SECRET` (solo Preview; bypass del proyecto Gateway), `NEXT_PUBLIC_WHATSAPP_BUSINESS_PHONE` (número Business internacional, sin `+`, espacios ni guiones). |
+| API Gateway | `CATALOG_SERVICE_URL`, `IDENTITY_SERVICE_URL`, `ORDERS_SERVICE_URL` (cada una HTTPS y terminada en `/api`), `VERCEL_CATALOG_BYPASS_SECRET`, `VERCEL_IDENTITY_BYPASS_SECRET`, `VERCEL_ORDERS_BYPASS_SECRET` (solo Preview; bypass del proyecto de destino), `ORDERS_INTERNAL_TOKEN`, `CATALOG_INVENTORY_COMMAND_TOKEN`, `ALLOWED_ORIGINS` (origen HTTPS del storefront). |
 | Catálogo | `DATABASE_URL` (URL pooled de la base `catalog`), `CATALOG_RESERVATION_TOKEN`, `CATALOG_INVENTORY_COMMAND_TOKEN`. |
 | Identidad | `DATABASE_URL` (URL pooled de `identity`), `JWT_SECRET`, `ALLOWED_ORIGINS` (origen HTTPS del storefront). |
-| Pedidos | `DATABASE_URL` (URL pooled de `orders`), `CATALOG_SERVICE_URL`, `CATALOG_RESERVATION_TOKEN`, `CATALOG_INVENTORY_COMMAND_TOKEN`, `ORDERS_INTERNAL_TOKEN`, `NOTIFICATION_WORKER_URL` (URL HTTPS terminada en `/api`), `CRON_SECRET`, `ALLOWED_ORIGINS` (origen HTTPS del storefront). |
+| Pedidos | `DATABASE_URL` (URL pooled de `orders`), `CATALOG_SERVICE_URL`, `NOTIFICATION_WORKER_URL` (URLs HTTPS terminadas en `/api`), `VERCEL_CATALOG_BYPASS_SECRET`, `VERCEL_NOTIFICATIONS_BYPASS_SECRET` (solo Preview; bypass del proyecto de destino), `CATALOG_RESERVATION_TOKEN`, `CATALOG_INVENTORY_COMMAND_TOKEN`, `ORDERS_INTERNAL_TOKEN`, `CRON_SECRET`, `ALLOWED_ORIGINS` (origen HTTPS del storefront). |
 | Notificaciones | `DATABASE_URL` (URL pooled de `notifications`), `NOTIFICATION_SENDER_MODE=log`. |
+
+Los Preview de Vercel están protegidos por Vercel Authentication. Para habilitar llamadas entre proyectos, crea un secreto de **Protection Bypass for Automation** distinto en cada proyecto de destino y copia cada valor únicamente a la variable correspondiente del proyecto llamador. Usa el scope Preview del branch `chore/vercel-vps-deployment`; no habilites el secreto como variable de sistema ni lo agregues a Production. Gateway, Orders y Storefront solo envían el header de bypass cuando `VERCEL_ENV=preview` y el destino usa HTTPS bajo el dominio de proyectos del equipo `hector-riascos-projects.vercel.app`.
 
 Los valores de `ORDERS_INTERNAL_TOKEN` deben coincidir entre Gateway y Orders. `CATALOG_INVENTORY_COMMAND_TOKEN` debe coincidir entre Gateway, Orders y Catálogo; `CATALOG_RESERVATION_TOKEN` debe coincidir entre Orders y Catálogo. Genera secretos independientes y aleatorios de al menos 32 caracteres; por ejemplo, localmente con `node -e "console.log(require('node:crypto').randomBytes(48).toString('base64'))"`. No uses el mismo secreto para propósitos distintos.
 

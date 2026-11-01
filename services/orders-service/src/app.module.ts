@@ -16,6 +16,14 @@ import {
 import { PrismaOrdersRepository } from "./prisma.orders.repository.js";
 import { PrismaService } from "./prisma.service.js";
 import { ORDERS_INTERNAL_TOKEN } from "./payment-evidence/gateway-internal.guard.js";
+import { createPreviewProtectedFetch } from "./preview-protected-fetch.js";
+
+const catalogFetch = createPreviewProtectedFetch(
+  process.env.VERCEL_CATALOG_BYPASS_SECRET,
+);
+const notificationFetch = createPreviewProtectedFetch(
+  process.env.VERCEL_NOTIFICATIONS_BYPASS_SECRET,
+);
 
 @Module({
   controllers: [OrdersController],
@@ -32,7 +40,7 @@ import { ORDERS_INTERNAL_TOKEN } from "./payment-evidence/gateway-internal.guard
     },
     {
       provide: ORDER_EVENT_PUBLISHER,
-      useFactory: (workerUrl: string) => new HttpOrderEventPublisher(fetch, workerUrl),
+      useFactory: (workerUrl: string) => new HttpOrderEventPublisher(notificationFetch, workerUrl),
       inject: [NOTIFICATION_WORKER_URL],
     },
     {
@@ -53,7 +61,7 @@ import { ORDERS_INTERNAL_TOKEN } from "./payment-evidence/gateway-internal.guard
     {
       provide: "CATALOG_READER",
       useFactory: () => new HttpCatalogReader(
-        fetch,
+        catalogFetch,
         process.env.CATALOG_SERVICE_URL ?? "http://localhost:3020",
         process.env.CATALOG_RESERVATION_TOKEN,
       ),
@@ -66,7 +74,7 @@ import { ORDERS_INTERNAL_TOKEN } from "./payment-evidence/gateway-internal.guard
     {
       provide: "INVENTORY_COMMAND_DISPATCHER",
       useFactory: () => new HttpInventoryCommandDispatcher(
-        fetch,
+        catalogFetch,
         process.env.CATALOG_SERVICE_URL ?? "http://localhost:3020",
         process.env.CATALOG_INVENTORY_COMMAND_TOKEN ?? "",
       ),

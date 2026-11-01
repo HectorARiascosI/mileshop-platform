@@ -1,6 +1,6 @@
 ﻿import { cookies } from "next/headers";
 
-import { getApiGatewayEndpoint } from "@/lib/api-gateway-url";
+import { fetchApiGateway, getApiGatewayEndpoint } from "@/lib/api-gateway-url";
 
 /**
  * GET /api/auth/me
@@ -23,7 +23,7 @@ export async function GET() {
 
   let res: Response;
   try {
-    res = await fetch(endpoint, {
+    res = await fetchApiGateway(endpoint, {
       headers: { authorization: `Bearer ${token}` },
     });
   } catch {

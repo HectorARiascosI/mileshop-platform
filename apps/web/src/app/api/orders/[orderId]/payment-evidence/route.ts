@@ -1,6 +1,8 @@
 import { cookies } from "next/headers";
 import type { NextRequest } from "next/server";
 
+import { fetchApiGateway } from "@/lib/api-gateway-url";
+
 type RouteContext = {
   params: Promise<{ orderId: string }>;
 };
@@ -54,7 +56,7 @@ export async function POST(
   const { orderId } = await context.params;
   let response: Response;
   try {
-    response = await fetch(gatewayUrl(orderId), {
+    response = await fetchApiGateway(gatewayUrl(orderId), {
       method: "POST",
       headers: { authorization: `Bearer ${accessToken}` },
       body: formData,
@@ -89,7 +91,7 @@ export async function GET(
   const { orderId } = await context.params;
   let response: Response;
   try {
-    response = await fetch(gatewayUrl(orderId), {
+    response = await fetchApiGateway(gatewayUrl(orderId), {
       method: "GET",
       headers: { authorization: `Bearer ${accessToken}` },
       cache: "no-store",

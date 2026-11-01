@@ -1,5 +1,5 @@
 import { CatalogShell } from "@/components/catalog-shell";
-import { getApiGatewayEndpoint } from "@/lib/api-gateway-url";
+import { fetchApiGateway, getApiGatewayEndpoint } from "@/lib/api-gateway-url";
 
 type Product = {
   id: string;
@@ -23,7 +23,7 @@ async function getCatalog(): Promise<CatalogResult> {
   }
 
   try {
-    const response = await fetch(endpoint, {
+    const response = await fetchApiGateway(endpoint, {
       cache: "no-store",
     });
 

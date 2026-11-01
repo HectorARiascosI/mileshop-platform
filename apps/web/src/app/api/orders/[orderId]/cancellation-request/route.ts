@@ -1,6 +1,8 @@
 import { cookies } from "next/headers";
 import type { NextRequest } from "next/server";
 
+import { fetchApiGateway } from "@/lib/api-gateway-url";
+
 type RouteContext = {
   params: Promise<{ orderId: string }>;
 };
@@ -21,7 +23,7 @@ export async function POST(
   const gatewayUrl = process.env.API_GATEWAY_URL ?? "http://localhost:3000";
   let response: Response;
   try {
-    response = await fetch(
+    response = await fetchApiGateway(
       `${gatewayUrl}/orders/${encodeURIComponent(orderId)}/cancellation-request`,
       {
         method: "POST",
