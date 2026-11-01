@@ -55,6 +55,12 @@
     "esbuild@0.28.2": true
   },
   "overrides": {
+    "@nestjs/platform-fastify": {
+      "light-my-request": "6.6.0"
+    },
+    "fastify": {
+      "light-my-request": "6.6.0"
+    },
     "minimatch": "^11.0.1"
   }
 }

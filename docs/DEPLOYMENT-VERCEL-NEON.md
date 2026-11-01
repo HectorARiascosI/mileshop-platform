@@ -49,6 +49,8 @@ Configura **Node.js Version 24.x** en los seis proyectos; el adaptador Neon usa 
 
 Para los servicios backend, usa el preset `Other`, no NestJS: NestJS puede tratar `src/app.ts` como función y fallar al invocarla. Cada `vercel.json` define `outputDirectory: dist`, el comando de build y la función `api/[...path].ts`; el handler publica las rutas bajo `/api`. Conserva el comando de instalación detectado para el workspace raíz (`npm install`/`npm ci` según la configuración del proyecto). Los despliegues no ejecutan migraciones automáticamente.
 
+El override raíz fija `light-my-request` en `6.6.0`: `6.8.0` intenta cargar `cookie` 2.x (ESM) desde CommonJS y provoca `ERR_REQUIRE_ESM` en las funciones de Vercel. Antes de retirar el override, valida `/api/healthz` en un Preview.
+
 Cada URL de servicio usada por otro proyecto debe incluir el prefijo `/api`, por ejemplo `https://catalogo.example/api`. El adaptador quita ese prefijo antes de entregar la solicitud a Fastify.
 
 ## 3. Variables de entorno
