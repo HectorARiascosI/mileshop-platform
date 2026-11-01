@@ -18,6 +18,34 @@ const ordersFetch = createPreviewProtectedFetch(
   process.env.VERCEL_ORDERS_BYPASS_SECRET,
 );
 
+export const AUTHENTICATED_ROUTES = [
+  { path: "orders", method: RequestMethod.POST },
+  { path: "orders/:orderId", method: RequestMethod.GET },
+  { path: "orders/:orderId/cancel", method: RequestMethod.POST },
+  { path: "orders/:orderId/cancellation-request", method: RequestMethod.POST },
+  { path: "orders/:orderId/payment-evidence", method: RequestMethod.POST },
+  { path: "orders/:orderId/payment-evidence", method: RequestMethod.GET },
+  { path: "admin/payments", method: RequestMethod.GET },
+  { path: "admin/orders", method: RequestMethod.GET },
+  { path: "admin/orders/:orderId/confirm", method: RequestMethod.POST },
+  { path: "admin/orders/:orderId/cancel", method: RequestMethod.POST },
+  { path: "admin/catalog/manual-sales", method: RequestMethod.POST },
+  { path: "admin/catalog/products", method: RequestMethod.GET },
+  { path: "admin/catalog/products", method: RequestMethod.POST },
+  { path: "admin/catalog/products/:productId", method: RequestMethod.PATCH },
+  { path: "admin/catalog/stock-receipts", method: RequestMethod.POST },
+  { path: "admin/payments/:orderId", method: RequestMethod.GET },
+  { path: "admin/payments/:orderId/evidence", method: RequestMethod.POST },
+  { path: "admin/payments/:orderId/evidence", method: RequestMethod.GET },
+  { path: "admin/payments/:orderId/approve", method: RequestMethod.POST },
+  { path: "admin/payments/:orderId/reject", method: RequestMethod.POST },
+  { path: "admin/cancellation-requests", method: RequestMethod.GET },
+  { path: "admin/cancellation-requests/:orderId/refund-handling", method: RequestMethod.POST },
+  { path: "admin/cancellation-requests/:orderId/resolve", method: RequestMethod.POST },
+  { path: "admin/payment-evidence/:orderId/legal-hold", method: RequestMethod.POST },
+  { path: "admin/payment-evidence/:orderId/legal-hold", method: RequestMethod.DELETE },
+] as const;
+
 @Module({
   controllers: [GatewayController],
   providers: [
@@ -46,28 +74,6 @@ const ordersFetch = createPreviewProtectedFetch(
 })
 export class AppModule implements NestModule {
   configure(consumer: MiddlewareConsumer): void {
-    consumer.apply(AuthMiddleware).forRoutes(
-      { path: "orders", method: RequestMethod.POST },
-      { path: "orders/:orderId", method: RequestMethod.GET },
-      { path: "orders/:orderId/cancel", method: RequestMethod.POST },
-      { path: "orders/:orderId/cancellation-request", method: RequestMethod.POST },
-      { path: "orders/:orderId/payment-evidence", method: RequestMethod.POST },
-      { path: "orders/:orderId/payment-evidence", method: RequestMethod.GET },
-      { path: "admin/payments", method: RequestMethod.GET },
-      { path: "admin/orders", method: RequestMethod.GET },
-      { path: "admin/orders/:orderId/confirm", method: RequestMethod.POST },
-      { path: "admin/orders/:orderId/cancel", method: RequestMethod.POST },
-      { path: "admin/catalog/manual-sales", method: RequestMethod.POST },
-      { path: "admin/payments/:orderId", method: RequestMethod.GET },
-      { path: "admin/payments/:orderId/evidence", method: RequestMethod.POST },
-      { path: "admin/payments/:orderId/evidence", method: RequestMethod.GET },
-      { path: "admin/payments/:orderId/approve", method: RequestMethod.POST },
-      { path: "admin/payments/:orderId/reject", method: RequestMethod.POST },
-      { path: "admin/cancellation-requests", method: RequestMethod.GET },
-      { path: "admin/cancellation-requests/:orderId/refund-handling", method: RequestMethod.POST },
-      { path: "admin/cancellation-requests/:orderId/resolve", method: RequestMethod.POST },
-      { path: "admin/payment-evidence/:orderId/legal-hold", method: RequestMethod.POST },
-      { path: "admin/payment-evidence/:orderId/legal-hold", method: RequestMethod.DELETE },
-    );
+    consumer.apply(AuthMiddleware).forRoutes(...AUTHENTICATED_ROUTES);
   }
 }
