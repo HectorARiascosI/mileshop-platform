@@ -69,6 +69,10 @@ test("catalog client authenticates and forwards product and stock administration
     });
 
     await client.listAdminProducts();
+    await client.listCategories();
+    await client.createCategory({ name: "Accesorios para moto", theme: "blue" });
+    await client.updateCategory("category-1", { name: "Accesorios de moto", theme: "gold" });
+    await client.deleteCategory("category-1");
     await client.createProduct({
       sku: "SKU-01",
       name: "Product",
@@ -93,22 +97,29 @@ test("catalog client authenticates and forwards product and stock administration
 
     assert.deepEqual(requests.map(({ url }) => new URL(url).pathname), [
       "/internal/admin/products",
+      "/internal/admin/categories",
+      "/internal/admin/categories",
+      "/internal/admin/categories/category-1",
+      "/internal/admin/categories/category-1",
       "/internal/admin/products",
       "/internal/admin/products/product-1",
       "/internal/admin/stock-receipts",
     ]);
     assert.equal(
-      JSON.parse(String(requests[1]?.init?.body)).imageFileId,
+      JSON.parse(String(requests[5]?.init?.body)).imageFileId,
       null,
     );
+    assert.deepEqual(requests.map(({ init }) => init?.method), [
+      "GET", "GET", "POST", "PATCH", "DELETE", "POST", "PATCH", "POST",
+    ]);
     for (const { init } of requests) {
       assert.equal(
         new Headers(init?.headers).get("authorization"),
         "Bearer 0123456789abcdef0123456789abcdef",
       );
     }
-    assert.equal(new Headers(requests[3]?.init?.headers).get("idempotency-key"), "receipt-1");
-    assert.deepEqual(JSON.parse(String(requests[3]?.init?.body)), {
+    assert.equal(new Headers(requests[7]?.init?.headers).get("idempotency-key"), "receipt-1");
+    assert.deepEqual(JSON.parse(String(requests[7]?.init?.body)), {
       adminCustomerId: "admin-1",
       reason: "Initial delivery",
       lines: [{ productId: "product-1", quantity: 3 }],

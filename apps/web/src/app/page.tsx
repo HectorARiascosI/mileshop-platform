@@ -1,5 +1,6 @@
 import { CatalogShell } from "@/components/catalog-shell";
 import { fetchApiGateway, getApiGatewayEndpoint } from "@/lib/api-gateway-url";
+import type { CatalogCategorySummary } from "@mileshop/contracts";
 
 type Product = {
   id: string;
@@ -9,6 +10,7 @@ type Product = {
   priceCop: number;
   stock: number;
   imageUrl?: string | null;
+  category?: CatalogCategorySummary | null;
 };
 
 type CatalogResult = {

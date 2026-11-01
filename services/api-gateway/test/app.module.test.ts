@@ -9,6 +9,10 @@ test("authenticates all catalog administration routes", () => {
     { path: "admin/catalog/products", method: RequestMethod.GET },
     { path: "admin/catalog/products", method: RequestMethod.POST },
     { path: "admin/catalog/products/:productId", method: RequestMethod.PATCH },
+    { path: "admin/catalog/categories", method: RequestMethod.GET },
+    { path: "admin/catalog/categories", method: RequestMethod.POST },
+    { path: "admin/catalog/categories/:categoryId", method: RequestMethod.PATCH },
+    { path: "admin/catalog/categories/:categoryId", method: RequestMethod.DELETE },
     { path: "admin/catalog/stock-receipts", method: RequestMethod.POST },
   ];
 

@@ -132,6 +132,73 @@ test("admin product and stock receipt endpoints require internal auth and persis
         isActive: true,
       }),
     });
+
+    await test("category administration is authenticated and cannot delete an assigned category", async () => {
+      const token = "catalog-inventory-token-for-tests-0123456789";
+      const previousToken = process.env.CATALOG_INVENTORY_COMMAND_TOKEN;
+      process.env.CATALOG_INVENTORY_COMMAND_TOKEN = token;
+      const catalog = new CatalogService(new InMemoryCatalogStore([]));
+      const app = await createCatalogApp(catalog);
+      await app.listen(0, "127.0.0.1");
+      try {
+        const baseUrl = await app.getUrl();
+        const url = `${baseUrl}/internal/admin/categories`;
+        const headers = {
+          authorization: `Bearer ${token}`,
+          "content-type": "application/json",
+        };
+        const unauthorized = await fetch(url);
+        assert.equal(unauthorized.status, 401);
+
+        const created = await fetch(url, {
+          method: "POST",
+          headers,
+          body: JSON.stringify({ name: "Accesorios para moto", theme: "blue" }),
+        });
+        assert.equal(created.status, 201);
+        const category = (await created.json()).data;
+        assert.equal(category.slug, "accesorios-para-moto");
+        assert.equal(category.theme, "blue");
+
+        const productResponse = await fetch(`${baseUrl}/internal/admin/products`, {
+          method: "POST",
+          headers,
+          body: JSON.stringify({
+            sku: "HTTP-CATEGORY-01",
+            name: "Producto por categoría",
+            description: "",
+            priceCop: 5000,
+            imageUrl: null,
+            categoryId: category.id,
+            isActive: true,
+          }),
+        });
+        assert.equal(productResponse.status, 201);
+        const product = (await productResponse.json()).data;
+        assert.equal(product.category.name, "Accesorios para moto");
+
+        const blockedDelete = await fetch(`${url}/${encodeURIComponent(category.id)}`, {
+          method: "DELETE",
+          headers: { authorization: headers.authorization },
+        });
+        assert.equal(blockedDelete.status, 409, JSON.stringify(await blockedDelete.json()));
+
+        const categoryList = await fetch(url, { headers });
+        const categoryPayload = await categoryList.json();
+        assert.equal(categoryPayload.data[0].productCount, 1);
+        const renamed = await fetch(`${url}/${encodeURIComponent(category.id)}`, {
+          method: "PATCH",
+          headers,
+          body: JSON.stringify({ name: "Accesorios de moto", theme: "gold" }),
+        });
+        assert.equal(renamed.status, 200);
+        assert.equal((await renamed.json()).data.theme, "gold");
+      } finally {
+        await app.close();
+        if (previousToken === undefined) delete process.env.CATALOG_INVENTORY_COMMAND_TOKEN;
+        else process.env.CATALOG_INVENTORY_COMMAND_TOKEN = previousToken;
+      }
+    });
     assert.equal(productResponse.status, 201);
     const productPayload = await productResponse.json();
     const productId = productPayload.data.id as string;

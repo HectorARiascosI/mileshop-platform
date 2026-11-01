@@ -186,6 +186,7 @@ Antes de migrar una base persistente:
    ```
 
    Los marcadores se sustituyen en el entorno de despliegue; no guardes URLs reales en comandos persistidos, archivos versionados o registros de CI.
+   La migración `20261103090000_product_categories` agrega categorías y una relación opcional desde los productos; los productos existentes permanecen sin categoría. Antes de desplegar esa revisión, aplícala únicamente a la base del servicio de catálogo del entorno objetivo. Después verifica la administración de categorías, la asignación a productos y que no se permita borrar una categoría asignada. El build de Vercel no aplica migraciones.
 4. Despliega los servicios compatibles con el esquema migrado. Aplica la migración de identidad y confirma que `/auth/me` devuelve el rol antes de desplegar una Gateway que lo requiera. Orders, Catálogo e Identity deben tener sus respectivas migraciones antes de iniciar las versiones que usan sus nuevos campos. No habilites la limpieza de comprobantes en producción hasta disponer del adaptador privado, sus copias de seguridad y aprobación contable/legal del plazo y proceso de retención.
 5. Verifica salud, autenticación, permisos administrativos, operaciones idempotentes, métricas/logs y entregas pendientes antes de habilitar tráfico. Conserva el release anterior y el plan de recuperación hasta cerrar la validación.
 
