@@ -2,6 +2,7 @@ import { cookies } from "next/headers";
 
 import { fetchApiGateway, getApiGatewayEndpoint } from "@/lib/api-gateway-url";
 import { identifyImageType } from "@/lib/image-file-type";
+import { getImageKitFileDetailsUrl, getImageKitFileUrl } from "@/lib/imagekit-api-url";
 
 export const runtime = "nodejs";
 
@@ -9,7 +10,6 @@ const PRIVATE_HEADERS = { "Cache-Control": "private, no-store" };
 const MAX_IMAGE_SIZE_BYTES = 4 * 1024 * 1024;
 const MAX_REQUEST_SIZE_BYTES = MAX_IMAGE_SIZE_BYTES + 64 * 1024;
 const IMAGEKIT_UPLOAD_URL = "https://upload.imagekit.io/api/v1/files/upload";
-const IMAGEKIT_API_URL = "https://api.imagekit.io/v1/files";
 
 function jsonError(message: string, status: number): Response {
   return Response.json({ error: message }, { status, headers: PRIVATE_HEADERS });
@@ -196,10 +196,10 @@ export async function DELETE(request: Request): Promise<Response> {
     return jsonError("La foto todavía está asociada a un producto.", 409);
   }
 
-  const fileUrl = `${IMAGEKIT_API_URL}/${encodeURIComponent(fileId)}`;
+  const fileUrl = getImageKitFileUrl(fileId);
   let detailsResponse: Response;
   try {
-    detailsResponse = await fetch(fileUrl, {
+    detailsResponse = await fetch(getImageKitFileDetailsUrl(fileId), {
       headers: { authorization },
       cache: "no-store",
       signal: AbortSignal.timeout(15_000),
