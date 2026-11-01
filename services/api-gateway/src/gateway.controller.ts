@@ -192,6 +192,9 @@ export class GatewayController {
       typeof body.priceCop !== "number" ||
       !("imageUrl" in body) ||
       (body.imageUrl !== null && typeof body.imageUrl !== "string") ||
+      ("imageFileId" in body &&
+        body.imageFileId !== null &&
+        typeof body.imageFileId !== "string") ||
       !("isActive" in body) ||
       typeof body.isActive !== "boolean"
     ) {
@@ -203,6 +206,12 @@ export class GatewayController {
       description: body.description,
       priceCop: body.priceCop,
       imageUrl: body.imageUrl,
+      ...("imageFileId" in body
+        ? {
+            imageFileId:
+              typeof body.imageFileId === "string" ? body.imageFileId : null,
+          }
+        : {}),
       isActive: body.isActive,
     };
   }

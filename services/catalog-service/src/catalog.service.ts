@@ -8,6 +8,7 @@ export type Product = {
   priceCop: number;
   stock: number;
   imageUrl?: string | null;
+  imageFileId?: string | null;
   isActive?: boolean;
 };
 
@@ -17,6 +18,7 @@ export type ProductInput = {
   description: string;
   priceCop: number;
   imageUrl: string | null;
+  imageFileId?: string | null;
   isActive: boolean;
 };
 
@@ -180,6 +182,7 @@ export function normalizeProductInput(input: ProductInput): ProductInput {
     throw new CatalogInputError("Product active status is invalid");
   }
   let imageUrl: string | null = null;
+  let imageUrlHost: string | null = null;
   if (input.imageUrl !== null && input.imageUrl !== undefined && input.imageUrl !== "") {
     if (typeof input.imageUrl !== "string" || input.imageUrl.length > 2048) {
       throw new CatalogInputError("Product image URL is invalid");
@@ -194,8 +197,33 @@ export function normalizeProductInput(input: ProductInput): ProductInput {
       throw new CatalogInputError("Product image URL must use HTTPS and cannot include credentials");
     }
     imageUrl = parsed.toString();
+    imageUrlHost = parsed.hostname;
   }
-  return { sku, name, description, priceCop: input.priceCop, imageUrl, isActive: input.isActive };
+  let imageFileId: string | null | undefined;
+  if (input.imageFileId !== undefined && input.imageFileId !== null && input.imageFileId !== "") {
+    if (
+      typeof input.imageFileId !== "string" ||
+      input.imageFileId.length > 128 ||
+      !/^[A-Za-z0-9_-]+$/.test(input.imageFileId)
+    ) {
+      throw new CatalogInputError("Product image file reference is invalid");
+    }
+    if (!imageUrl || imageUrlHost !== "ik.imagekit.io") {
+      throw new CatalogInputError("A managed image must use its ImageKit URL");
+    }
+    imageFileId = input.imageFileId;
+  } else if (input.imageFileId !== undefined) {
+    imageFileId = null;
+  }
+  return {
+    sku,
+    name,
+    description,
+    priceCop: input.priceCop,
+    imageUrl,
+    ...(imageFileId !== undefined ? { imageFileId } : {}),
+    isActive: input.isActive,
+  };
 }
 
 export function normalizeStockReceipt(
@@ -263,13 +291,26 @@ export class InMemoryCatalogStore implements CatalogStore {
   public async listActiveProducts(): Promise<Product[]> {
     return this.products
       .filter((product) => product.isActive !== false)
-      .map((product) => ({ ...product }))
+      .map(({ id, sku, name, description, priceCop, stock, imageUrl }) => ({
+        id,
+        sku,
+        name,
+        description,
+        priceCop,
+        stock,
+        ...(imageUrl ? { imageUrl } : {}),
+      }))
       .sort((left, right) => left.name.localeCompare(right.name, "es"));
   }
 
   public async listAdminProducts(): Promise<Product[]> {
     return this.products
-      .map((product) => ({ ...product, isActive: product.isActive !== false, imageUrl: product.imageUrl ?? null }))
+      .map((product) => ({
+        ...product,
+        isActive: product.isActive !== false,
+        imageUrl: product.imageUrl ?? null,
+        imageFileId: product.imageFileId ?? null,
+      }))
       .sort((left, right) => left.name.localeCompare(right.name, "es"));
   }
 
@@ -282,6 +323,7 @@ export class InMemoryCatalogStore implements CatalogStore {
       const product: Product = {
         id: `prod-${crypto.randomUUID()}`,
         ...normalized,
+        imageFileId: normalized.imageFileId ?? null,
         stock: 0,
       };
       this.products.push(product);

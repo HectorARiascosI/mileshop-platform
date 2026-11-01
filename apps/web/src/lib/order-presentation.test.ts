@@ -73,3 +73,11 @@ test("presents an expired reservation as terminal and never payable", () => {
       "No recibimos el comprobante antes del vencimiento. El pedido expiró y no se procesará ningún pago.",
   });
 });
+
+test("explains that a received order is being checked before its reservation", () => {
+  assert.deepEqual(getOrderStatusMessage("PENDING", null), {
+    title: "Pedido recibido",
+    description:
+      "Estamos confirmando la disponibilidad de los productos y procesando la reserva.",
+  });
+});

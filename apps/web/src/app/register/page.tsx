@@ -57,10 +57,10 @@ export default function RegisterPage() {
   return (
     <main className="checkout-page">
       <section className="checkout-card auth-card">
-        <p className="eyebrow">Registro requerido</p>
+        <p className="eyebrow">Crear cuenta</p>
         <h1>Completa tu perfil para comprar</h1>
         <p className="auth-subtitle">
-          La compra en MileShop requiere identidad válida antes de confirmar la orden.
+          Regístrate para realizar compras y consultar tus pedidos.
         </p>
 
         <form className="auth-form" onSubmit={handleSubmit} noValidate>

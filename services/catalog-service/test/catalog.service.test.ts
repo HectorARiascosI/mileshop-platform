@@ -34,12 +34,25 @@ test("admin can manage products and receive stock with an auditable idempotent r
     name: "Nuevo artículo",
     description: "Descripción",
     priceCop: 12500,
-    imageUrl: "https://images.example.com/item.jpg",
+    imageUrl: "https://ik.imagekit.io/store/products/item.jpg",
+    imageFileId: "image-file-01",
     isActive: true,
   });
 
   assert.equal(product.stock, 0);
-  assert.equal(product.imageUrl, "https://images.example.com/item.jpg");
+  assert.equal(product.imageUrl, "https://ik.imagekit.io/store/products/item.jpg");
+  assert.equal(product.imageFileId, "image-file-01");
+  assert.equal("imageFileId" in (await service.listProducts())[0]!, false);
+  assert.equal((await service.listAdminProducts())[0]?.imageFileId, "image-file-01");
+  const legacyUpdate = await service.updateProduct(product.id, {
+    sku: product.sku,
+    name: product.name,
+    description: "Descripción actualizada",
+    priceCop: product.priceCop,
+    imageUrl: product.imageUrl ?? null,
+    isActive: true,
+  });
+  assert.equal(legacyUpdate.imageFileId, "image-file-01");
   const lines = [{ productId: product.id, quantity: 8 }];
   const first = await service.receiveStock("admin-1", "receipt-1", "Compra al proveedor", lines);
   const replay = await service.receiveStock("admin-1", "receipt-1", "Compra al proveedor", lines);
@@ -61,6 +74,42 @@ test("admin can manage products and receive stock with an auditable idempotent r
       isActive: true,
     }),
     { code: "CONFLICT" },
+  );
+});
+
+test("managed image references require a URL and a safe file id", async () => {
+  const service = new CatalogService(new InMemoryCatalogStore([]));
+  const baseInput = {
+    sku: "IMAGE-REF-01",
+    name: "Producto con foto",
+    description: "",
+    priceCop: 100,
+    isActive: true,
+  };
+
+  await assert.rejects(
+    () => service.createProduct({
+      ...baseInput,
+      imageUrl: null,
+      imageFileId: "file-1",
+    }),
+    { code: "INVALID_COMMAND" },
+  );
+  await assert.rejects(
+    () => service.createProduct({
+      ...baseInput,
+      imageUrl: "https://ik.imagekit.io/store/products/item.jpg",
+      imageFileId: "../other-file",
+    }),
+    { code: "INVALID_COMMAND" },
+  );
+  await assert.rejects(
+    () => service.createProduct({
+      ...baseInput,
+      imageUrl: "https://images.example.com/item.jpg",
+      imageFileId: "file-1",
+    }),
+    { code: "INVALID_COMMAND" },
   );
 });
 

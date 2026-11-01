@@ -25,7 +25,7 @@ type OrderStatusMessage = {
 const STATUS_COPY: Record<OrderStatus, OrderStatusMessage> = {
   PENDING: {
     title: "Pedido recibido",
-    description: "Estamos preparando tu pedido.",
+    description: "Estamos confirmando la disponibilidad de los productos y procesando la reserva.",
   },
   RESERVING_INVENTORY: {
     title: "Confirmando disponibilidad",

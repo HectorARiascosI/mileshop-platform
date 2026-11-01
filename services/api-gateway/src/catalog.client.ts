@@ -17,6 +17,7 @@ export type GatewayProduct = {
   priceCop: number;
   stock: number;
   imageUrl?: string | null;
+  imageFileId?: string | null;
   isActive?: boolean;
 };
 
@@ -27,6 +28,7 @@ export type CatalogProductInput = {
   description: string;
   priceCop: number;
   imageUrl: string | null;
+  imageFileId?: string | null;
   isActive: boolean;
 };
 export type StockReceiptLineInput = ManualSaleLineInput;

@@ -17,6 +17,7 @@ model Product {
   priceCop    Int
   stock       Int
   imageUrl    String?
+  imageFileId String?
   isActive    Boolean  @default(true)
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
