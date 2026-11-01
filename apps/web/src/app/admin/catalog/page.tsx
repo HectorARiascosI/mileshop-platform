@@ -272,7 +272,9 @@ export default function AdminCatalogPage() {
         <div>
           <p className="text-sm font-semibold uppercase tracking-wide text-emerald-700">MileShop</p>
           <h1 className="text-3xl font-bold">Catálogo e inventario</h1>
-          <p className="mt-1 text-slate-600">Crea productos, actualiza sus datos y registra cada entrada de unidades.</p>
+          <p className="mt-1 text-slate-600">
+            Agrega lo que la tienda vende. Aquí también puedes indicar cuántas unidades tienes disponibles.
+          </p>
         </div>
         <nav className="flex flex-wrap gap-2">
           <Link className="rounded border px-4 py-2 font-medium hover:bg-slate-50" href="/admin/orders">
@@ -300,12 +302,17 @@ export default function AdminCatalogPage() {
             <form className="grid gap-4 rounded-xl border bg-white p-5 shadow-sm" onSubmit={saveProduct}>
               <div>
                 <h2 className="text-xl font-semibold">{editingProductId ? "Editar producto" : "Agregar producto"}</h2>
-                <p className="mt-1 text-sm text-slate-600">Los productos nuevos empiezan con stock cero; registra la entrada por separado.</p>
+                <p className="mt-1 text-sm text-slate-600">
+                  Guarda primero los datos del producto. Después podrás agregar las unidades que tengas; hasta entonces no aparecerá disponible para comprar.
+                </p>
               </div>
               <div className="grid gap-4 sm:grid-cols-2">
                 <label className="grid gap-1 text-sm font-medium">
-                  SKU
+                  Código del producto (SKU)
                   <input className="rounded border px-3 py-2" required maxLength={64} value={form.sku} onChange={(event) => setForm({ ...form, sku: event.target.value })} />
+                  <span className="text-xs font-normal text-slate-600">
+                    Es un código único para distinguir este producto. Si no tienes uno, crea un código interno, por ejemplo: MS-PITILLOS-NKD125-001.
+                  </span>
                 </label>
                 <label className="grid gap-1 text-sm font-medium">
                   Nombre
@@ -318,12 +325,18 @@ export default function AdminCatalogPage() {
               </label>
               <div className="grid gap-4 sm:grid-cols-2">
                 <label className="grid gap-1 text-sm font-medium">
-                  Precio (COP)
+                  Precio de venta (pesos colombianos)
                   <input className="rounded border px-3 py-2" type="number" required min="0" max="2000000000" step="1" value={form.priceCop} onChange={(event) => setForm({ ...form, priceCop: event.target.value })} />
+                  <span className="text-xs font-normal text-slate-600">
+                    Escribe solo números, sin puntos ni signo de pesos. Ejemplo: 10000.
+                  </span>
                 </label>
                 <label className="grid gap-1 text-sm font-medium">
-                  Imagen (URL HTTPS opcional)
+                  Enlace a la foto (opcional)
                   <input className="rounded border px-3 py-2" type="url" placeholder="https://" value={form.imageUrl} onChange={(event) => setForm({ ...form, imageUrl: event.target.value })} />
+                  <span className="text-xs font-normal text-slate-600">
+                    Pega un enlace público que empiece por https://. Si no tienes foto, déjalo vacío.
+                  </span>
                 </label>
               </div>
               {editingProductId && (
@@ -346,11 +359,13 @@ export default function AdminCatalogPage() {
 
             <form className="grid content-start gap-4 rounded-xl border bg-white p-5 shadow-sm" onSubmit={receiveStock}>
               <div>
-                <h2 className="text-xl font-semibold">Recibir inventario</h2>
-                <p className="mt-1 text-sm text-slate-600">Cada recepción se guarda con responsable, motivo y cantidades para auditoría.</p>
+                <h2 className="text-xl font-semibold">Agregar unidades disponibles</h2>
+                <p className="mt-1 text-sm text-slate-600">
+                  Usa esta sección cuando tengas unidades para vender. En Preview puedes usar cantidades de prueba, pero indícalo en la nota.
+                </p>
               </div>
               <label className="grid gap-1 text-sm font-medium">
-                Producto
+                ¿A qué producto agregar unidades?
                 <select className="rounded border px-3 py-2" required disabled={Boolean(receiptRequest) || products.length === 0} value={stockProductId} onChange={(event) => setStockProductId(event.target.value)}>
                   {products.map((product) => (
                     <option key={product.id} value={product.id}>{product.name} · {product.stock} disponibles</option>
@@ -358,15 +373,21 @@ export default function AdminCatalogPage() {
                 </select>
               </label>
               <label className="grid gap-1 text-sm font-medium">
-                Unidades recibidas
+                ¿Cuántas unidades vas a agregar?
                 <input className="rounded border px-3 py-2" type="number" required min="1" max="1000000" step="1" disabled={Boolean(receiptRequest)} value={stockQuantity} onChange={(event) => setStockQuantity(event.target.value)} />
+                <span className="text-xs font-normal text-slate-600">
+                  Cuenta cómo vendes el producto: si vendes paquetes, 3 paquetes se registran como 3 unidades.
+                </span>
               </label>
               <label className="grid gap-1 text-sm font-medium">
-                Motivo (proveedor, compra o ajuste justificado)
+                Nota: ¿de dónde salen estas unidades?
                 <textarea className="min-h-20 rounded border px-3 py-2" required minLength={3} maxLength={500} disabled={Boolean(receiptRequest)} value={stockReason} onChange={(event) => setStockReason(event.target.value)} />
+                <span className="text-xs font-normal text-slate-600">
+                  Escribe una explicación breve, por ejemplo: “Compra al proveedor”. Para una cantidad inventada de prueba, escribe “Dato de prueba; no es inventario real”.
+                </span>
               </label>
               <button className="rounded bg-slate-900 px-4 py-2 font-semibold text-white disabled:opacity-50" type="submit" disabled={isReceivingStock || products.length === 0}>
-                {isReceivingStock ? "Registrando…" : "Registrar entrada"}
+                {isReceivingStock ? "Guardando unidades…" : "Agregar unidades"}
               </button>
             </form>
           </section>
