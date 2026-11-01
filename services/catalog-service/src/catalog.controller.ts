@@ -114,8 +114,11 @@ function parseProductInput(input: unknown): ProductInput {
 }
 
 function parseNullableString(input: unknown): string | null {
-  if (input === null || typeof input === "string") {
+  if (typeof input === "string") {
     return input;
+  }
+  if (input === null) {
+    return null;
   }
   throw new BadRequestException("Invalid product request");
 }
