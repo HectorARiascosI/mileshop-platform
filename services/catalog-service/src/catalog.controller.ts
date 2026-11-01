@@ -85,7 +85,10 @@ function parseProductInput(input: unknown): ProductInput {
   if (typeof input !== "object" || input === null) {
     throw new BadRequestException("Invalid product request");
   }
-  const imageUrl = "imageUrl" in input ? input.imageUrl : undefined;
+  if (!("imageUrl" in input)) {
+    throw new BadRequestException("Invalid product request");
+  }
+  const imageUrl = parseNullableString(input.imageUrl);
   if (
     !("sku" in input) ||
     typeof input.sku !== "string" ||
@@ -96,9 +99,7 @@ function parseProductInput(input: unknown): ProductInput {
     !("priceCop" in input) ||
     typeof input.priceCop !== "number" ||
     !("isActive" in input) ||
-    typeof input.isActive !== "boolean" ||
-    imageUrl === undefined ||
-    (imageUrl !== null && typeof imageUrl !== "string")
+    typeof input.isActive !== "boolean"
   ) {
     throw new BadRequestException("Invalid product request");
   }
@@ -110,6 +111,13 @@ function parseProductInput(input: unknown): ProductInput {
     imageUrl,
     isActive: input.isActive,
   };
+}
+
+function parseNullableString(input: unknown): string | null {
+  if (input === null || typeof input === "string") {
+    return input;
+  }
+  throw new BadRequestException("Invalid product request");
 }
 
 function parseInventoryLines(input: unknown): ReservationRequestLine[] {
