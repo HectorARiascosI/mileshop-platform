@@ -3,7 +3,7 @@
   "outputDirectory": "dist",
   "buildCommand": "npm run db:generate && npm run build",
   "functions": {
-    "api/[...path].ts": {
+    "api/handler.ts": {
       "maxDuration": 30
     }
   },
@@ -11,6 +11,12 @@
     {
       "path": "/api/internal/maintenance",
       "schedule": "0 5 * * *"
+    }
+  ],
+  "rewrites": [
+    {
+      "source": "/api/:mileshopPath*",
+      "destination": "/api/handler"
     }
   ]
 }

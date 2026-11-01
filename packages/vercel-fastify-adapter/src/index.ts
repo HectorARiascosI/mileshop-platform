@@ -43,6 +43,12 @@ export async function handleFastifyRequest(
   }
 
   const url = new URL(request.url ?? "/", "http://localhost");
+  const rewrittenPath = url.searchParams.get("mileshopPath");
+  if (rewrittenPath !== null) {
+    url.pathname = rewrittenPath ? `/api/${rewrittenPath}` : "/api";
+    url.searchParams.delete("mileshopPath");
+  }
+
   if (url.pathname === "/api") {
     url.pathname = "/";
   } else if (url.pathname.startsWith("/api/")) {
