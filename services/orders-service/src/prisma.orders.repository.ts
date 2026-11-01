@@ -1,12 +1,29 @@
+import crypto from "node:crypto";
+
 import type { PrismaClient } from "../generated/orders-client/index.js";
 
 import type { OrderRecord } from "./orders.domain.js";
 import type { OrdersRepository } from "./orders.repository.js";
 import type { ReservationIntent } from "./orders.repository.js";
 import type { OrderCreatedEvent } from "./orders.types.js";
-import type { InventoryCommand } from "./inventory-command.repository.js";
+import type {
+  ClaimedInventoryCommand,
+  InventoryCommand,
+  InventoryCommandFailureResult,
+  InventoryCommandRepository,
+} from "./inventory-command.repository.js";
 
-export class PrismaOrdersRepository implements OrdersRepository {
+const INVENTORY_COMMAND_MAX_ATTEMPTS = 8;
+const INVENTORY_COMMAND_RETRY_BASE_DELAY_MS = 5_000;
+
+function inventoryCommandRetryDelay(attemptCount: number): number {
+  return Math.min(
+    INVENTORY_COMMAND_RETRY_BASE_DELAY_MS * 2 ** (attemptCount - 1),
+    300_000,
+  );
+}
+
+export class PrismaOrdersRepository implements OrdersRepository, InventoryCommandRepository {
   public constructor(private readonly prisma: PrismaClient) {}
 
   public async createReservationIntent(
@@ -177,6 +194,42 @@ export class PrismaOrdersRepository implements OrdersRepository {
     };
   }
 
+  public async listPendingAdminOrders(): Promise<OrderRecord[]> {
+    const rows = await this.prisma.order.findMany({
+      where: {
+        status: { in: ["AWAITING_PAYMENT_PROOF", "PAYMENT_REVIEW_PENDING"] },
+        paymentDecision: { is: null },
+        OR: [{ cancelRequestedAt: null }, { cancelResolvedAt: { not: null } }],
+      },
+      include: { lines: true },
+      orderBy: [{ createdAt: "asc" }, { orderId: "asc" }],
+    });
+
+    return rows.map((row) => ({
+      id: row.id,
+      orderId: row.orderId,
+      customerId: row.customerId,
+      idempotencyKey: row.idempotencyKey,
+      subtotalCop: row.subtotalCop,
+      deliveryFeeCop: row.deliveryFeeCop,
+      totalCop: row.totalCop,
+      status: row.status as OrderRecord["status"],
+      createdAt: row.createdAt,
+      updatedAt: row.updatedAt,
+      reservationExpiresAt: row.reservationExpiresAt,
+      cancelRequestedAt: row.cancelRequestedAt,
+      cancelResolvedAt: row.cancelResolvedAt,
+      lines: row.lines.map((line) => ({
+        id: line.id,
+        productId: line.productId,
+        sku: line.sku,
+        name: line.name,
+        quantity: line.quantity,
+        unitPriceCop: line.unitPriceCop,
+      })),
+    }));
+  }
+
   public async expireDueOrders(now: Date, limit: number): Promise<number> {
     const due = await this.prisma.order.findMany({
       where: {
@@ -217,6 +270,151 @@ export class PrismaOrdersRepository implements OrdersRepository {
     return expired;
   }
 
+  public async claimPendingCommands(
+    now: Date,
+    leaseMilliseconds: number,
+    limit: number,
+  ): Promise<ClaimedInventoryCommand[]> {
+    await this.prisma.inventoryCommandOutbox.updateMany({
+      where: {
+        attemptCount: { gte: INVENTORY_COMMAND_MAX_ATTEMPTS },
+        OR: [
+          { status: "PENDING", nextAttemptAt: { lte: now } },
+          { status: "PROCESSING", leaseExpiresAt: { lte: now } },
+        ],
+      },
+      data: {
+        status: "FAILED",
+        claimToken: null,
+        leaseExpiresAt: null,
+        lastError: "Inventory command exceeded its retry limit",
+      },
+    });
+
+    const candidates = await this.prisma.inventoryCommandOutbox.findMany({
+      where: {
+        attemptCount: { lt: INVENTORY_COMMAND_MAX_ATTEMPTS },
+        OR: [
+          { status: "PENDING", nextAttemptAt: { lte: now } },
+          { status: "PROCESSING", leaseExpiresAt: { lte: now } },
+        ],
+      },
+      orderBy: [{ nextAttemptAt: "asc" }, { createdAt: "asc" }],
+      take: limit,
+    });
+
+    const claims: ClaimedInventoryCommand[] = [];
+    for (const candidate of candidates) {
+      const claimToken = crypto.randomUUID();
+      const eligibleState = candidate.status === "PENDING"
+        ? { status: "PENDING" as const, nextAttemptAt: { lte: now } }
+        : { status: "PROCESSING" as const, leaseExpiresAt: { lte: now } };
+      const claimed = await this.prisma.inventoryCommandOutbox.updateMany({
+        where: {
+          commandId: candidate.commandId,
+          attemptCount: candidate.attemptCount,
+          ...eligibleState,
+        },
+        data: {
+          status: "PROCESSING",
+          attemptCount: { increment: 1 },
+          claimToken,
+          leaseExpiresAt: new Date(now.getTime() + leaseMilliseconds),
+        },
+      });
+      if (claimed.count !== 1) {
+        continue;
+      }
+
+      if (
+        typeof candidate.payload !== "object" ||
+        candidate.payload === null ||
+        Array.isArray(candidate.payload)
+      ) {
+        throw new Error(`Inventory command payload is invalid: ${candidate.commandId}`);
+      }
+
+      claims.push({
+        command: {
+          commandId: candidate.commandId,
+          idempotencyKey: candidate.idempotencyKey,
+          orderId: candidate.orderId,
+          commandType: candidate.commandType,
+          payload: candidate.payload as Record<string, unknown>,
+        },
+        attemptCount: candidate.attemptCount + 1,
+        claimToken,
+      });
+    }
+
+    return claims;
+  }
+
+  public async markCommandFailed(
+    commandId: string,
+    claimToken: string,
+    reason: string,
+    failedAt: Date,
+  ): Promise<InventoryCommandFailureResult> {
+    const current = await this.prisma.inventoryCommandOutbox.findFirst({
+      where: { commandId, status: "PROCESSING", claimToken },
+      select: { attemptCount: true, nextAttemptAt: true },
+    });
+    if (!current) {
+      throw new Error(`Inventory command claim lost: ${commandId}`);
+    }
+
+    const nextAttemptAt = current.attemptCount >= INVENTORY_COMMAND_MAX_ATTEMPTS
+      ? null
+      : new Date(failedAt.getTime() + inventoryCommandRetryDelay(current.attemptCount));
+    const updated = await this.prisma.inventoryCommandOutbox.updateMany({
+      where: { commandId, status: "PROCESSING", claimToken },
+      data: {
+        status: nextAttemptAt ? "PENDING" : "FAILED",
+        nextAttemptAt: nextAttemptAt ?? current.nextAttemptAt,
+        claimToken: null,
+        leaseExpiresAt: null,
+        lastError: reason.slice(0, 1000),
+      },
+    });
+    if (updated.count !== 1) {
+      throw new Error(`Inventory command claim lost: ${commandId}`);
+    }
+
+    return { attemptCount: current.attemptCount, nextAttemptAt };
+  }
+
+  public async markCommandRejected(
+    commandId: string,
+    claimToken: string,
+    reason: string,
+    rejectedAt: Date,
+    terminalOrderStatus?: "RESERVATION_FAILED" | "RESERVATION_EXPIRED",
+  ): Promise<void> {
+    await this.prisma.$transaction(async (transaction) => {
+      const updated = await transaction.inventoryCommandOutbox.updateMany({
+        where: { commandId, status: "PROCESSING", claimToken },
+        data: {
+          status: "FAILED",
+          claimToken: null,
+          leaseExpiresAt: null,
+          lastError: reason.slice(0, 1000),
+          updatedAt: rejectedAt,
+        },
+      });
+      if (updated.count !== 1) {
+        throw new Error(`Inventory command claim lost: ${commandId}`);
+      }
+
+      if (terminalOrderStatus) {
+        await transaction.order.updateMany({
+          where: { inventoryCommands: { some: { commandId } } },
+          data: { status: terminalOrderStatus, updatedAt: rejectedAt },
+        });
+      }
+    });
+  }
+
   public async approvePayment(
     orderId: string,
     adminCustomerId: string,
@@ -227,9 +425,8 @@ export class PrismaOrdersRepository implements OrdersRepository {
       const updated = await transaction.order.updateMany({
         where: {
           orderId,
-          status: "PAYMENT_REVIEW_PENDING",
+          status: { in: ["AWAITING_PAYMENT_PROOF", "PAYMENT_REVIEW_PENDING"] },
           paymentDecision: { is: null },
-          paymentEvidence: { isNot: null },
           OR: [{ cancelRequestedAt: null }, { cancelResolvedAt: { not: null } }],
         },
         data: { status: "PAYMENT_APPROVED_FINALIZING", updatedAt: decidedAt },
@@ -263,9 +460,8 @@ export class PrismaOrdersRepository implements OrdersRepository {
       const updated = await transaction.order.updateMany({
         where: {
           orderId,
-          status: "PAYMENT_REVIEW_PENDING",
+          status: { in: ["AWAITING_PAYMENT_PROOF", "PAYMENT_REVIEW_PENDING"] },
           paymentDecision: { is: null },
-          paymentEvidence: { isNot: null },
           OR: [{ cancelRequestedAt: null }, { cancelResolvedAt: { not: null } }],
         },
         data: { status: "CANCELLED", updatedAt: decidedAt },
@@ -302,21 +498,35 @@ export class PrismaOrdersRepository implements OrdersRepository {
         where: { commandId, status: "PROCESSING", claimToken },
         select: { commandType: true, orderId: true },
       });
-      if (!command) return;
-      const updated = await transaction.order.updateMany({
-        where: { orderId: command.orderId, status: "PAYMENT_APPROVED_FINALIZING" },
-        data: { status: "CONFIRMED", updatedAt: completedAt },
-      });
-      if (updated.count !== 1) return;
-      await transaction.paymentEvidence.updateMany({
-        where: { orderId: command.orderId, retentionUntil: null, deletedAt: null },
-        data: { retentionUntil: new Date(completedAt.getTime() + 365 * 24 * 60 * 60 * 1000) },
-      });
+      if (!command) {
+        throw new Error(`Inventory command claim lost: ${commandId}`);
+      }
+      if (command.commandType === "COMMIT") {
+        const transitioned = await transaction.order.updateMany({
+          where: { orderId: command.orderId, status: "PAYMENT_APPROVED_FINALIZING" },
+          data: { status: "CONFIRMED", updatedAt: completedAt },
+        });
+        if (transitioned.count === 0) {
+          const current = await transaction.order.findUnique({
+            where: { orderId: command.orderId },
+            select: { status: true },
+          });
+          if (current?.status !== "CONFIRMED") {
+            throw new Error(`Order cannot be confirmed after inventory commit: ${command.orderId}`);
+          }
+        }
+        await transaction.paymentEvidence.updateMany({
+          where: { orderId: command.orderId, retentionUntil: null, deletedAt: null },
+          data: { retentionUntil: new Date(completedAt.getTime() + 365 * 24 * 60 * 60 * 1000) },
+        });
+      }
       const claimed = await transaction.inventoryCommandOutbox.updateMany({
         where: { commandId, status: "PROCESSING", claimToken },
         data: { status: "COMPLETED", claimToken: null, leaseExpiresAt: null, lastError: null, completedAt },
       });
-      if (claimed.count !== 1) return;
+      if (claimed.count !== 1) {
+        throw new Error(`Inventory command claim lost: ${commandId}`);
+      }
     });
   }
 
@@ -433,7 +643,10 @@ export class PrismaOrdersRepository implements OrdersRepository {
           orderId,
           customerId,
           status: "AWAITING_PAYMENT_PROOF",
-          reservationExpiresAt: { gt: cancelledAt },
+          OR: [
+            { reservationExpiresAt: null },
+            { reservationExpiresAt: { gt: cancelledAt } },
+          ],
           paymentDecision: { is: null },
           paymentEvidence: { is: null },
         },

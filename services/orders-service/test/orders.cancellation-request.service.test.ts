@@ -64,12 +64,18 @@ async function createPendingReview() {
 
 test("post-proof requests are idempotent and only cancel after refund handling is recorded", async () => {
   const { repository, record } = await createPendingReview();
-  let releaseAttempts = 0;
+  let releaseCommands = 0;
+  const originalAdd = repository.add.bind(repository);
+  repository.add = (command) => {
+    if (command.commandType === "RELEASE") {
+      releaseCommands += 1;
+    }
+    originalAdd(command);
+  };
   const service = new OrdersService(
     repository,
     { listActiveProducts: async () => [product] },
     { publishCreated: async () => undefined },
-    { processPendingCommands: async () => { releaseAttempts += 1; } },
   );
 
   const request = await service.requestCancellation(record.orderId, "customer-1");
@@ -88,7 +94,7 @@ test("post-proof requests are idempotent and only cancel after refund handling i
     "Cancel requested.",
   );
   assert.equal(blocked.result, "refund-not-recorded");
-  assert.equal(releaseAttempts, 0);
+  assert.equal(releaseCommands, 0);
 
   assert.equal(
     (await service.recordCancellationRefund(
@@ -109,7 +115,7 @@ test("post-proof requests are idempotent and only cancel after refund handling i
   assert.equal(cancelled.order?.status, "CANCELLED");
   assert.equal(cancelled.order?.cancellationRequest?.resolution, "CANCELLED");
   assert.equal((await service.listPendingCancellationRequests()).length, 0);
-  assert.equal(releaseAttempts, 1);
+  assert.equal(releaseCommands, 1);
 });
 
 test("admin may keep a requested order open without releasing its reservation", async () => {

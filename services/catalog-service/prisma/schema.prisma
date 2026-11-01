@@ -1,6 +1,7 @@
 generator client {
   provider = "prisma-client-js"
   output   = "../generated/catalog-client"
+  previewFeatures = ["driverAdapters"]
 }
 
 datasource db {
@@ -15,11 +16,65 @@ model Product {
   description String
   priceCop    Int
   stock       Int
+  imageUrl    String?
   isActive    Boolean  @default(true)
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
+  manualSales ManualSaleLine[]
+  stockReceipts StockReceiptLine[]
 
   @@index([isActive, name])
+}
+
+model StockReceipt {
+  id              String             @id @default(cuid())
+  idempotencyKey  String             @unique
+  adminCustomerId String
+  reason          String
+  requestFingerprint String
+  createdAt       DateTime           @default(now())
+  lines           StockReceiptLine[]
+
+  @@index([createdAt])
+  @@index([adminCustomerId, createdAt])
+}
+
+model StockReceiptLine {
+  id        String       @id @default(cuid())
+  receiptId String
+  productId String
+  sku       String
+  name      String
+  quantity  Int
+  receipt   StockReceipt @relation(fields: [receiptId], references: [id], onDelete: Cascade)
+  product   Product      @relation(fields: [productId], references: [id], onDelete: Restrict)
+
+  @@unique([receiptId, productId])
+}
+
+model ManualSale {
+  id              String           @id @default(cuid())
+  idempotencyKey  String           @unique
+  adminCustomerId String
+  requestLines    Json
+  createdAt       DateTime         @default(now())
+  lines           ManualSaleLine[]
+
+  @@index([createdAt])
+}
+
+model ManualSaleLine {
+  id             String     @id @default(cuid())
+  saleId         String
+  productId      String
+  sku            String
+  name           String
+  quantity       Int
+  unitPriceCop   Int
+  sale           ManualSale @relation(fields: [saleId], references: [id], onDelete: Cascade)
+  product        Product    @relation(fields: [productId], references: [id], onDelete: Restrict)
+
+  @@unique([saleId, productId])
 }
 
 model InventoryReservation {

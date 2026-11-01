@@ -1,5 +1,7 @@
 import { cookies } from "next/headers";
 
+import { fetchApiGateway } from "./api-gateway-url";
+
 export const ACCESS_TOKEN_TTL_SECONDS = 15 * 60;
 export const REFRESH_TOKEN_TTL_SECONDS = 30 * 24 * 60 * 60;
 
@@ -59,7 +61,7 @@ export async function clearSessionCookies(): Promise<void> {
 export async function exchangeRefreshToken(
   gatewayUrl: string,
   refreshToken: string,
-  fetcher: typeof fetch = fetch,
+  fetcher: typeof fetch = fetchApiGateway,
 ): Promise<
   | { status: "refreshed"; tokens: SessionTokens }
   | { status: "unauthenticated" }

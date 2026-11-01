@@ -48,7 +48,10 @@ test("cancels an owner's active reservation and atomically enqueues one RELEASE"
           orderId: "order-1",
           customerId: "customer-1",
           status: "AWAITING_PAYMENT_PROOF",
-          reservationExpiresAt: { gt: cancelledAt },
+          OR: [
+            { reservationExpiresAt: null },
+            { reservationExpiresAt: { gt: cancelledAt } },
+          ],
           paymentDecision: { is: null },
           paymentEvidence: { is: null },
         },

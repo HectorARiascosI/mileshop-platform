@@ -1,7 +1,7 @@
 ﻿import { cookies } from "next/headers";
 import { NextRequest } from "next/server";
 
-import { getApiGatewayEndpoint } from "@/lib/api-gateway-url";
+import { fetchApiGateway, getApiGatewayEndpoint } from "@/lib/api-gateway-url";
 
 /**
  * POST /api/orders
@@ -36,7 +36,7 @@ export async function POST(request: NextRequest) {
 
   let res: Response;
   try {
-    res = await fetch(endpoint, {
+    res = await fetchApiGateway(endpoint, {
       method: "POST",
       headers: {
         "Content-Type": "application/json",

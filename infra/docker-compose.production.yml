@@ -25,6 +25,7 @@ services:
       PORT: "3020"
       DATABASE_URL: ${DATABASE_URL_CATALOG:?Set DATABASE_URL_CATALOG}
       CATALOG_RESERVATION_TOKEN: ${CATALOG_RESERVATION_TOKEN:?Set CATALOG_RESERVATION_TOKEN}
+      CATALOG_INVENTORY_COMMAND_TOKEN: ${CATALOG_INVENTORY_COMMAND_TOKEN:?Set CATALOG_INVENTORY_COMMAND_TOKEN}
     expose:
       - "3020"
     restart: unless-stopped
@@ -41,12 +42,18 @@ services:
       DATABASE_URL: ${DATABASE_URL_ORDERS:?Set DATABASE_URL_ORDERS}
       CATALOG_SERVICE_URL: http://catalog-service:3020
       CATALOG_RESERVATION_TOKEN: ${CATALOG_RESERVATION_TOKEN:?Set CATALOG_RESERVATION_TOKEN}
+      CATALOG_INVENTORY_COMMAND_TOKEN: ${CATALOG_INVENTORY_COMMAND_TOKEN:?Set CATALOG_INVENTORY_COMMAND_TOKEN}
       NOTIFICATION_WORKER_URL: http://notification-worker:3010
+      ORDERS_INTERNAL_TOKEN: ${ORDERS_INTERNAL_TOKEN:?Set ORDERS_INTERNAL_TOKEN}
+      PAYMENT_EVIDENCE_STORAGE: local
+      PAYMENT_EVIDENCE_LOCAL_DIR: /var/lib/mileshop/payment-evidence
+    volumes:
+      - ${PAYMENT_EVIDENCE_HOST_DIR:-./.data/payment-evidence}:/var/lib/mileshop/payment-evidence
     depends_on:
       catalog-service:
-        condition: service_started
+        condition: service_healthy
       notification-worker:
-        condition: service_started
+        condition: service_healthy
     expose:
       - "3030"
     restart: unless-stopped
@@ -79,14 +86,37 @@ services:
       CATALOG_SERVICE_URL: http://catalog-service:3020
       ORDERS_SERVICE_URL: http://orders-service:3030
       IDENTITY_SERVICE_URL: http://identity-service:3040
+      ORDERS_INTERNAL_TOKEN: ${ORDERS_INTERNAL_TOKEN:?Set ORDERS_INTERNAL_TOKEN}
+      CATALOG_INVENTORY_COMMAND_TOKEN: ${CATALOG_INVENTORY_COMMAND_TOKEN:?Set CATALOG_INVENTORY_COMMAND_TOKEN}
       ALLOWED_ORIGINS: ${WEB_ORIGIN:?Set WEB_ORIGIN}
     depends_on:
       catalog-service:
-        condition: service_started
+        condition: service_healthy
       orders-service:
-        condition: service_started
+        condition: service_healthy
       identity-service:
-        condition: service_started
-    ports:
-      - "${API_BIND_ADDRESS:-127.0.0.1}:${API_PORT:-3000}:3000"
+        condition: service_healthy
+    expose:
+      - "3000"
     restart: unless-stopped
+
+  caddy:
+    image: caddy:2-alpine
+    environment:
+      API_DOMAIN: ${API_DOMAIN:?Set API_DOMAIN}
+    ports:
+      - "80:80"
+      - "443:443"
+      - "443:443/udp"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy-data:/data
+      - caddy-config:/config
+    depends_on:
+      api-gateway:
+        condition: service_healthy
+    restart: unless-stopped
+
+volumes:
+  caddy-data:
+  caddy-config:

@@ -86,7 +86,7 @@ test("rejects unsupported, mismatched, or signature-invalid evidence", () => {
   );
 });
 
-test("rejects empty files, invalid names, control characters, and files over 10 MiB", () => {
+test("rejects empty files, invalid names, control characters, and files over 4 MiB", () => {
   assert.throws(
     () => validatePaymentEvidence(upload(fixtures[0]!, { bytes: Buffer.alloc(0) })),
     /cannot be empty/,
@@ -100,11 +100,11 @@ test("rejects empty files, invalid names, control characters, and files over 10 
   Buffer.from("%%EOF").copy(oversizedPdf, oversizedPdf.length - 5);
   assert.throws(
     () => validatePaymentEvidence(upload(fixtures[0]!, { bytes: oversizedPdf })),
-    /exceeds the 10 MiB limit/,
+    /exceeds the 4 MiB limit/,
   );
 });
 
-test("accepts a valid file at the 10 MiB limit", () => {
+test("accepts a valid file at the 4 MiB limit", () => {
   const maximumPdf = Buffer.alloc(MAX_PAYMENT_EVIDENCE_SIZE_BYTES);
   Buffer.from("%PDF-1.7").copy(maximumPdf);
   Buffer.from("%%EOF").copy(maximumPdf, maximumPdf.length - 5);

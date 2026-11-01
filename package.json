@@ -34,13 +34,14 @@
     "lint:notification-worker": "npm run lint --workspace @mileshop/notification-worker",
     "lint:orders-service": "npm run lint --workspace @mileshop/orders-service",
     "lint:web": "npm run lint --workspace apps/web",
-    "test": "npm run test:web && npm run test:api-gateway && npm run test:notification-worker && npm run test:catalog-service && npm run test:orders-service && npm run test:identity-service",
+    "test": "npm run test:web && npm run test:api-gateway && npm run test:notification-worker && npm run test:catalog-service && npm run test:orders-service && npm run test:identity-service && npm run test:vercel-adapter",
     "test:api-gateway": "npm run test --workspace @mileshop/api-gateway",
     "test:catalog-service": "npm run test --workspace @mileshop/catalog-service",
     "test:identity-service": "npm run test --workspace @mileshop/identity-service",
     "test:notification-worker": "npm run test --workspace @mileshop/notification-worker",
     "test:orders-service": "npm run test --workspace @mileshop/orders-service",
     "test:web": "npm run test --workspace apps/web",
+    "test:vercel-adapter": "npm run test --workspace @mileshop/vercel-fastify-adapter",
     "typecheck": "npm run typecheck:web && npm run typecheck:services",
     "typecheck:services": "npm run typecheck:api-gateway && npm run typecheck --workspace @mileshop/notification-worker && npm run typecheck --workspace @mileshop/catalog-service && npm run typecheck --workspace @mileshop/orders-service && npm run typecheck --workspace @mileshop/identity-service",
     "typecheck:api-gateway": "npm run typecheck --workspace @mileshop/api-gateway",
@@ -54,6 +55,12 @@
     "esbuild@0.28.2": true
   },
   "overrides": {
+    "@nestjs/platform-fastify": {
+      "light-my-request": "6.6.0"
+    },
+    "fastify": {
+      "light-my-request": "6.6.0"
+    },
     "minimatch": "^11.0.1"
   }
 }

@@ -16,6 +16,7 @@ test("catalog starts with the seeded active product catalog", async () => {
     priceCop: 76000,
     stock: 12,
   });
+
   assert.deepEqual(products.at(-1), {
     id: "prod-mug-001",
     sku: "MILE-MUG-001",
@@ -24,6 +25,100 @@ test("catalog starts with the seeded active product catalog", async () => {
     priceCop: 28000,
     stock: 24,
   });
+});
+
+test("admin can manage products and receive stock with an auditable idempotent receipt", async () => {
+  const service = new CatalogService(new InMemoryCatalogStore([]));
+  const product = await service.createProduct({
+    sku: "NEW-ITEM-01",
+    name: "Nuevo artículo",
+    description: "Descripción",
+    priceCop: 12500,
+    imageUrl: "https://images.example.com/item.jpg",
+    isActive: true,
+  });
+
+  assert.equal(product.stock, 0);
+  assert.equal(product.imageUrl, "https://images.example.com/item.jpg");
+  const lines = [{ productId: product.id, quantity: 8 }];
+  const first = await service.receiveStock("admin-1", "receipt-1", "Compra al proveedor", lines);
+  const replay = await service.receiveStock("admin-1", "receipt-1", "Compra al proveedor", lines);
+
+  assert.deepEqual(replay, first);
+  assert.equal((await service.listProducts())[0]?.stock, 8);
+  assert.equal((await service.listAdminProducts())[0]?.isActive, true);
+  await assert.rejects(
+    () => service.receiveStock("admin-1", "receipt-1", "Ajuste distinto", lines),
+    { code: "CONFLICT" },
+  );
+  await assert.rejects(
+    () => service.createProduct({
+      sku: "new-item-01",
+      name: "SKU duplicado",
+      description: "",
+      priceCop: 0,
+      imageUrl: null,
+      isActive: true,
+    }),
+    { code: "CONFLICT" },
+  );
+});
+
+test("admin can soft-disable a product without deleting its inventory history", async () => {
+  const service = new CatalogService(new InMemoryCatalogStore([]));
+  const product = await service.createProduct({
+    sku: "DISABLE-01",
+    name: "Producto desactivable",
+    description: "",
+    priceCop: 100,
+    imageUrl: null,
+    isActive: true,
+  });
+  await service.receiveStock("admin-1", "receipt-disable", "Compra inicial", [
+    { productId: product.id, quantity: 2 },
+  ]);
+  const deactivated = await service.updateProduct(product.id, {
+    sku: product.sku,
+    name: product.name,
+    description: product.description,
+    priceCop: product.priceCop,
+    imageUrl: null,
+    isActive: false,
+  });
+
+  assert.equal(deactivated.stock, 2);
+  assert.deepEqual(await service.listProducts(), []);
+  assert.equal((await service.listAdminProducts())[0]?.isActive, false);
+  await assert.rejects(
+    () => service.recordManualSale("admin-1", "sale-disabled", [
+      { productId: product.id, quantity: 1 },
+    ]),
+    { code: "INSUFFICIENT_INVENTORY" },
+  );
+});
+
+test("manual sales atomically reduce stock and replay idempotently", async () => {
+  const service = createInventoryService(3);
+  const lines = [{ productId: "product-1", quantity: 2 }];
+
+  const first = await service.recordManualSale("admin-1", "sale-key-1", lines);
+  const replay = await service.recordManualSale("admin-1", "sale-key-1", lines);
+
+  assert.deepEqual(replay, first);
+  assert.equal(first.lines[0]?.quantity, 2);
+  assert.equal((await service.listProducts()).find((product) => product.id === "product-1")?.stock, 1);
+  await assert.rejects(
+    () => service.recordManualSale("admin-1", "sale-key-1", [
+      { productId: "product-1", quantity: 1 },
+    ]),
+    { code: "CONFLICT" },
+  );
+  await assert.rejects(
+    () => service.recordManualSale("admin-1", "sale-key-2", [
+      { productId: "product-1", quantity: 2 },
+    ]),
+    { code: "INSUFFICIENT_INVENTORY" },
+  );
 });
 
 function createInventoryService(stock = 1): CatalogService {

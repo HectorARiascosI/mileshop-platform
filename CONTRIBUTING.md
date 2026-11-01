@@ -88,7 +88,9 @@ Regla: cada commit debe resolver una única intención, ser compilable y explica
 
 ### Comandos internos de inventario
 
-Las rutas `POST /internal/inventory/reservations`, `/commit` y `/release` son para comunicación entre servicios, no para el cliente. Requieren `Authorization: Bearer <token>` y `Idempotency-Key` con el ID del pedido. Configura el mismo secreto fuerte en `CATALOG_INVENTORY_COMMAND_TOKEN` para `catalog-service` y `orders-service`; no hay valor por defecto y no debe guardarse en el repositorio. La reserva valida todas las líneas de forma atómica; las repeticiones con un contenido distinto se rechazan.
+Las rutas `POST /internal/inventory/reservations`, `/commit` y `/release` son para comunicación entre servicios, no para el cliente. Requieren `Authorization: Bearer <token>` y `Idempotency-Key` con el ID del pedido. Configura el mismo secreto fuerte en `CATALOG_INVENTORY_COMMAND_TOKEN` para `api-gateway`, `catalog-service` y `orders-service`; no hay valor por defecto y no debe guardarse en el repositorio. La reserva valida todas las líneas de forma atómica; las repeticiones con un contenido distinto se rechazan. Las ventas manuales también usan este token entre Gateway y Catálogo; Gateway exige previamente el rol `STORE_ADMIN`.
+
+La administradora gestiona productos desde `/admin/catalog`: puede crear y editar productos, cambiar su visibilidad (sin borrar registros relacionados con pedidos) y recibir inventario. Los productos nuevos comienzan con stock cero. Cada recepción requiere motivo y clave idempotente, incrementa el stock en una transacción y conserva responsable, líneas y huella de la solicitud en Catálogo. Las rutas administrativas de Gateway exigen el rol `STORE_ADMIN`; las rutas internas de Catálogo además exigen el token entre servicios. Las imágenes son URLs HTTPS opcionales, no se cargan ni alojan en MileShop.
 
 Al crear un pedido, `orders-service` guarda en una sola transacción el pedido, `OrderCreated.v1` y el comando durable de reserva. La respuesta inicial expone `status: "RESERVING_INVENTORY"` y `reservationExpiresAt` (seis horas después de su creación). Cuando Catálogo confirma, el estado cambia a `AWAITING_PAYMENT_PROOF`; si Catálogo rechaza permanentemente la reserva, cambia a `RESERVATION_FAILED`. Los errores de infraestructura se reintentan y no se confunden con un rechazo de inventario.
 
@@ -108,7 +110,7 @@ Los archivos no se sirven como estáticos ni se exponen mediante enlaces públic
 
 Configura un respaldo y ensaya la recuperación del volumen junto con la base de Orders; la copia de la base no incluye los archivos. Este almacenamiento en una sola VM es una estrategia de bajo costo, no alta disponibilidad ni una garantía contra pérdida del host.
 
-La validación acepta únicamente PDF, JPEG y PNG con extensión, MIME y firma de contenido coincidentes, nombres de archivo sin controles y un límite de 10 MiB. La interfaz de almacenamiento ofrece lectura en flujo y eliminación idempotente para que las capas de autorización y retención las implementen sin exponer claves ni rutas.
+La validación acepta únicamente PDF, JPEG y PNG con extensión, MIME y firma de contenido coincidentes, nombres de archivo sin controles y un límite de 4 MiB para que la carga pase por las funciones de Vercel con margen frente a su límite de solicitud. La interfaz de almacenamiento ofrece lectura en flujo y eliminación idempotente para que las capas de autorización y retención las implementen sin exponer claves ni rutas.
 
 El cliente usa `POST` y `GET /api/orders/{orderId}/payment-evidence` en la aplicación web. La gateway vuelve a verificar la identidad contra `identity-service`; `orders-service` autoriza la carga únicamente al propietario mientras el pedido espera el comprobante, y permite la lectura al propietario o a un `STORE_ADMIN` verificado. La descarga es privada, se transmite como adjunto y usa `Cache-Control: private, no-store`. Los endpoints internos de `orders-service` no deben exponerse como rutas públicas ni servirse directamente desde el almacenamiento.
 
@@ -197,7 +199,7 @@ Un rollback de aplicación solo es seguro mientras el esquema siga siendo compat
 
 Orders persiste eventos y comandos de inventario en outboxes durables. Los workers recuperan al iniciar y sondeos posteriores; un claim `PROCESSING` abandonado puede reclamarse al expirar su lease. Los fallos transitorios se reintentan con esperas exponenciales desde 5 segundos hasta 5 minutos. Tras ocho intentos, el elemento queda `FAILED`, genera un error que requiere intervención y no vuelve a procesarse automáticamente. Un `PENDING` atrasado suele indicar que el destino o la configuración no están disponibles; un `FAILED` requiere conciliación operativa.
 
-Para investigar, consulta los logs de Orders, Gateway y Catálogo; comprueba conectividad, estado de salud y que `CATALOG_INVENTORY_COMMAND_TOKEN` esté configurado con el mismo secreto en Catálogo y Orders. Revisa solo metadatos necesarios del outbox, por ejemplo:
+Para investigar, consulta los logs de Orders, Gateway y Catálogo; comprueba conectividad, estado de salud y que `CATALOG_INVENTORY_COMMAND_TOKEN` esté configurado con el mismo secreto en Gateway, Catálogo y Orders. Revisa solo metadatos necesarios del outbox, por ejemplo:
 
 ```sql
 SELECT "commandId", "orderId", "commandType", "status", "attemptCount",

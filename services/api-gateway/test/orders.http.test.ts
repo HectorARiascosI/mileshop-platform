@@ -37,6 +37,7 @@ test("admin evidence deletion requires a verified store-admin role", async () =>
         path: "admin/payments/:orderId/evidence",
         method: RequestMethod.POST,
       });
+
     }
   }
   Module({
@@ -101,6 +102,80 @@ test("admin evidence deletion requires a verified store-admin role", async () =>
       customerId: "admin-1",
       role: "STORE_ADMIN",
       confirmation: true,
+    }]);
+  } finally {
+    await app.close();
+  }
+});
+
+test("manual-sale route requires a verified administrator and forwards sale identity", async () => {
+  const calls: unknown[] = [];
+  let verifiedRole = "CUSTOMER";
+  class ManualSaleGatewayModule implements NestModule {
+    public configure(consumer: MiddlewareConsumer): void {
+      consumer.apply(AuthMiddleware).forRoutes({
+        path: "admin/catalog/manual-sales",
+        method: RequestMethod.POST,
+      });
+    }
+  }
+  Module({
+    controllers: [GatewayController],
+    providers: [
+      {
+        provide: CatalogClient,
+        useValue: {
+          recordManualSale: async (
+            adminCustomerId: string,
+            idempotencyKey: string,
+            lines: unknown,
+          ) => {
+            calls.push({ adminCustomerId, idempotencyKey, lines });
+            return { idempotencyKey, adminCustomerId, lines };
+          },
+        },
+      },
+      { provide: IdentityClient, useValue: {} },
+      { provide: OrderService, useValue: {} },
+      {
+        provide: "AUTH_FETCH",
+        useValue: async () => new Response(JSON.stringify({
+          customerId: "admin-1",
+          email: "admin@example.test",
+          role: verifiedRole,
+        }), { status: 200 }),
+      },
+      { provide: IDENTITY_SERVICE_URL, useValue: "http://identity.local" },
+      AuthMiddleware,
+      StoreAdminGuard,
+    ],
+  })(ManualSaleGatewayModule);
+
+  const app = await NestFactory.create<NestFastifyApplication>(
+    ManualSaleGatewayModule,
+    new FastifyAdapter(),
+    { logger: false },
+  );
+  await app.listen(0, "127.0.0.1");
+  try {
+    const url = `${await app.getUrl()}/admin/catalog/manual-sales`;
+    const headers = {
+      authorization: "Bearer trusted-session",
+      "content-type": "application/json",
+      "idempotency-key": "sale-1",
+    };
+    const body = JSON.stringify({ lines: [{ productId: "product-1", quantity: 2 }] });
+    const customer = await fetch(url, { method: "POST", headers, body });
+    assert.equal(customer.status, 403);
+    assert.equal(calls.length, 0);
+
+    verifiedRole = "STORE_ADMIN";
+    const admin = await fetch(url, { method: "POST", headers, body });
+    assert.equal(admin.status, 201, await admin.text());
+    assert.deepEqual(calls, [{
+      adminCustomerId: "admin-1",
+      idempotencyKey: "sale-1",
+      lines: [{ productId: "product-1", quantity: 2 }],
     }]);
   } finally {
     await app.close();
@@ -528,7 +603,7 @@ test("payment evidence routes require verified identity and proxy private upload
   );
   await app.register(multipart, {
     attachFieldsToBody: true,
-    limits: { fileSize: 10 * 1024 * 1024, files: 1, fields: 1, parts: 2 },
+    limits: { fileSize: 4 * 1024 * 1024, files: 1, fields: 1, parts: 2 },
   });
   await app.listen(0, "127.0.0.1");
   try {

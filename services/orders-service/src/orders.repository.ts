@@ -6,6 +6,7 @@ export interface OrdersRepository {
   save(record: OrderRecord, event: OrderCreatedEvent): Promise<void>;
   findByOrderId(orderId: string): Promise<OrderRecord | null>;
   findByIdempotencyKey(idempotencyKey: string): Promise<OrderRecord | null>;
+  listPendingAdminOrders(): Promise<OrderRecord[]>;
   createReservationIntent?(intent: ReservationIntent, record: OrderRecord, event: OrderCreatedEvent): Promise<void>;
   completeReservationIntent?(intent: ReservationIntent, record: OrderRecord, event: OrderCreatedEvent): Promise<void>;
   listPendingReservationIntents?(now: Date): Promise<ReservationIntent[]>;
@@ -107,6 +108,17 @@ export class InMemoryOrdersRepository implements OrdersRepository {
     return orderId ? this.findByOrderId(orderId) : null;
   }
 
+  public async listPendingAdminOrders(): Promise<OrderRecord[]> {
+    return [...this.records.values()]
+      .filter((record) =>
+        record.status === "AWAITING_PAYMENT_PROOF" ||
+        record.status === "PAYMENT_REVIEW_PENDING",
+      )
+      .filter((record) => !record.cancelRequestedAt || record.cancelResolvedAt)
+      .sort((left, right) => left.createdAt.getTime() - right.createdAt.getTime())
+      .map((record) => structuredClone(record));
+  }
+
   public async createReservationIntent(
     intent: ReservationIntent,
     record: OrderRecord,
@@ -143,7 +155,11 @@ export class InMemoryOrdersRepository implements OrdersRepository {
 
   public async approvePayment(orderId: string, _adminCustomerId: string, _decidedAt: Date, command: InventoryCommand): Promise<any> {
     const record = this.records.get(orderId);
-    if (!record || record.status !== "PAYMENT_REVIEW_PENDING") return "not-pending";
+    if (
+      !record ||
+      (record.status !== "AWAITING_PAYMENT_PROOF" &&
+        record.status !== "PAYMENT_REVIEW_PENDING")
+    ) return "not-pending";
     record.status = "PAYMENT_APPROVED_FINALIZING";
     this.add(command);
     return "approved";
@@ -151,7 +167,11 @@ export class InMemoryOrdersRepository implements OrdersRepository {
 
   public async rejectPayment(orderId: string, _adminCustomerId: string, _reason: string, _decidedAt: Date, command: InventoryCommand): Promise<any> {
     const record = this.records.get(orderId);
-    if (!record || record.status !== "PAYMENT_REVIEW_PENDING") return "not-pending";
+    if (
+      !record ||
+      (record.status !== "AWAITING_PAYMENT_PROOF" &&
+        record.status !== "PAYMENT_REVIEW_PENDING")
+    ) return "not-pending";
     record.status = "CANCELLED";
     this.add(command);
     return "rejected";

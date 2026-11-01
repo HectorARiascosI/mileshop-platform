@@ -171,4 +171,61 @@ export class OrderService {
     const result = (await response.json()) as { data: OrderResult };
     return result.data;
   }
+
+  public async listAdminOrders(customerId: string): Promise<OrderResult[]> {
+    const response = await this.requestAdmin("/admin/orders", "GET", customerId);
+    const result = (await response.json()) as { data: OrderResult[] };
+    return result.data;
+  }
+
+  public async confirmAdminOrder(customerId: string, orderId: string): Promise<unknown> {
+    const response = await this.requestAdmin(
+      `/admin/orders/${encodeURIComponent(orderId)}/confirm`,
+      "POST",
+      customerId,
+    );
+    return (await response.json() as { data: unknown }).data;
+  }
+
+  public async cancelAdminOrder(
+    customerId: string,
+    orderId: string,
+    reason: string,
+  ): Promise<unknown> {
+    const response = await this.requestAdmin(
+      `/admin/orders/${encodeURIComponent(orderId)}/cancel`,
+      "POST",
+      customerId,
+      { reason },
+    );
+    return (await response.json() as { data: unknown }).data;
+  }
+
+  private async requestAdmin(
+    path: string,
+    method: "GET" | "POST",
+    customerId: string,
+    body?: unknown,
+  ): Promise<Response> {
+    let response: Response;
+    try {
+      response = await this.fetcher(`${this.ordersServiceUrl}${path}`, {
+        method,
+        headers: {
+          ...(body !== undefined ? { "content-type": "application/json" } : {}),
+          ...this.internalHeaders(customerId, "STORE_ADMIN"),
+        },
+        ...(body !== undefined ? { body: JSON.stringify(body) } : {}),
+        signal: AbortSignal.timeout(3_000),
+      });
+    } catch {
+      throw new ServiceUnavailableException("Orders service is unavailable");
+    }
+
+    if (response.status === 404) throw new NotFoundException("Order not found");
+    if (response.status === 400) throw new BadRequestException("Order decision was rejected");
+    if (response.status === 409) throw new ConflictException("Order is no longer pending");
+    if (!response.ok) throw new ServiceUnavailableException("Orders service is unavailable");
+    return response;
+  }
 }

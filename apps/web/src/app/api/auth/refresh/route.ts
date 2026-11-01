@@ -1,6 +1,6 @@
 ﻿import { cookies } from "next/headers";
 
-import { getApiGatewayEndpoint } from "@/lib/api-gateway-url";
+import { fetchApiGateway, getApiGatewayEndpoint } from "@/lib/api-gateway-url";
 import { clearSessionCookies, setSessionCookies } from "@/lib/auth-session";
 
 export async function POST() {
@@ -19,7 +19,7 @@ export async function POST() {
 
   let res: Response;
   try {
-    res = await fetch(endpoint, {
+    res = await fetchApiGateway(endpoint, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ refreshToken }),

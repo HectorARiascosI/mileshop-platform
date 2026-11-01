@@ -31,9 +31,9 @@ export class PaymentEvidenceRetentionWorker implements OnModuleInit, OnModuleDes
   ) {}
 
   public onModuleInit(): void {
-    if (!this.enabled) {
+    if (!this.enabled || process.env.VERCEL) {
       this.logger.warn(
-        "Payment evidence retention cleanup is disabled; enable it only after legal/accounting approval",
+        "Payment evidence retention cleanup is disabled in this runtime",
       );
       return;
     }
