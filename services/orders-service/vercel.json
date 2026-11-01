@@ -1,5 +1,6 @@
 {
   "$schema": "https://openapi.vercel.sh/vercel.json",
+  "outputDirectory": "dist",
   "buildCommand": "npm run db:generate && npm run build",
   "functions": {
     "api/[...path].ts": {

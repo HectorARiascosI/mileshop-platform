@@ -41,13 +41,13 @@ Configura **Node.js Version 24.x** en los seis proyectos; el adaptador Neon usa 
 | Proyecto Vercel | Root Directory | Configuración de build |
 |---|---|---|
 | Storefront | `apps/web` | Next.js |
-| API Gateway | `services/api-gateway` | `vercel.json` |
-| Catálogo | `services/catalog-service` | `vercel.json` |
-| Identidad | `services/identity-service` | `vercel.json` |
-| Pedidos | `services/orders-service` | `vercel.json` |
-| Notificaciones | `services/notification-worker` | `vercel.json` |
+| API Gateway | `services/api-gateway` | Framework `Other`; `vercel.json` |
+| Catálogo | `services/catalog-service` | Framework `Other`; `vercel.json` |
+| Identidad | `services/identity-service` | Framework `Other`; `vercel.json` |
+| Pedidos | `services/orders-service` | Framework `Other`; `vercel.json` |
+| Notificaciones | `services/notification-worker` | Framework `Other`; `vercel.json` |
 
-Conserva el comando de instalación detectado para el workspace raíz (`npm install`/`npm ci` según la configuración del proyecto). Los `vercel.json` de servicios generan el cliente Prisma donde se necesita y compilan la aplicación. Los despliegues no ejecutan migraciones automáticamente.
+Para los servicios backend, usa el preset `Other`, no NestJS: NestJS puede tratar `src/app.ts` como función y fallar al invocarla. Cada `vercel.json` define `outputDirectory: dist`, el comando de build y la función `api/[...path].ts`; el handler publica las rutas bajo `/api`. Conserva el comando de instalación detectado para el workspace raíz (`npm install`/`npm ci` según la configuración del proyecto). Los despliegues no ejecutan migraciones automáticamente.
 
 Cada URL de servicio usada por otro proyecto debe incluir el prefijo `/api`, por ejemplo `https://catalogo.example/api`. El adaptador quita ese prefijo antes de entregar la solicitud a Fastify.
 
