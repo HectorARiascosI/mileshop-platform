@@ -68,13 +68,12 @@ test("approval atomically transitions the order, records the admin, and enqueues
     args: {
       where: {
         orderId: "order-1",
-        status: "PAYMENT_REVIEW_PENDING",
+        status: { in: ["AWAITING_PAYMENT_PROOF", "PAYMENT_REVIEW_PENDING"] },
         paymentDecision: { is: null },
         OR: [
           { cancelRequestedAt: null },
           { cancelResolvedAt: { not: null } },
         ],
-        paymentEvidence: { isNot: null },
       },
       data: {
         status: "PAYMENT_APPROVED_FINALIZING",
@@ -291,9 +290,8 @@ test("rejection atomically transitions pending review, records reason and admin,
       args: {
         where: {
           orderId: "order-1",
-          status: "PAYMENT_REVIEW_PENDING",
+          status: { in: ["AWAITING_PAYMENT_PROOF", "PAYMENT_REVIEW_PENDING"] },
           paymentDecision: { is: null },
-          paymentEvidence: { isNot: null },
           OR: [
             { cancelRequestedAt: null },
             { cancelResolvedAt: { not: null } },

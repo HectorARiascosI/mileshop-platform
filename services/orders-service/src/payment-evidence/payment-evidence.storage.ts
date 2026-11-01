@@ -18,7 +18,7 @@ import {
 } from "node:path";
 import { randomUUID } from "node:crypto";
 
-export const MAX_PAYMENT_EVIDENCE_SIZE_BYTES = 10 * 1024 * 1024;
+export const MAX_PAYMENT_EVIDENCE_SIZE_BYTES = 4 * 1024 * 1024;
 export const PAYMENT_EVIDENCE_STORAGE = "PAYMENT_EVIDENCE_STORAGE";
 
 export type PaymentEvidenceContentType =
@@ -142,7 +142,7 @@ export function validatePaymentEvidence(
     throw new PaymentEvidenceValidationError("The payment evidence file cannot be empty");
   }
   if (input.bytes.byteLength > MAX_PAYMENT_EVIDENCE_SIZE_BYTES) {
-    throw new PaymentEvidenceValidationError("The payment evidence file exceeds the 10 MiB limit");
+    throw new PaymentEvidenceValidationError("The payment evidence file exceeds the 4 MiB limit");
   }
 
   const contentType = input.contentType.trim().toLowerCase();

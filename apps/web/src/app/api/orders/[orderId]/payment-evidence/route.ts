@@ -5,6 +5,8 @@ type RouteContext = {
   params: Promise<{ orderId: string }>;
 };
 
+const MAX_PAYMENT_EVIDENCE_SIZE_BYTES = 4 * 1024 * 1024;
+
 async function getAccessToken(): Promise<string | null> {
   return (await cookies()).get("accessToken")?.value?.trim() || null;
 }
@@ -39,6 +41,14 @@ export async function POST(
     formData = await request.formData();
   } catch {
     return Response.json({ error: "Invalid payment evidence form" }, { status: 400 });
+  }
+
+  const file = formData.get("file");
+  if (file instanceof File && file.size > MAX_PAYMENT_EVIDENCE_SIZE_BYTES) {
+    return Response.json(
+      { error: "Payment evidence file exceeds the 4 MiB limit" },
+      { status: 413 },
+    );
   }
 
   const { orderId } = await context.params;

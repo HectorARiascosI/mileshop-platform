@@ -2,6 +2,10 @@ FROM node:24-bookworm-slim AS build
 
 WORKDIR /app
 
+RUN apt-get update \
+  && apt-get install -y --no-install-recommends openssl ca-certificates \
+  && rm -rf /var/lib/apt/lists/*
+
 COPY package.json package-lock.json ./
 COPY tsconfig.base.json ./
 COPY apps ./apps
@@ -23,6 +27,10 @@ FROM node:24-bookworm-slim AS runtime
 
 ENV NODE_ENV=production
 WORKDIR /app
+
+RUN apt-get update \
+  && apt-get install -y --no-install-recommends openssl ca-certificates \
+  && rm -rf /var/lib/apt/lists/*
 
 ARG SERVICE_DIR
 ARG SERVICE_WORKSPACE

@@ -8,6 +8,7 @@ type Product = {
   description: string;
   priceCop: number;
   stock: number;
+  imageUrl?: string | null;
 };
 
 type CatalogResult = {

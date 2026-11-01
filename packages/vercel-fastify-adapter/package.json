@@ -1,0 +1,12 @@
+{
+  "name": "@mileshop/vercel-fastify-adapter",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "scripts": {
+    "test": "node --import tsx --test test/**/*.test.ts"
+  },
+  "peerDependencies": {
+    "fastify": "^5.6.1"
+  }
+}

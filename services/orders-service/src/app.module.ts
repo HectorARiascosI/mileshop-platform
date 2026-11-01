@@ -3,6 +3,10 @@ import { Module } from "@nestjs/common";
 import { HttpCatalogReader } from "./catalog.reader.js";
 import { OrdersController } from "./orders.controller.js";
 import {
+  HttpInventoryCommandDispatcher,
+  InventoryCommandWorker,
+} from "./inventory-command.worker.js";
+import {
   HttpOrderEventPublisher,
   NOTIFICATION_WORKER_URL,
   ORDER_EVENT_PUBLISHER,
@@ -11,6 +15,7 @@ import {
 } from "./orders.service.js";
 import { PrismaOrdersRepository } from "./prisma.orders.repository.js";
 import { PrismaService } from "./prisma.service.js";
+import { ORDERS_INTERNAL_TOKEN } from "./payment-evidence/gateway-internal.guard.js";
 
 @Module({
   controllers: [OrdersController],
@@ -52,6 +57,28 @@ import { PrismaService } from "./prisma.service.js";
         process.env.CATALOG_SERVICE_URL ?? "http://localhost:3020",
         process.env.CATALOG_RESERVATION_TOKEN,
       ),
+    },
+    {
+      provide: "INVENTORY_COMMAND_REPOSITORY",
+      useFactory: (repository: PrismaOrdersRepository) => repository,
+      inject: ["ORDERS_REPOSITORY"],
+    },
+    {
+      provide: "INVENTORY_COMMAND_DISPATCHER",
+      useFactory: () => new HttpInventoryCommandDispatcher(
+        fetch,
+        process.env.CATALOG_SERVICE_URL ?? "http://localhost:3020",
+        process.env.CATALOG_INVENTORY_COMMAND_TOKEN ?? "",
+      ),
+    },
+    InventoryCommandWorker,
+    {
+      provide: "INVENTORY_COMMAND_WORKER",
+      useExisting: InventoryCommandWorker,
+    },
+    {
+      provide: ORDERS_INTERNAL_TOKEN,
+      useValue: process.env.ORDERS_INTERNAL_TOKEN || "local-development-orders-internal-token",
     },
   ],
 })

@@ -126,7 +126,12 @@ export class InventoryCommandWorker implements OnModuleInit, OnModuleDestroy {
     private readonly dispatcher: InventoryCommandDispatcher,
   ) {}
 
-  public onModuleInit(): void {
+  public async onModuleInit(): Promise<void> {
+    if (process.env.VERCEL) {
+      await this.processPendingCommands();
+      return;
+    }
+
     this.interval = setInterval(() => {
       void this.processPendingCommands().catch((error: unknown) => {
         this.logger.error("Inventory command polling failed", error);

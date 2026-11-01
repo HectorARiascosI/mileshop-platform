@@ -17,6 +17,7 @@ import {
 import { PaymentEvidenceValidationError } from "../src/payment-evidence/payment-evidence.storage.js";
 
 const gatewayToken = "0123456789abcdef0123456789abcdef";
+const inventoryCommandWorker = { processPendingCommands: async () => undefined };
 
 const product: CatalogProduct = {
   id: "p-1",
@@ -37,6 +38,7 @@ test("POST /orders returns reservation status and expiry over HTTP", async () =>
   Module({
     controllers: [OrdersController],
     providers: [
+      { provide: "INVENTORY_COMMAND_WORKER", useValue: inventoryCommandWorker },
       { provide: "ORDERS_SERVICE", useValue: service },
       {
         provide: "PAYMENT_EVIDENCE_SERVICE",
@@ -74,8 +76,9 @@ test("POST /orders returns reservation status and expiry over HTTP", async () =>
   );
   await app.register(multipart, {
     attachFieldsToBody: true,
-    limits: { fileSize: 10 * 1024 * 1024, files: 1, fields: 1, parts: 2 },
+    limits: { fileSize: 4 * 1024 * 1024, files: 1, fields: 1, parts: 2 },
   });
+
   await app.listen(0, "127.0.0.1");
   try {
     const url = `${await app.getUrl()}/orders`;
@@ -146,7 +149,7 @@ test("POST /orders returns reservation status and expiry over HTTP", async () =>
     assert.ok(data !== null && typeof data === "object" && "status" in data);
     assert.equal(data.status, "RESERVING_INVENTORY");
     assert.ok("reservationExpiresAt" in data);
-    assert.equal(typeof data.reservationExpiresAt, "string");
+    assert.equal(data.reservationExpiresAt, null);
 
     const orderId = data.orderId;
     const baseUrl = await app.getUrl();
@@ -180,6 +183,84 @@ test("POST /orders returns reservation status and expiry over HTTP", async () =>
   }
 });
 
+test("admin orders endpoint lists WhatsApp orders and confirms a verified payment", async () => {
+  const service = new OrdersService(
+    new InMemoryOrdersRepository(),
+    {
+      listActiveProducts: async () => [product],
+      reserveProducts: async (orderId, lines) => ({
+        orderId,
+        status: "RESERVED",
+        reservedAt: new Date().toISOString(),
+        lines: lines.map((line) => ({
+          ...line,
+          sku: product.sku,
+          name: product.name,
+          unitPriceCop: product.priceCop,
+        })),
+      }),
+    },
+    { publishCreated: async () => undefined },
+  );
+  const order = await service.createOrder({
+    customerId: "customer-1",
+    idempotencyKey: "00000000-0000-4000-8000-000000000098",
+    lines: [{
+      productId: product.id,
+      sku: product.sku,
+      name: product.name,
+      quantity: 1,
+      unitPriceCop: product.priceCop,
+    }],
+  });
+  class OrdersAdminHttpTestModule {}
+  Module({
+    controllers: [OrdersController],
+    providers: [
+      { provide: "INVENTORY_COMMAND_WORKER", useValue: inventoryCommandWorker },
+      { provide: "ORDERS_SERVICE", useValue: service },
+      { provide: ORDERS_INTERNAL_TOKEN, useValue: gatewayToken },
+    ],
+  })(OrdersAdminHttpTestModule);
+  const app = await NestFactory.create<NestFastifyApplication>(
+    OrdersAdminHttpTestModule,
+    new FastifyAdapter(),
+    { logger: false },
+  );
+  await app.listen(0, "127.0.0.1");
+  try {
+    const baseUrl = await app.getUrl();
+    const headers = {
+      "x-orders-internal-token": gatewayToken,
+      "x-authenticated-customer-id": "admin-1",
+      "x-authenticated-role": "STORE_ADMIN",
+    };
+    const queue = await fetch(`${baseUrl}/admin/orders`, { headers });
+    assert.equal(queue.status, 200);
+    const payload = await queue.json() as { data: Array<{ orderId: string; status: string }> };
+    assert.deepEqual(payload.data.map((entry) => entry.orderId), [order.orderId]);
+    assert.equal(payload.data[0]?.status, "AWAITING_PAYMENT_PROOF");
+
+    const confirmation = await fetch(`${baseUrl}/admin/orders/${order.orderId}/confirm`, {
+      method: "POST",
+      headers,
+    });
+    assert.equal(confirmation.status, 201);
+    const decision = await confirmation.json() as {
+      data: { result: string; order: { status: string } };
+    };
+    assert.equal(decision.data.result, "approved");
+    assert.equal(decision.data.order.status, "PAYMENT_APPROVED_FINALIZING");
+
+    const customer = await fetch(`${baseUrl}/admin/orders`, {
+      headers: { ...headers, "x-authenticated-role": "CUSTOMER" },
+    });
+    assert.equal(customer.status, 403);
+  } finally {
+    await app.close();
+  }
+});
+
 test("POST /orders/:orderId/cancel requires the trusted owner context", async () => {
   const calls: Array<{ orderId: string; customerId: string }> = [];
   const cancelledOrder = {
@@ -191,6 +272,7 @@ test("POST /orders/:orderId/cancel requires the trusted owner context", async ()
   Module({
     controllers: [OrdersController],
     providers: [
+      { provide: "INVENTORY_COMMAND_WORKER", useValue: inventoryCommandWorker },
       {
         provide: "ORDERS_SERVICE",
         useValue: {
@@ -260,6 +342,7 @@ test("post-proof cancellation and admin resolution require trusted actor context
   Module({
     controllers: [OrdersController],
     providers: [
+      { provide: "INVENTORY_COMMAND_WORKER", useValue: inventoryCommandWorker },
       {
         provide: "ORDERS_SERVICE",
         useValue: {
@@ -333,6 +416,16 @@ test("post-proof cancellation and admin resolution require trusted actor context
     assert.equal(
       (await fetch(`${baseUrl}/orders/order-2/cancellation-request`, {
         method: "POST",
+      })).status,
+      401,
+    );
+    assert.equal(
+      (await fetch(`${baseUrl}/orders/order-2/cancellation-request`, {
+        method: "POST",
+        headers: {
+          ...trustedCustomerHeaders,
+          "x-orders-internal-token": "incorrect-token",
+        },
       })).status,
       401,
     );
@@ -433,6 +526,7 @@ test("POST and GET payment evidence routes accept multipart and stream private f
   Module({
     controllers: [OrdersController],
     providers: [
+      { provide: "INVENTORY_COMMAND_WORKER", useValue: inventoryCommandWorker },
       { provide: "ORDERS_SERVICE", useValue: {} },
       { provide: "PAYMENT_EVIDENCE_SERVICE", useValue: evidenceService },
       { provide: ORDERS_INTERNAL_TOKEN, useValue: gatewayToken },
@@ -447,7 +541,7 @@ test("POST and GET payment evidence routes accept multipart and stream private f
   );
   await app.register(multipart, {
     attachFieldsToBody: true,
-    limits: { fileSize: 10 * 1024 * 1024, files: 1, fields: 1, parts: 2 },
+    limits: { fileSize: 4 * 1024 * 1024, files: 1, fields: 1, parts: 2 },
   });
   await app.listen(0, "127.0.0.1");
   try {
@@ -486,7 +580,7 @@ test("POST and GET payment evidence routes accept multipart and stream private f
     const oversizedForm = new FormData();
     oversizedForm.append(
       "file",
-      new Blob([new Uint8Array(10 * 1024 * 1024 + 1)], { type: "application/pdf" }),
+      new Blob([new Uint8Array(4 * 1024 * 1024 + 1)], { type: "application/pdf" }),
       "large.pdf",
     );
     const oversized = await fetch(
@@ -519,6 +613,37 @@ test("POST and GET payment evidence routes accept multipart and stream private f
     assert.equal(download.headers.get("x-content-type-options"), "nosniff");
     assert.match(download.headers.get("content-disposition") ?? "", /^attachment;/);
     assert.equal(await download.text(), "private-proof");
+  } finally {
+    await app.close();
+  }
+});
+
+test("payment evidence routes fail explicitly when storage is not configured", async () => {
+  class EvidenceUnavailableHttpTestModule {}
+  Module({
+    controllers: [OrdersController],
+    providers: [
+      { provide: "INVENTORY_COMMAND_WORKER", useValue: inventoryCommandWorker },
+      { provide: "ORDERS_SERVICE", useValue: {} },
+      { provide: ORDERS_INTERNAL_TOKEN, useValue: gatewayToken },
+    ],
+  })(EvidenceUnavailableHttpTestModule);
+
+  const app = await NestFactory.create<NestFastifyApplication>(
+    EvidenceUnavailableHttpTestModule,
+    new FastifyAdapter(),
+    { logger: false },
+  );
+  await app.listen(0, "127.0.0.1");
+  try {
+    const response = await fetch(`${await app.getUrl()}/orders/order-1/payment-evidence`, {
+      headers: {
+        "x-orders-internal-token": gatewayToken,
+        "x-authenticated-customer-id": "customer-1",
+        "x-authenticated-role": "CUSTOMER",
+      },
+    });
+    assert.equal(response.status, 503);
   } finally {
     await app.close();
   }
@@ -584,6 +709,7 @@ test("admin payment queue, detail, and evidence routes require trusted admin con
   Module({
     controllers: [OrdersController],
     providers: [
+      { provide: "INVENTORY_COMMAND_WORKER", useValue: inventoryCommandWorker },
       { provide: "ORDERS_SERVICE", useValue: {} },
       { provide: "PAYMENT_EVIDENCE_SERVICE", useValue: evidenceService },
       { provide: ORDERS_INTERNAL_TOKEN, useValue: gatewayToken },
@@ -674,6 +800,7 @@ test("admin payment approval requires trusted admin identity and returns idempot
   Module({
     controllers: [OrdersController],
     providers: [
+      { provide: "INVENTORY_COMMAND_WORKER", useValue: inventoryCommandWorker },
       {
         provide: "ORDERS_SERVICE",
         useValue: {
@@ -754,6 +881,7 @@ test("admin payment rejection requires trusted admin identity and a reason", asy
   Module({
     controllers: [OrdersController],
     providers: [
+      { provide: "INVENTORY_COMMAND_WORKER", useValue: inventoryCommandWorker },
       {
         provide: "ORDERS_SERVICE",
         useValue: {
@@ -865,6 +993,7 @@ test("legal-hold routes require a trusted admin and retain an audit reason", asy
   Module({
     controllers: [OrdersController],
     providers: [
+      { provide: "INVENTORY_COMMAND_WORKER", useValue: inventoryCommandWorker },
       { provide: "ORDERS_SERVICE", useValue: {} },
       {
         provide: "PAYMENT_EVIDENCE_SERVICE",

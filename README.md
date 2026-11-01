@@ -8,7 +8,7 @@ Nueva plataforma distribuida para MileShop. El repositorio Django anterior se co
 - `packages/contracts` — contrato de evento compartido; los contratos HTTP actuales viven en los controllers y clientes de cada servicio.
 - `services/` — servicios desplegables de forma independiente.
 - `services/api-gateway` — entrada HTTP pública y composición de APIs.
-- `infra/` — PostgreSQL local y configuracion reproducible.
+- `infra/` — PostgreSQL local y recursos opcionales de Docker Compose.
 
 ## Gobernanza
 
@@ -16,6 +16,7 @@ Nueva plataforma distribuida para MileShop. El repositorio Django anterior se co
 - [docs/REPOSITORY.md](docs/REPOSITORY.md) — alcance, repositorios y criterios de separacion.
 - [docs/DELIVERY_HISTORY.md](docs/DELIVERY_HISTORY.md) — orden de entregas, commits y dependencias entre ramas.
 - [docs/PLAN-V1-2026.md](docs/PLAN-V1-2026.md) — plan objetivo, milestones y Definition of Done de la primera version estable.
+- [docs/DEPLOYMENT-VERCEL-NEON.md](docs/DEPLOYMENT-VERCEL-NEON.md) — despliegue de los seis proyectos en Vercel y las cuatro bases en Neon.
 - [docs/RELEASE-PLAYBOOK.md](docs/RELEASE-PLAYBOOK.md) — flujo de release, hotfix, rollback y promocion a produccion.
 - [docs/wiki/README.md](docs/wiki/README.md) — wiki operativa del proyecto: arquitectura, calidad y sostenimiento técnico.
 - [docs/adr/](docs/adr/) — decisiones de arquitectura con consecuencias, validacion y rollback.
@@ -46,9 +47,11 @@ Este repositorio aplica un criterio estricto:
 
 ## Estado
 
-El frontend, `api-gateway`, `notification-worker`, `catalog-service` y `orders-service` compilan y tienen pruebas. El gateway expone `/healthz`, `/catalog/products`, `POST /orders` y `GET /orders/:orderId`; las rutas de pedido autentican al cliente y la lectura solo devuelve pedidos de ese propietario. `orders-service` valida catálogo y calcula los importes, guarda el estado inicial `PENDING` y devuelve el pedido incluso si la notificación queda pendiente. El outbox duradero reintenta entregas con backoff exponencial (desde 5 segundos, sondeo cada 5 segundos, máximo 5 minutos) y marca los eventos que agotan los 8 intentos para intervención operativa. Los servicios con persistencia tienen PostgreSQL propio, migraciones Prisma y health checks.
+El frontend, `api-gateway`, `notification-worker`, `catalog-service` y `orders-service` compilan y tienen pruebas. El gateway expone `/healthz`, `/catalog/products`, `POST /orders` y `GET /orders/:orderId`; las rutas de pedido autentican al cliente y la lectura solo devuelve pedidos de ese propietario. La creación de un pedido reserva inventario y deja el estado `AWAITING_PAYMENT_PROOF`; el cliente comparte el resumen por WhatsApp y la administradora confirma el pago desde `/admin/orders`, lo que finaliza la reserva, o cancela el pedido para liberar el inventario. Esa misma pantalla registra ventas manuales con idempotencia y auditoría. El outbox duradero reintenta entregas con backoff exponencial (desde 5 segundos, sondeo cada 5 segundos, máximo 5 minutos) y marca los eventos que agotan los 8 intentos para intervención operativa. Los servicios con persistencia tienen PostgreSQL propio, migraciones Prisma y health checks.
 
 La primera version estable de la plataforma no se etiqueta ni se considera cerrada hasta cumplir el plan contenido en [docs/PLAN-V1-2026.md](docs/PLAN-V1-2026.md), que incluye alcance, milestones, calidad, preproduccion, pruebas unitarias e integracion, versionado semantico y evidencia de release.
+
+Para el despliegue serverless acordado, la guía vigente es [docs/DEPLOYMENT-VERCEL-NEON.md](docs/DEPLOYMENT-VERCEL-NEON.md). La interfaz administrativa todavía no incluye creación/edición de productos ni recepción de nuevo inventario; el catálogo real debe cargarse antes de abrir la tienda. El Compose de producción sigue disponible como alternativa operativa, pero no es la arquitectura Vercel elegida.
 
 ## Version 1.0.0
 

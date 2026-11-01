@@ -10,13 +10,19 @@ import {
   Inject,
   NotFoundException,
   Param,
+  Patch,
   Post,
   Req,
   StreamableFile,
   UseGuards,
 } from "@nestjs/common";
 
-import { CatalogClient } from "./catalog.client.js";
+import {
+  CatalogClient,
+  type CatalogProductInput,
+  type ManualSaleLineInput,
+  type StockReceiptLineInput,
+} from "./catalog.client.js";
 import { IdentityClient } from "./identity.client.js";
 import { OrderService, type CreateOrderInput } from "./orders.service.js";
 import { StoreAdminGuard } from "./store-admin.guard.js";
@@ -27,7 +33,9 @@ export class GatewayController {
   private readonly orders!: OrderService;
 
   public constructor(
+    @Inject(CatalogClient)
     private readonly catalog: CatalogClient,
+    @Inject(IdentityClient)
     private readonly identity: IdentityClient,
   ) {}
 
@@ -48,6 +56,155 @@ export class GatewayController {
   @Get("catalog/products")
   public async products(): Promise<{ data: Awaited<ReturnType<CatalogClient["listProducts"]>> }> {
     return { data: await this.catalog.listProducts() };
+  }
+
+  @Post("admin/catalog/manual-sales")
+  @UseGuards(StoreAdminGuard)
+  @HttpCode(201)
+  @Header("Cache-Control", "private, no-store")
+  public async recordManualSale(
+    @Body() body: unknown,
+    @Headers("idempotency-key") idempotencyKey: string | undefined,
+    @Req() req: any,
+  ): Promise<{ data: unknown }> {
+    if (!idempotencyKey?.trim() || idempotencyKey.trim().length > 128) {
+      throw new BadRequestException("A valid Idempotency-Key header is required");
+    }
+    if (
+      typeof body !== "object" ||
+      body === null ||
+      !("lines" in body)
+    ) {
+      throw new BadRequestException("Manual sale must include valid product quantities");
+    }
+    const lines = body.lines;
+    if (
+      !Array.isArray(lines) ||
+      lines.length === 0 ||
+      lines.length > 50 ||
+      !lines.every(
+        (line): line is ManualSaleLineInput =>
+          typeof line === "object" &&
+          line !== null &&
+          typeof line.productId === "string" &&
+          line.productId.trim().length > 0 &&
+          Number.isSafeInteger(line.quantity) &&
+          line.quantity > 0,
+      )
+    ) {
+      throw new BadRequestException("Manual sale must include valid product quantities");
+    }
+    const actor = this.actor(req);
+    return {
+      data: await this.catalog.recordManualSale(
+        actor.customerId,
+        idempotencyKey.trim(),
+        lines,
+      ),
+    };
+  }
+
+  @Get("admin/catalog/products")
+  @UseGuards(StoreAdminGuard)
+  @Header("Cache-Control", "private, no-store")
+  public async adminCatalogProducts(): Promise<{ data: unknown }> {
+    return { data: await this.catalog.listAdminProducts() };
+  }
+
+  @Post("admin/catalog/products")
+  @UseGuards(StoreAdminGuard)
+  @HttpCode(201)
+  @Header("Cache-Control", "private, no-store")
+  public async createCatalogProduct(
+    @Body() body: unknown,
+  ): Promise<{ data: unknown }> {
+    return { data: await this.catalog.createProduct(this.parseCatalogProduct(body)) };
+  }
+
+  @Patch("admin/catalog/products/:productId")
+  @UseGuards(StoreAdminGuard)
+  @Header("Cache-Control", "private, no-store")
+  public async updateCatalogProduct(
+    @Param("productId") productId: string,
+    @Body() body: unknown,
+  ): Promise<{ data: unknown }> {
+    if (!productId.trim()) throw new BadRequestException("Product id is required");
+    return {
+      data: await this.catalog.updateProduct(productId, this.parseCatalogProduct(body)),
+    };
+  }
+
+  @Post("admin/catalog/stock-receipts")
+  @UseGuards(StoreAdminGuard)
+  @HttpCode(201)
+  @Header("Cache-Control", "private, no-store")
+  public async receiveCatalogStock(
+    @Body() body: unknown,
+    @Headers("idempotency-key") idempotencyKey: string | undefined,
+    @Req() req: any,
+  ): Promise<{ data: unknown }> {
+    if (!idempotencyKey?.trim() || idempotencyKey.trim().length > 128) {
+      throw new BadRequestException("A valid Idempotency-Key header is required");
+    }
+    if (
+      typeof body !== "object" ||
+      body === null ||
+      !("reason" in body) ||
+      typeof body.reason !== "string" ||
+      !("lines" in body) ||
+      !Array.isArray(body.lines) ||
+      body.lines.length === 0 ||
+      body.lines.length > 50 ||
+      !body.lines.every(
+        (line): line is StockReceiptLineInput =>
+          typeof line === "object" &&
+          line !== null &&
+          typeof line.productId === "string" &&
+          line.productId.trim().length > 0 &&
+          Number.isSafeInteger(line.quantity) &&
+          line.quantity > 0,
+      )
+    ) {
+      throw new BadRequestException("Stock receipt must include a reason and valid quantities");
+    }
+    const actor = this.actor(req);
+    return {
+      data: await this.catalog.receiveStock(
+        actor.customerId,
+        idempotencyKey.trim(),
+        body.reason,
+        body.lines,
+      ),
+    };
+  }
+
+  private parseCatalogProduct(body: unknown): CatalogProductInput {
+    if (
+      typeof body !== "object" ||
+      body === null ||
+      !("sku" in body) ||
+      typeof body.sku !== "string" ||
+      !("name" in body) ||
+      typeof body.name !== "string" ||
+      !("description" in body) ||
+      typeof body.description !== "string" ||
+      !("priceCop" in body) ||
+      typeof body.priceCop !== "number" ||
+      !("imageUrl" in body) ||
+      (body.imageUrl !== null && typeof body.imageUrl !== "string") ||
+      !("isActive" in body) ||
+      typeof body.isActive !== "boolean"
+    ) {
+      throw new BadRequestException("Invalid product request");
+    }
+    return {
+      sku: body.sku,
+      name: body.name,
+      description: body.description,
+      priceCop: body.priceCop,
+      imageUrl: body.imageUrl,
+      isActive: body.isActive,
+    };
   }
 
   // ─── Identity ────────────────────────────────────────────────────────────
@@ -131,6 +288,42 @@ export class GatewayController {
       customerId: raw.customerId ?? req.customerId ?? "",
       role: raw.role ?? req.role ?? "CUSTOMER",
     };
+  }
+
+  @Get("admin/orders")
+  @UseGuards(StoreAdminGuard)
+  @Header("Cache-Control", "private, no-store")
+  public async adminOrders(@Req() req: any): Promise<{ data: unknown }> {
+    const actor = this.actor(req);
+    return { data: await this.orders.listAdminOrders(actor.customerId) };
+  }
+
+  @Post("admin/orders/:orderId/confirm")
+  @UseGuards(StoreAdminGuard)
+  @HttpCode(200)
+  @Header("Cache-Control", "private, no-store")
+  public async confirmAdminOrder(
+    @Param("orderId") orderId: string,
+    @Req() req: any,
+  ): Promise<{ data: unknown }> {
+    const actor = this.actor(req);
+    return { data: await this.orders.confirmAdminOrder(actor.customerId, orderId) };
+  }
+
+  @Post("admin/orders/:orderId/cancel")
+  @UseGuards(StoreAdminGuard)
+  @HttpCode(200)
+  @Header("Cache-Control", "private, no-store")
+  public async cancelAdminOrder(
+    @Param("orderId") orderId: string,
+    @Body() body: { reason?: unknown },
+    @Req() req: any,
+  ): Promise<{ data: unknown }> {
+    if (typeof body.reason !== "string" || !body.reason.trim()) {
+      throw new BadRequestException("Cancellation reason is required");
+    }
+    const actor = this.actor(req);
+    return { data: await this.orders.cancelAdminOrder(actor.customerId, orderId, body.reason) };
   }
 
   @Post("orders/:orderId/cancel")

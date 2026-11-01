@@ -1,6 +1,7 @@
 "use client";
 
 import Link from "next/link";
+import Image from "next/image";
 import { useRouter } from "next/navigation";
 import { useEffect, useState, useSyncExternalStore } from "react";
 
@@ -26,6 +27,7 @@ type Product = {
   description: string;
   priceCop: number;
   stock: number;
+  imageUrl?: string | null;
 };
 
 type CatalogShellProps = {
@@ -108,6 +110,7 @@ export function CatalogShell({ products, unavailable }: CatalogShellProps) {
   const [orderConfirmed, setOrderConfirmed] = useState(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [checkoutError, setCheckoutError] = useState<string | null>(null);
+  const [isStoreAdmin, setIsStoreAdmin] = useState(false);
 
   useEffect(() => {
     if (!isCartHydrated) {
@@ -115,6 +118,29 @@ export function CatalogShell({ products, unavailable }: CatalogShellProps) {
     }
     window.localStorage.setItem(STORAGE_KEY, JSON.stringify(cart));
   }, [cart, isCartHydrated]);
+
+  useEffect(() => {
+    let active = true;
+    void fetch("/api/auth/me", { cache: "no-store" })
+      .then(async (response) => {
+        if (!response.ok) return;
+        const profile: unknown = await response.json();
+        if (
+          active &&
+          typeof profile === "object" &&
+          profile !== null &&
+          "role" in profile
+        ) {
+          setIsStoreAdmin(profile.role === "STORE_ADMIN");
+        }
+      })
+      .catch(() => {
+        if (active) setIsStoreAdmin(false);
+      });
+    return () => {
+      active = false;
+    };
+  }, []);
 
   const visibleCart = isCartHydrated ? cart : [];
   const cartCount = getCartItemCount(visibleCart);
@@ -247,6 +273,11 @@ export function CatalogShell({ products, unavailable }: CatalogShellProps) {
 
         <div className="topbar-meta">
           <span>Compra local, elige con calma</span>
+          {isStoreAdmin && (
+            <Link href="/admin/orders" aria-label="Administrar MileShop">
+              Administración
+            </Link>
+          )}
           <button
             className="cart-button"
             type="button"
@@ -287,8 +318,19 @@ export function CatalogShell({ products, unavailable }: CatalogShellProps) {
           <section className="product-grid" aria-label="Productos disponibles">
             {products.map((product, index) => (
               <article className="product-card" key={product.id}>
-                <div className={`product-art product-art-${index % 4}`} aria-hidden="true">
-                  <span>{product.name.slice(0, 1).toUpperCase()}</span>
+                <div className={`product-art product-art-${index % 4}`}>
+                  {product.imageUrl ? (
+                    <Image
+                      className="h-full w-full object-cover"
+                      src={product.imageUrl}
+                      alt={product.name}
+                      width={400}
+                      height={300}
+                      unoptimized
+                    />
+                  ) : (
+                    <span aria-hidden="true">{product.name.slice(0, 1).toUpperCase()}</span>
+                  )}
                 </div>
 
                 <div className="product-info">

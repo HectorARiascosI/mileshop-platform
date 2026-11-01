@@ -86,7 +86,7 @@ export class OrderDomain {
       createdAt: now,
       updatedAt: now,
       requestFingerprint: command.idempotencyKey,
-      reservationExpiresAt: new Date(now.getTime() + 30 * 60_000),
+      reservationExpiresAt: null,
       lines: normalizedLines.map((line: CreateOrderCommand["lines"][number]) => ({
         id: crypto.randomUUID(),
         productId: line.productId,

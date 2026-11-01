@@ -29,6 +29,10 @@ export class OrderExpiryWorker implements OnModuleInit, OnModuleDestroy {
   ) {}
 
   public onModuleInit(): void {
+    if (process.env.VERCEL) {
+      return;
+    }
+
     this.interval = setInterval(
       () => this.runScheduledCycle(),
       RESERVATION_EXPIRY_POLL_INTERVAL_MS,

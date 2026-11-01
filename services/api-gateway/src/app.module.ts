@@ -20,7 +20,7 @@ import { StoreAdminGuard } from "./store-admin.guard.js";
     },
     {
       provide: ORDERS_INTERNAL_TOKEN,
-      useValue: process.env.ORDERS_INTERNAL_TOKEN ?? "local-development-orders-token",
+      useValue: process.env.ORDERS_INTERNAL_TOKEN || "local-development-orders-internal-token",
     },
     {
       provide: IDENTITY_SERVICE_URL,
@@ -43,6 +43,10 @@ export class AppModule implements NestModule {
       { path: "orders/:orderId/payment-evidence", method: RequestMethod.POST },
       { path: "orders/:orderId/payment-evidence", method: RequestMethod.GET },
       { path: "admin/payments", method: RequestMethod.GET },
+      { path: "admin/orders", method: RequestMethod.GET },
+      { path: "admin/orders/:orderId/confirm", method: RequestMethod.POST },
+      { path: "admin/orders/:orderId/cancel", method: RequestMethod.POST },
+      { path: "admin/catalog/manual-sales", method: RequestMethod.POST },
       { path: "admin/payments/:orderId", method: RequestMethod.GET },
       { path: "admin/payments/:orderId/evidence", method: RequestMethod.POST },
       { path: "admin/payments/:orderId/evidence", method: RequestMethod.GET },

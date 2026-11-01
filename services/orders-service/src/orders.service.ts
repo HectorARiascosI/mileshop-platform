@@ -260,6 +260,10 @@ export class OrdersService implements OnModuleInit, OnModuleDestroy {
 
   public async onModuleInit(): Promise<void> {
     await this.recoverPendingEvents();
+    await this.recoverPendingReservationIntents();
+    if (process.env.VERCEL) {
+      return;
+    }
     this.recoveryTimer = setInterval(() => {
       void this.recoverPendingEvents().catch((error: unknown) => {
         this.logger.error(
@@ -415,6 +419,11 @@ export class OrdersService implements OnModuleInit, OnModuleDestroy {
     return record ? { ...OrderDomain.toOrderView(record) } : null;
   }
 
+  public async listPendingAdminOrders(): Promise<Order[]> {
+    const records = await this.repository.listPendingAdminOrders();
+    return records.map((record) => OrderDomain.toOrderView(record));
+  }
+
   public async approvePayment(orderId: string, adminCustomerId: string): Promise<{ result: string; order?: Order | null }> {
     const current = await this.repository.findByOrderId(orderId);
     if ((current as any)?.cancelRequestedAt && !(current as any)?.cancelResolvedAt) {
@@ -462,9 +471,6 @@ export class OrdersService implements OnModuleInit, OnModuleDestroy {
       orderId, adminCustomerId, resolution === "KEEP_OPEN" ? "KEEP" : "CANCEL", note, new Date(), command,
     );
     const mapped = result === "kept" ? "kept-open" : result;
-    if (result === "cancelled") {
-      await (this.outbox as unknown as { processPendingCommands?: () => Promise<void> }).processPendingCommands?.();
-    }
     return { result: mapped, order: await this.getOrderById(orderId) };
   }
 

@@ -115,6 +115,25 @@ test("creates a valid order and stores it by orderId", async () => {
     ],
   });
 
+  test("admin queue lists WhatsApp orders and confirmation accepts awaiting proof", async () => {
+    const service = createService();
+    const order = await service.createOrder({
+      customerId: "customer-1",
+      idempotencyKey: "00000000-0000-4000-8000-000000000099",
+      lines: [createLine()],
+    });
+
+    const pending = await service.listPendingAdminOrders();
+    assert.equal(pending.length, 1);
+    assert.equal(pending[0]?.orderId, order.orderId);
+    assert.equal(pending[0]?.status, "AWAITING_PAYMENT_PROOF");
+
+    const decision = await service.approvePayment(order.orderId, "admin-1");
+    assert.equal(decision.result, "approved");
+    assert.equal(decision.order?.status, "PAYMENT_APPROVED_FINALIZING");
+    assert.equal((await service.listPendingAdminOrders()).length, 0);
+  });
+
   assert.equal(order.subtotalCop, 130000);
   assert.equal(order.deliveryFeeCop, 12000);
   assert.equal(order.totalCop, 142000);

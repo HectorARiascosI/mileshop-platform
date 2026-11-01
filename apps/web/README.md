@@ -27,11 +27,13 @@ NEXT_PUBLIC_WHATSAPP_BUSINESS_PHONE=
 
 `NEXT_PUBLIC_WHATSAPP_BUSINESS_PHONE` es el número Business público en formato internacional E.164, sin espacios; no es una credencial.
 
-Vercel aloja la aplicación Next.js y sus rutas API, pero no despliega automáticamente los servicios NestJS ni sus bases de datos. El gateway y los servicios deben estar desplegados por separado y ser accesibles desde Vercel; configurar esta variable no constituye por sí solo un despliegue end-to-end.
+El despliegue acordado usa un proyecto Vercel para el storefront y cinco proyectos separados para los servicios NestJS, con PostgreSQL en Neon. Configura los seis proyectos y sus variables según [`docs/DEPLOYMENT-VERCEL-NEON.md`](../../docs/DEPLOYMENT-VERCEL-NEON.md); configurar solo `API_GATEWAY_URL` no constituye por sí mismo un despliegue end-to-end.
 
 ## Estructura principal
 
 - `src/app/page.tsx` — catálogo y estado de disponibilidad
+- `src/app/admin/catalog/page.tsx` — administración autenticada de productos y recepciones de inventario
+- `src/app/admin/orders/page.tsx` — revisión de pedidos de WhatsApp y registro de ventas presenciales
 - `src/app/layout.tsx` — shell global y metadata
 - `src/app/globals.css` — estilos visuales del storefront
 

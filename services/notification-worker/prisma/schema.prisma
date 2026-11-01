@@ -1,6 +1,7 @@
 generator client {
   provider = "prisma-client-js"
   output   = "../generated/notification-client"
+  previewFeatures = ["driverAdapters"]
 }
 
 datasource db {

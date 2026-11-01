@@ -12,8 +12,9 @@ function jsonError(message: string, status: number): Response {
 export async function proxyAdminPayments(
   path: string,
   stream = false,
-  method: "GET" | "POST" = "GET",
+  method: "GET" | "POST" | "PATCH" = "GET",
   body?: string,
+  extraHeaders: Record<string, string> = {},
 ): Promise<Response> {
   const accessToken = (await cookies()).get("accessToken")?.value?.trim();
   if (!accessToken) {
@@ -27,6 +28,7 @@ export async function proxyAdminPayments(
       method,
       headers: {
         authorization: `Bearer ${accessToken}`,
+        ...extraHeaders,
         ...(body !== undefined ? { "content-type": "application/json" } : {}),
       },
       ...(body !== undefined ? { body } : {}),
