@@ -82,9 +82,11 @@ function parseOrderId(input: unknown): string {
 }
 
 function parseProductInput(input: unknown): ProductInput {
+  if (typeof input !== "object" || input === null) {
+    throw new BadRequestException("Invalid product request");
+  }
+  const imageUrl = "imageUrl" in input ? input.imageUrl : undefined;
   if (
-    typeof input !== "object" ||
-    input === null ||
     !("sku" in input) ||
     typeof input.sku !== "string" ||
     !("name" in input) ||
@@ -95,8 +97,8 @@ function parseProductInput(input: unknown): ProductInput {
     typeof input.priceCop !== "number" ||
     !("isActive" in input) ||
     typeof input.isActive !== "boolean" ||
-    !("imageUrl" in input) ||
-    (input.imageUrl !== null && typeof input.imageUrl !== "string")
+    imageUrl === undefined ||
+    (imageUrl !== null && typeof imageUrl !== "string")
   ) {
     throw new BadRequestException("Invalid product request");
   }
@@ -105,7 +107,7 @@ function parseProductInput(input: unknown): ProductInput {
     name: input.name,
     description: input.description,
     priceCop: input.priceCop,
-    imageUrl: input.imageUrl,
+    imageUrl,
     isActive: input.isActive,
   };
 }
