@@ -2,7 +2,7 @@ import type { FastifyInstance } from "fastify";
 import type { IncomingMessage, ServerResponse } from "node:http";
 
 import { createApplication } from "../dist/app.js";
-import { handleFastifyRequest } from "../../../packages/vercel-fastify-adapter/src/index";
+import { handleFastifyRequest } from "../../../packages/vercel-fastify-adapter/src/index.js";
 
 let fastifyPromise: Promise<FastifyInstance> | undefined;
 
