@@ -10,7 +10,7 @@
       "command": "npm",
       "args": ["test", "--workspace", "apps/web"],
       "cwd": "C:\\Users\\hecto\\OneDrive\\Desktop\\ProyectosEnProceso\\MileShop\\mileshop-platform",
-      "verificationMethod": "test-results",
+      "verificationMethod": "exit-code",
       "expected": "0",
       "timeoutSeconds": 300
     },

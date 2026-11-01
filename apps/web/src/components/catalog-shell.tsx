@@ -20,6 +20,7 @@ import {
   type WhatsAppOrderSummary,
 } from "@/lib/whatsapp-order";
 import { getOptimizedImageUrl } from "@/lib/imagekit-url";
+import { filterCatalogProducts } from "@/lib/catalog-search";
 
 type Product = {
   id: string;
@@ -112,6 +113,7 @@ export function CatalogShell({ products, unavailable }: CatalogShellProps) {
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [checkoutError, setCheckoutError] = useState<string | null>(null);
   const [isStoreAdmin, setIsStoreAdmin] = useState(false);
+  const [searchQuery, setSearchQuery] = useState("");
 
   useEffect(() => {
     if (!isCartHydrated) {
@@ -146,8 +148,11 @@ export function CatalogShell({ products, unavailable }: CatalogShellProps) {
   const visibleCart = isCartHydrated ? cart : [];
   const cartCount = getCartItemCount(visibleCart);
   const checkoutSummary = buildCheckoutSummary(visibleCart);
+  const heroProduct = products.find((product) => product.imageUrl);
+  const visibleProducts = filterCatalogProducts(products, searchQuery);
 
   const handleAddToCart = (product: Product) => {
+    if (product.stock <= 0) return;
     setCart((currentCart) =>
       addProductToCart(currentCart, {
         productId: product.id,
@@ -268,97 +273,187 @@ export function CatalogShell({ products, unavailable }: CatalogShellProps) {
     <div className="site-shell">
       <header className="topbar">
         <Link className="brand" href="/" aria-label="MileShop inicio">
-          <span className="brand-mark">M</span>
-          <span>MileShop</span>
+          <span className="brand-mark" aria-hidden="true">M</span>
+          <span className="brand-name">MileShop</span>
         </Link>
 
-        <div className="topbar-meta">
-          <span>Compra local, elige con calma</span>
+        <nav className="topbar-nav" aria-label="Navegación principal">
+          <a className="topbar-link" href="#catalogo">Catálogo</a>
           {isStoreAdmin && (
-            <Link href="/admin/orders" aria-label="Administrar MileShop">
+            <Link className="topbar-link" href="/admin/orders" aria-label="Administrar MileShop">
               Administración
             </Link>
           )}
-          <button
-            className="cart-button"
-            type="button"
-            aria-label="Ver carrito"
-            onClick={() => setIsCartOpen((current) => !current)}
-          >
-            Carrito <span className="cart-count">{cartCount}</span>
-          </button>
-        </div>
+        </nav>
+
+        <button
+          className="cart-button"
+          type="button"
+          aria-label={`Ver carrito, ${cartCount} productos`}
+          aria-expanded={isCartOpen}
+          onClick={() => setIsCartOpen((current) => !current)}
+        >
+          <span>Carrito</span>
+          <span className="cart-count" aria-hidden="true">{cartCount}</span>
+        </button>
       </header>
 
       <main className="catalog-page">
-        <section className="intro" aria-labelledby="catalog-title">
-          <div>
-            <p className="eyebrow">Selección MileShop</p>
-            <h1 id="catalog-title">
-              Lo que necesitas,
+        <section className="storefront-hero" aria-labelledby="storefront-title">
+          <div className="hero-copy">
+            <p className="eyebrow">
+              <span className="hero-indicator" aria-hidden="true" />
+              Catálogo MileShop
+            </p>
+            <h1 id="storefront-title">
+              Encuentra
               <br />
-              sin complicaciones.
+              lo que buscas<span>.</span>
             </h1>
+            <p className="hero-description">
+              Explora los productos disponibles, revisa sus detalles y prepara tu pedido para continuar por WhatsApp.
+            </p>
+            <a className="hero-cta" href="#catalogo">
+              Explorar el catálogo
+              <svg aria-hidden="true" viewBox="0 0 20 20" fill="none">
+                <path d="M4.5 10h11m-4.5-4.5L15.5 10 11 14.5" />
+              </svg>
+            </a>
           </div>
-          <p className="intro-copy">
-            Productos elegidos para resolver lo cotidiano. Explora el catálogo y encuentra tu próximo favorito.
-          </p>
+
+          <div className={`hero-visual${heroProduct ? " has-product-image" : ""}`}>
+            <span className="hero-orbit hero-orbit-outer" aria-hidden="true" />
+            <span className="hero-orbit hero-orbit-inner" aria-hidden="true" />
+            {heroProduct?.imageUrl ? (
+              <Image
+                className="hero-product-image"
+                src={getOptimizedImageUrl(heroProduct.imageUrl, 1200)}
+                alt={heroProduct.name}
+                width={720}
+                height={640}
+                sizes="(max-width: 760px) 100vw, 56vw"
+                unoptimized
+              />
+            ) : (
+              <span className="hero-monogram" aria-hidden="true">M</span>
+            )}
+            <span className="hero-visual-label" aria-hidden="true">MILESHOP / CATÁLOGO</span>
+          </div>
         </section>
 
-        {unavailable ? (
-          <section className="notice notice-error" role="alert">
-            <strong>No pudimos cargar el catálogo.</strong>
-            <span>Vuelve a intentarlo en unos momentos.</span>
-            <button className="add-button self-start" type="button" onClick={() => router.refresh()}>
-              Volver a intentar
-            </button>
-          </section>
-        ) : products.length === 0 ? (
-          <section className="notice" role="status">
-            <strong>No hay productos disponibles en este momento.</strong>
-            <span>Consulta nuevamente más tarde para ver las novedades del catálogo.</span>
-          </section>
-        ) : (
-          <section className="product-grid" aria-label="Productos disponibles">
-            {products.map((product, index) => (
-              <article className="product-card" key={product.id}>
-                <div className={`product-art product-art-${index % 4}`}>
-                  {product.imageUrl ? (
-                    <Image
-                      className="h-full w-full object-cover"
-                      src={getOptimizedImageUrl(product.imageUrl, 800)}
-                      alt={product.name}
-                      width={400}
-                      height={300}
-                      unoptimized
-                    />
-                  ) : (
-                    <span aria-hidden="true">{product.name.slice(0, 1).toUpperCase()}</span>
-                  )}
-                </div>
+        <section className="catalog-section" id="catalogo" aria-labelledby="catalog-title">
+          <div className="catalog-heading">
+            <div>
+              <p className="eyebrow">MileShop</p>
+              <h2 id="catalog-title">Catálogo</h2>
+              <p className="catalog-intro">
+                Revisa precios y disponibilidad antes de agregar productos al carrito.
+              </p>
+            </div>
+            {!unavailable && (
+              <p className="product-count" aria-live="polite">
+                {searchQuery.trim()
+                  ? `${visibleProducts.length} ${visibleProducts.length === 1 ? "resultado" : "resultados"}`
+                  : `${products.length} ${products.length === 1 ? "producto" : "productos"}`}
+              </p>
+            )}
+          </div>
 
-                <div className="product-info">
-                  <div className="product-heading">
-                    <p className="product-sku">{product.sku}</p>
-                    <span className="stock-label">{product.stock} disponibles</span>
+          {!unavailable && products.length > 0 && (
+            <label className="catalog-search">
+              <svg aria-hidden="true" viewBox="0 0 20 20" fill="none">
+                <circle cx="8.75" cy="8.75" r="5.75" />
+                <path d="m13 13 4 4" />
+              </svg>
+              <span className="visually-hidden">Buscar en el catálogo</span>
+              <input
+                type="search"
+                value={searchQuery}
+                onChange={(event) => setSearchQuery(event.target.value)}
+                placeholder="Buscar por nombre o código"
+                autoComplete="off"
+              />
+              {searchQuery && (
+                <button type="button" className="clear-search" onClick={() => setSearchQuery("")}>
+                  Limpiar
+                </button>
+              )}
+            </label>
+          )}
+
+          {unavailable ? (
+            <section className="notice notice-error" role="alert">
+              <strong>No pudimos cargar el catálogo.</strong>
+              <span>Vuelve a intentarlo en unos momentos.</span>
+              <button className="add-button self-start" type="button" onClick={() => router.refresh()}>
+                Volver a intentar
+              </button>
+            </section>
+          ) : products.length === 0 ? (
+            <section className="notice" role="status">
+              <strong>No hay productos disponibles en este momento.</strong>
+              <span>Consulta nuevamente más tarde para ver los productos de MileShop.</span>
+            </section>
+          ) : visibleProducts.length === 0 ? (
+            <section className="notice catalog-no-results" role="status">
+              <strong>No encontramos productos con ese criterio.</strong>
+              <span>Prueba con otro nombre o código de producto.</span>
+              <button className="add-button self-start" type="button" onClick={() => setSearchQuery("")}>
+                Ver todos los productos
+              </button>
+            </section>
+          ) : (
+            <ul className="product-grid" aria-label="Productos disponibles">
+              {visibleProducts.map((product) => (
+                <li className="product-card" key={product.id}>
+                  <div className="product-art">
+                    {product.imageUrl ? (
+                      <Image
+                        className="product-image"
+                        src={getOptimizedImageUrl(product.imageUrl, 800)}
+                        alt={product.name}
+                        width={600}
+                        height={480}
+                        sizes="(max-width: 480px) 46vw, (max-width: 760px) 44vw, (max-width: 1100px) 30vw, 22vw"
+                        unoptimized
+                      />
+                    ) : (
+                      <div className="product-image-fallback" aria-label={`Fotografía no disponible para ${product.name}`}>
+                        <span className="fallback-mark" aria-hidden="true">M</span>
+                        <span>Fotografía no disponible</span>
+                      </div>
+                    )}
                   </div>
 
-                  <h2>{product.name}</h2>
-                  <p className="product-description">
-                    {product.description || "Una elección práctica para tu día a día."}
-                  </p>
+                  <div className="product-info">
+                    <p className={`product-stock${product.stock <= 0 ? " is-unavailable" : ""}`}>
+                      <span className="stock-indicator" aria-hidden="true" />
+                      {product.stock > 0 ? `${product.stock} disponibles` : "Agotado"}
+                    </p>
+                    <h3>{product.name}</h3>
+                    {product.description && (
+                      <p className="product-description">{product.description}</p>
+                    )}
 
-                  <div className="product-footer">
-                    <strong>{formatPrice(product.priceCop)}</strong>
-                    <button className="add-button" type="button" onClick={() => handleAddToCart(product)}>
-                      Añadir <span aria-hidden="true">+</span>
-                    </button>
+                    <div className="product-footer">
+                      <strong>{formatPrice(product.priceCop)}</strong>
+                      <button
+                        className="add-button"
+                        type="button"
+                        onClick={() => handleAddToCart(product)}
+                        disabled={product.stock <= 0}
+                        aria-label={`Agregar ${product.name} al carrito`}
+                      >
+                        Agregar
+                        <span aria-hidden="true">+</span>
+                      </button>
+                    </div>
                   </div>
-                </div>
-              </article>
-            ))}
-          </section>
-        )}
+                </li>
+              ))}
+            </ul>
+          )}
+        </section>
       </main>
 
       <aside className={`cart-panel ${isCartOpen ? "is-open" : ""}`} aria-live="polite">
@@ -438,8 +533,8 @@ export function CatalogShell({ products, unavailable }: CatalogShellProps) {
       </aside>
 
       <footer className="footer">
-        <span>MileShop</span>
-        <span>Catálogo en evolución</span>
+        <span className="footer-brand">MileShop</span>
+        <a href="#catalogo">Explorar productos</a>
       </footer>
     </div>
   );
