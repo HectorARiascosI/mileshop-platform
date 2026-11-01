@@ -109,6 +109,9 @@ function parseProductInput(input: unknown): ProductInput {
     description: input.description,
     priceCop: input.priceCop,
     imageUrl,
+    ...("imageFileId" in input
+      ? { imageFileId: parseNullableString(input.imageFileId) }
+      : {}),
     isActive: input.isActive,
   };
 }

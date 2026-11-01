@@ -4,12 +4,19 @@
 
 - **Seis proyectos Vercel:** `apps/web` y los cinco servicios bajo `services/`.
 - **Cuatro bases PostgreSQL en Neon:** `catalog`, `identity`, `notifications` y `orders`, una por servicio propietario de datos.
+- El catálogo guarda fotos en ImageKit. El servicio web necesita `IMAGEKIT_PRIVATE_KEY` como variable secreta en cada entorno donde se administren imágenes.
 - Cada servicio NestJS se ejecuta como una función Vercel mediante el adaptador Fastify compartido; no requiere procesos residentes.
 - La reserva de inventario se ejecuta en el flujo de creación del pedido. En Vercel no se usan timers; el cron diario de Orders solo recupera trabajo pendiente y no libera reservas por antigüedad.
 - El pago es manual y fuera de la plataforma: el cliente continúa por WhatsApp Business y la administradora valida el pago. No hay pasarela de pago.
 - `notification-worker` queda en modo `log`; el enlace de WhatsApp se inicia desde el storefront. El worker no envía mensajes externos en esta configuración.
 
 Esta configuración no crea cuentas, bases, dominios ni variables por ti. Los niveles gratuitos tienen cuotas, límites y políticas que pueden cambiar; no se garantiza un costo de cero ni disponibilidad continua. Revisa los límites vigentes de [Vercel Functions](https://vercel.com/docs/functions/limitations) y [Cron Jobs](https://vercel.com/docs/cron-jobs/usage-and-pricing), y de [Neon](https://neon.tech/pricing).
+
+## Almacenamiento de imágenes del catálogo
+
+La aplicación usa ImageKit para alojar fotos públicas del catálogo y eliminarlas mediante su API cuando dejan de estar asociadas a un producto. Crea una cuenta, obtén una clave privada desde el panel y configura `IMAGEKIT_PRIVATE_KEY` en el proyecto Vercel de `apps/web` para Preview y Production. La clave solo se usa en rutas de servidor y no debe tener el prefijo `NEXT_PUBLIC_`. El plan gratuito publicado actualmente incluye 3 GB de almacenamiento y 20 GB de transferencia mensual; comprueba el panel y los límites vigentes antes de habilitar cargas. Las cargas desde el dispositivo están limitadas a 4 MB para ajustarse al tamaño máximo de solicitud del servidor web. No se requiere un dominio propio para servir los archivos.
+
+Para una instalación local, copia la variable vacía de `apps/web/.env.example` a `apps/web/.env.local` y define ahí la clave privada. No guardes la clave en Git, tickets ni mensajes.
 
 ## 1. Crear las bases en Neon
 
@@ -59,7 +66,7 @@ Configúralas por proyecto y por entorno (`Production`, `Preview` y `Development
 
 | Proyecto | Variables |
 |---|---|
-| Storefront | `API_GATEWAY_URL` (URL HTTPS del Gateway terminada en `/api`), `VERCEL_GATEWAY_BYPASS_SECRET` (solo Preview; bypass del proyecto Gateway), `NEXT_PUBLIC_WHATSAPP_BUSINESS_PHONE` (número Business internacional, sin `+`, espacios ni guiones). |
+| Storefront | `API_GATEWAY_URL` (URL HTTPS del Gateway terminada en `/api`), `VERCEL_GATEWAY_BYPASS_SECRET` (solo Preview; bypass del proyecto Gateway), `IMAGEKIT_PRIVATE_KEY` (clave privada de ImageKit para administrar fotos), `NEXT_PUBLIC_WHATSAPP_BUSINESS_PHONE` (número Business internacional, sin `+`, espacios ni guiones). |
 | API Gateway | `CATALOG_SERVICE_URL`, `IDENTITY_SERVICE_URL`, `ORDERS_SERVICE_URL` (cada una HTTPS y terminada en `/api`), `VERCEL_CATALOG_BYPASS_SECRET`, `VERCEL_IDENTITY_BYPASS_SECRET`, `VERCEL_ORDERS_BYPASS_SECRET` (solo Preview; bypass del proyecto de destino), `ORDERS_INTERNAL_TOKEN`, `CATALOG_INVENTORY_COMMAND_TOKEN`, `ALLOWED_ORIGINS` (origen HTTPS del storefront). |
 | Catálogo | `DATABASE_URL` (URL pooled de la base `catalog`), `CATALOG_RESERVATION_TOKEN`, `CATALOG_INVENTORY_COMMAND_TOKEN`. |
 | Identidad | `DATABASE_URL` (URL pooled de `identity`), `JWT_SECRET`, `ALLOWED_ORIGINS` (origen HTTPS del storefront). |
@@ -75,6 +82,8 @@ Los servicios fallan al inicializar en producción cuando faltan las variables m
 ## 4. Aplicar migraciones y preparar datos
 
 Hazlo desde la raíz del repositorio, desde una máquina confiable con Node.js/npm y acceso a Neon. Usa la URL directa correspondiente para cada comando; no coloques URLs reales en documentación ni archivos rastreados:
+
+La migración `20261102090000_product_imagekit_asset` añade el identificador de archivo gestionado a `Product`. Aplícala en la base `catalog` antes de desplegar el nuevo servicio de Catálogo y la aplicación web.
 
 ```powershell
 $env:DATABASE_URL = "<URL directa de catalog>"

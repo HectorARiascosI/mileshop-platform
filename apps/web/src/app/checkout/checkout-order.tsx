@@ -191,9 +191,8 @@ export function CheckoutOrder({ orderId }: CheckoutOrderProps) {
         </div>
 
         <p>
-          Tu pedido quedó registrado. Revisa el resumen que se abre en WhatsApp y pulsa Enviar para compartirlo con
-          la tienda. Si realizas un pago, adjunta el comprobante manualmente en ese chat; WhatsApp no lo adjunta ni
-          lo envía por ti.
+          Revisa el resumen que se abre en WhatsApp. Si realizas un pago, adjunta el comprobante en el chat y pulsa
+          Enviar para compartir la información con la tienda.
         </p>
         {whatsAppUrl ? (
           <a className="checkout-button" href={whatsAppUrl} target="_blank" rel="noopener noreferrer">

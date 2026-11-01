@@ -127,13 +127,15 @@ test("admin product and stock receipt endpoints require internal auth and persis
         name: "Producto por HTTP",
         description: "",
         priceCop: 5000,
-        imageUrl: null,
+        imageUrl: "https://ik.imagekit.io/store/products/product-1.jpg",
+        imageFileId: "image-file-01",
         isActive: true,
       }),
     });
     assert.equal(productResponse.status, 201);
     const productPayload = await productResponse.json();
     const productId = productPayload.data.id as string;
+    assert.equal(productPayload.data.imageFileId, "image-file-01");
 
     const receiptUrl = `${baseUrl}/internal/admin/stock-receipts`;
     const receiptHeaders = { ...headers, "idempotency-key": "http-receipt-1" };

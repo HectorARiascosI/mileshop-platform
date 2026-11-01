@@ -4,6 +4,8 @@ import Image from "next/image";
 import Link from "next/link";
 import { useCallback, useEffect, useState, type FormEvent } from "react";
 
+import { getOptimizedImageUrl } from "@/lib/imagekit-url";
+
 type Product = {
   id: string;
   sku: string;
@@ -12,6 +14,7 @@ type Product = {
   priceCop: number;
   stock: number;
   imageUrl: string | null;
+  imageFileId: string | null;
   isActive: boolean;
 };
 
@@ -21,6 +24,7 @@ type ProductForm = {
   description: string;
   priceCop: string;
   imageUrl: string;
+  imageFileId: string | null;
   isActive: boolean;
 };
 
@@ -37,6 +41,7 @@ const EMPTY_FORM: ProductForm = {
   description: "",
   priceCop: "",
   imageUrl: "",
+  imageFileId: null,
   isActive: true,
 };
 
@@ -54,7 +59,16 @@ function isProduct(value: unknown): value is Product {
     Number.isSafeInteger(value.priceCop) &&
     Number.isSafeInteger(value.stock) &&
     (typeof value.imageUrl === "string" || value.imageUrl === null) &&
+    (typeof value.imageFileId === "string" || value.imageFileId === null) &&
     typeof value.isActive === "boolean"
+  );
+}
+
+function isUploadedImage(value: unknown): value is { fileId: string; imageUrl: string } {
+  return (
+    isRecord(value) &&
+    typeof value.fileId === "string" &&
+    typeof value.imageUrl === "string"
   );
 }
 
@@ -77,10 +91,43 @@ async function responseError(response: Response, fallback: string): Promise<stri
   return fallback;
 }
 
+async function uploadProductImage(file: File): Promise<{ fileId: string; imageUrl: string }> {
+  const formData = new FormData();
+  formData.set("file", file);
+  const response = await fetch("/api/admin/catalog/media", {
+    method: "POST",
+    body: formData,
+  });
+  if (!response.ok) {
+    throw new Error(await responseError(response, "No se pudo cargar la foto."));
+  }
+  const payload: unknown = await response.json();
+  if (!isRecord(payload) || !isUploadedImage(payload.data)) {
+    throw new Error("El servicio devolvió una respuesta de imagen inválida.");
+  }
+  return payload.data;
+}
+
+async function deleteProductImage(fileId: string): Promise<void> {
+  const response = await fetch("/api/admin/catalog/media", {
+    method: "DELETE",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ fileId }),
+  });
+  if (!response.ok) {
+    throw new Error(await responseError(response, "No se pudo retirar la foto del almacenamiento."));
+  }
+}
+
 export default function AdminCatalogPage() {
   const [authorized, setAuthorized] = useState<boolean | null>(null);
   const [products, setProducts] = useState<Product[]>([]);
   const [form, setForm] = useState<ProductForm>(EMPTY_FORM);
+  const [selectedImageFile, setSelectedImageFile] = useState<File | null>(null);
+  const [previewImageUrl, setPreviewImageUrl] = useState<string | null>(null);
+  const [pendingImageCleanup, setPendingImageCleanup] = useState<string[]>([]);
+  const [imageCleanupLoaded, setImageCleanupLoaded] = useState(false);
+  const [cleaningImageId, setCleaningImageId] = useState<string | null>(null);
   const [editingProductId, setEditingProductId] = useState<string | null>(null);
   const [stockProductId, setStockProductId] = useState("");
   const [stockQuantity, setStockQuantity] = useState("1");
@@ -91,6 +138,61 @@ export default function AdminCatalogPage() {
   const [isReceivingStock, setIsReceivingStock] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
+
+  const selectImageFile = (file: File | null) => {
+    setSelectedImageFile(file);
+    setPreviewImageUrl(file ? URL.createObjectURL(file) : null);
+  };
+
+  useEffect(() => {
+    if (previewImageUrl) return () => URL.revokeObjectURL(previewImageUrl);
+  }, [previewImageUrl]);
+
+  useEffect(() => {
+    const timeoutId = window.setTimeout(() => {
+      try {
+        const savedCleanup = window.localStorage.getItem("mileshop-pending-image-cleanup-v1");
+        if (savedCleanup) {
+          const parsed: unknown = JSON.parse(savedCleanup);
+          if (
+            !Array.isArray(parsed) ||
+            !parsed.every(
+              (fileId) =>
+                typeof fileId === "string" &&
+                /^[A-Za-z0-9_-]{1,128}$/.test(fileId),
+            )
+          ) {
+            throw new Error("La lista guardada de fotos pendientes no es válida.");
+          }
+          setPendingImageCleanup([...new Set(parsed)]);
+        }
+      } catch (requestError) {
+        setError(
+          requestError instanceof Error
+            ? requestError.message
+            : "No se pudo recuperar la lista de fotos pendientes.",
+        );
+      } finally {
+        setImageCleanupLoaded(true);
+      }
+    }, 0);
+    return () => window.clearTimeout(timeoutId);
+  }, []);
+
+  useEffect(() => {
+    if (!imageCleanupLoaded) return;
+    try {
+      window.localStorage.setItem(
+        "mileshop-pending-image-cleanup-v1",
+        JSON.stringify(pendingImageCleanup),
+      );
+    } catch {
+      window.setTimeout(
+        () => setError("No pudimos guardar en este navegador la lista de fotos pendientes."),
+        0,
+      );
+    }
+  }, [imageCleanupLoaded, pendingImageCleanup]);
 
   const refreshProducts = useCallback(async () => {
     setIsLoading(true);
@@ -163,8 +265,10 @@ export default function AdminCatalogPage() {
       description: product.description,
       priceCop: String(product.priceCop),
       imageUrl: product.imageUrl ?? "",
+      imageFileId: product.imageFileId,
       isActive: product.isActive,
     });
+    selectImageFile(null);
     setError(null);
     setNotice(null);
   };
@@ -172,6 +276,7 @@ export default function AdminCatalogPage() {
   const resetForm = () => {
     setEditingProductId(null);
     setForm(EMPTY_FORM);
+    selectImageFile(null);
   };
 
   const saveProduct = async (event: FormEvent<HTMLFormElement>) => {
@@ -184,7 +289,23 @@ export default function AdminCatalogPage() {
     setIsSavingProduct(true);
     setError(null);
     setNotice(null);
+    const previousImageFileId = editingProductId
+      ? products.find((product) => product.id === editingProductId)?.imageFileId ?? null
+      : null;
+    let uploadedImage: { fileId: string; imageUrl: string } | null = null;
+    let productSaved = false;
+    let imageFileId = form.imageFileId;
     try {
+      let imageUrl: string | null = form.imageUrl.trim() || null;
+      if (!form.isActive) {
+        imageUrl = null;
+        imageFileId = null;
+      } else if (selectedImageFile) {
+        uploadedImage = await uploadProductImage(selectedImageFile);
+        imageUrl = uploadedImage.imageUrl;
+        imageFileId = uploadedImage.fileId;
+      }
+
       const response = await fetch(
         editingProductId
           ? `/api/admin/catalog/products/${encodeURIComponent(editingProductId)}`
@@ -197,7 +318,8 @@ export default function AdminCatalogPage() {
             name: form.name,
             description: form.description,
             priceCop,
-            imageUrl: form.imageUrl.trim() || null,
+            imageUrl,
+            imageFileId,
             isActive: form.isActive,
           }),
         },
@@ -205,13 +327,52 @@ export default function AdminCatalogPage() {
       if (!response.ok) {
         throw new Error(await responseError(response, "No se pudo guardar el producto."));
       }
+      productSaved = true;
       setNotice(editingProductId ? "Producto actualizado." : "Producto creado.");
       resetForm();
       await refreshProducts();
+      if (previousImageFileId && previousImageFileId !== imageFileId) {
+        try {
+          await deleteProductImage(previousImageFileId);
+        } catch {
+          setPendingImageCleanup((current) =>
+            current.includes(previousImageFileId)
+              ? current
+              : [...current, previousImageFileId],
+          );
+          setError("El producto se guardó, pero no se pudo retirar la foto anterior del almacenamiento.");
+        }
+      }
     } catch (requestError) {
+      const failedUploadFileId = !productSaved ? uploadedImage?.fileId : null;
+      if (failedUploadFileId) {
+        try {
+          await deleteProductImage(failedUploadFileId);
+        } catch {
+          setPendingImageCleanup((current) =>
+            current.includes(failedUploadFileId)
+              ? current
+              : [...current, failedUploadFileId],
+          );
+        }
+      }
       setError(requestError instanceof Error ? requestError.message : "Error inesperado.");
     } finally {
       setIsSavingProduct(false);
+    }
+  };
+
+  const retryImageCleanup = async (fileId: string) => {
+    setCleaningImageId(fileId);
+    setError(null);
+    try {
+      await deleteProductImage(fileId);
+      setPendingImageCleanup((current) => current.filter((pendingId) => pendingId !== fileId));
+      setNotice("Foto retirada del almacenamiento.");
+    } catch (requestError) {
+      setError(requestError instanceof Error ? requestError.message : "No se pudo retirar la foto.");
+    } finally {
+      setCleaningImageId(null);
     }
   };
 
@@ -331,19 +492,81 @@ export default function AdminCatalogPage() {
                     Escribe solo números, sin puntos ni signo de pesos. Ejemplo: 10000.
                   </span>
                 </label>
+              </div>
+              <fieldset className="grid gap-3 rounded-lg border p-4">
+                <legend className="px-1 text-sm font-semibold">Foto del producto</legend>
                 <label className="grid gap-1 text-sm font-medium">
-                  Enlace a la foto (opcional)
-                  <input className="rounded border px-3 py-2" type="url" placeholder="https://" value={form.imageUrl} onChange={(event) => setForm({ ...form, imageUrl: event.target.value })} />
+                  Cargar desde el dispositivo
+                  <input
+                    key={selectedImageFile?.name ?? "product-image-input"}
+                    className="rounded border px-3 py-2 font-normal"
+                    type="file"
+                    accept="image/jpeg,image/png,image/webp,image/avif"
+                    onChange={(event) => {
+                      const file = event.target.files?.[0] ?? null;
+                      selectImageFile(file);
+                      setError(null);
+                    }}
+                  />
                   <span className="text-xs font-normal text-slate-600">
-                    Pega un enlace público que empiece por https://. Si no tienes foto, déjalo vacío.
+                    JPG, PNG, WebP o AVIF; hasta 4 MB. La foto se carga al guardar el producto.
                   </span>
                 </label>
-              </div>
-              {editingProductId && (
-                <label className="flex items-center gap-2 text-sm font-medium">
-                  <input type="checkbox" checked={form.isActive} onChange={(event) => setForm({ ...form, isActive: event.target.checked })} />
-                  Producto visible en la tienda
+                <label className="grid gap-1 text-sm font-medium">
+                  O pegar un enlace público HTTPS
+                  <input
+                    className="rounded border px-3 py-2 font-normal"
+                    type="url"
+                    placeholder="https://"
+                    value={form.imageUrl}
+                    onChange={(event) => {
+                      selectImageFile(null);
+                      setForm({
+                        ...form,
+                        imageUrl: event.target.value,
+                        imageFileId: null,
+                      });
+                    }}
+                  />
+                  <span className="text-xs font-normal text-slate-600">
+                    Usa un enlace HTTPS que abra directamente la imagen. Al quitarlo, MileShop solo desvincula el archivo externo.
+                  </span>
                 </label>
+                {(previewImageUrl || form.imageUrl) && (
+                  <div className="flex items-center gap-3">
+                    <Image
+                      className="h-20 w-20 rounded-lg object-cover"
+                      src={getOptimizedImageUrl(previewImageUrl ?? form.imageUrl, 160)}
+                      alt="Vista previa de la foto del producto"
+                      width={80}
+                      height={80}
+                      unoptimized
+                    />
+                    <button
+                      className="rounded border px-3 py-2 text-sm font-medium"
+                      type="button"
+                      onClick={() => {
+                        selectImageFile(null);
+                        setForm({ ...form, imageUrl: "", imageFileId: null });
+                      }}
+                    >
+                      Quitar foto
+                    </button>
+                  </div>
+                )}
+              </fieldset>
+              {editingProductId && (
+                <div className="grid gap-1">
+                  <label className="flex items-center gap-2 text-sm font-medium">
+                    <input type="checkbox" checked={form.isActive} onChange={(event) => setForm({ ...form, isActive: event.target.checked })} />
+                    Producto visible en la tienda
+                  </label>
+                  {!form.isActive && (
+                    <span className="text-xs text-slate-600">
+                      Al guardar, el producto dejará de mostrarse. Las fotos cargadas aquí se eliminarán; los enlaces externos solo se desvinculan.
+                    </span>
+                  )}
+                </div>
               )}
               <div className="flex flex-wrap gap-2">
                 <button className="rounded bg-emerald-700 px-4 py-2 font-semibold text-white disabled:opacity-50" type="submit" disabled={isSavingProduct}>
@@ -361,7 +584,7 @@ export default function AdminCatalogPage() {
               <div>
                 <h2 className="text-xl font-semibold">Agregar unidades disponibles</h2>
                 <p className="mt-1 text-sm text-slate-600">
-                  Usa esta sección cuando tengas unidades para vender. En Preview puedes usar cantidades de prueba, pero indícalo en la nota.
+                  Registra las unidades reales recibidas antes de ofrecer el producto para la venta.
                 </p>
               </div>
               <label className="grid gap-1 text-sm font-medium">
@@ -383,7 +606,7 @@ export default function AdminCatalogPage() {
                 Nota: ¿de dónde salen estas unidades?
                 <textarea className="min-h-20 rounded border px-3 py-2" required minLength={3} maxLength={500} disabled={Boolean(receiptRequest)} value={stockReason} onChange={(event) => setStockReason(event.target.value)} />
                 <span className="text-xs font-normal text-slate-600">
-                  Escribe una explicación breve, por ejemplo: “Compra al proveedor”. Para una cantidad inventada de prueba, escribe “Dato de prueba; no es inventario real”.
+                  Describe la procedencia para mantener la trazabilidad; por ejemplo, compra a proveedor o ajuste de inventario.
                 </span>
               </label>
               <button className="rounded bg-slate-900 px-4 py-2 font-semibold text-white disabled:opacity-50" type="submit" disabled={isReceivingStock || products.length === 0}>
@@ -391,6 +614,30 @@ export default function AdminCatalogPage() {
               </button>
             </form>
           </section>
+
+          {pendingImageCleanup.length > 0 && (
+            <section className="mb-8 rounded-lg border border-amber-300 bg-amber-50 p-4" aria-labelledby="image-cleanup-title">
+              <h2 id="image-cleanup-title" className="font-semibold">Fotos pendientes de retirar</h2>
+              <p className="mt-1 text-sm">
+                Una foto no pudo eliminarse del almacenamiento. Puedes volver a intentarlo.
+              </p>
+              <ul className="mt-3 grid gap-2">
+                {pendingImageCleanup.map((fileId) => (
+                  <li className="flex flex-wrap items-center justify-between gap-2" key={fileId}>
+                    <span className="text-xs text-slate-700">Referencia: {fileId}</span>
+                    <button
+                      className="rounded border bg-white px-3 py-2 text-sm font-medium disabled:opacity-50"
+                      type="button"
+                      disabled={cleaningImageId !== null}
+                      onClick={() => void retryImageCleanup(fileId)}
+                    >
+                      {cleaningImageId === fileId ? "Retirando…" : "Reintentar"}
+                    </button>
+                  </li>
+                ))}
+              </ul>
+            </section>
+          )}
 
           <section className="rounded-xl border bg-white p-5 shadow-sm">
             <div className="mb-4 flex flex-wrap items-end justify-between gap-3">
@@ -411,7 +658,7 @@ export default function AdminCatalogPage() {
                 {products.map((product) => (
                   <li className="flex flex-wrap items-center gap-4 py-4" key={product.id}>
                     {product.imageUrl ? (
-                      <Image className="h-16 w-16 rounded-lg object-cover" src={product.imageUrl} alt="" width={64} height={64} unoptimized />
+                      <Image className="h-16 w-16 rounded-lg object-cover" src={getOptimizedImageUrl(product.imageUrl, 128)} alt="" width={64} height={64} unoptimized />
                     ) : (
                       <div className="grid h-16 w-16 place-items-center rounded-lg bg-emerald-50 text-2xl font-bold text-emerald-800" aria-hidden="true">
                         {product.name.slice(0, 1).toUpperCase()}

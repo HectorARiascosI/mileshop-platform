@@ -3,6 +3,8 @@
 import Link from "next/link";
 import { useCallback, useEffect, useState } from "react";
 
+import { getOrderStatusMessage, isOrderStatus } from "@/lib/order-presentation";
+
 type OrderLine = {
   productId: string;
   sku: string;
@@ -88,6 +90,12 @@ function formatDate(value: string): string {
     dateStyle: "medium",
     timeStyle: "short",
   }).format(new Date(value));
+}
+
+function formatOrderStatus(status: string): string {
+  return isOrderStatus(status)
+    ? getOrderStatusMessage(status, null).title
+    : "Estado por verificar";
 }
 
 async function responseError(response: Response, fallback: string): Promise<string> {
@@ -421,7 +429,7 @@ export default function AdminOrdersPage() {
                         <p className="text-sm text-slate-600">
                           Cliente {order.customerId} · {formatDate(order.createdAt)}
                         </p>
-                        <p className="mt-1 text-sm">Estado: {order.status}</p>
+                        <p className="mt-1 text-sm">Estado: {formatOrderStatus(order.status)}</p>
                       </div>
                       <p className="text-lg font-bold">{formatPrice(order.totalCop)}</p>
                     </div>

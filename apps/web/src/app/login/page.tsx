@@ -58,7 +58,7 @@ export default function LoginPage() {
         <p className="eyebrow">Bienvenido de vuelta</p>
         <h1>Inicia sesión en MileShop</h1>
         <p className="auth-subtitle">
-          Ingresa con tu correo y contraseña para continuar con tu compra.
+          Ingresa con tu correo y contraseña para acceder a tu cuenta.
         </p>
 
         <form className="auth-form" onSubmit={handleSubmit} noValidate>

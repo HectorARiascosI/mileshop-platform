@@ -19,6 +19,7 @@ import {
   isWhatsAppOrderSummary,
   type WhatsAppOrderSummary,
 } from "@/lib/whatsapp-order";
+import { getOptimizedImageUrl } from "@/lib/imagekit-url";
 
 type Product = {
   id: string;
@@ -306,13 +307,16 @@ export function CatalogShell({ products, unavailable }: CatalogShellProps) {
 
         {unavailable ? (
           <section className="notice notice-error" role="alert">
-            <strong>El catálogo está temporalmente fuera de línea.</strong>
-            <span>Estamos intentando reconectar con nuestros productos.</span>
+            <strong>No pudimos cargar el catálogo.</strong>
+            <span>Vuelve a intentarlo en unos momentos.</span>
+            <button className="add-button self-start" type="button" onClick={() => router.refresh()}>
+              Volver a intentar
+            </button>
           </section>
         ) : products.length === 0 ? (
           <section className="notice" role="status">
-            <strong>Estamos preparando la primera selección.</strong>
-            <span>Vuelve pronto para descubrir los productos disponibles.</span>
+            <strong>No hay productos disponibles en este momento.</strong>
+            <span>Consulta nuevamente más tarde para ver las novedades del catálogo.</span>
           </section>
         ) : (
           <section className="product-grid" aria-label="Productos disponibles">
@@ -322,7 +326,7 @@ export function CatalogShell({ products, unavailable }: CatalogShellProps) {
                   {product.imageUrl ? (
                     <Image
                       className="h-full w-full object-cover"
-                      src={product.imageUrl}
+                      src={getOptimizedImageUrl(product.imageUrl, 800)}
                       alt={product.name}
                       width={400}
                       height={300}

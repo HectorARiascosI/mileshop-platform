@@ -75,6 +75,7 @@ test("catalog client authenticates and forwards product and stock administration
       description: "",
       priceCop: 500,
       imageUrl: null,
+      imageFileId: null,
       isActive: true,
     });
     await client.updateProduct("product-1", {
@@ -83,6 +84,7 @@ test("catalog client authenticates and forwards product and stock administration
       description: "",
       priceCop: 600,
       imageUrl: null,
+      imageFileId: null,
       isActive: false,
     });
     await client.receiveStock("admin-1", "receipt-1", "Initial delivery", [
@@ -95,6 +97,10 @@ test("catalog client authenticates and forwards product and stock administration
       "/internal/admin/products/product-1",
       "/internal/admin/stock-receipts",
     ]);
+    assert.equal(
+      JSON.parse(String(requests[1]?.init?.body)).imageFileId,
+      null,
+    );
     for (const { init } of requests) {
       assert.equal(
         new Headers(init?.headers).get("authorization"),

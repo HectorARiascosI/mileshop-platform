@@ -45,6 +45,7 @@ export class PrismaCatalogStore implements CatalogStore {
         priceCop: true,
         stock: true,
         imageUrl: true,
+        imageFileId: true,
       },
     });
     return products.map(({ imageUrl, ...product }) =>
@@ -63,6 +64,7 @@ export class PrismaCatalogStore implements CatalogStore {
         priceCop: true,
         stock: true,
         imageUrl: true,
+        imageFileId: true,
         isActive: true,
       },
     });
@@ -81,6 +83,7 @@ export class PrismaCatalogStore implements CatalogStore {
           priceCop: true,
           stock: true,
           imageUrl: true,
+          imageFileId: true,
           isActive: true,
         },
       });
@@ -106,6 +109,7 @@ export class PrismaCatalogStore implements CatalogStore {
           priceCop: true,
           stock: true,
           imageUrl: true,
+          imageFileId: true,
           isActive: true,
         },
       });
