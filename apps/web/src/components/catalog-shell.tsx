@@ -353,10 +353,7 @@ export function CatalogShell({ products, unavailable, announcements }: CatalogSh
         )}
         <section className="storefront-hero" aria-labelledby="storefront-title">
           <div className="hero-copy">
-            <p className="eyebrow">
-              <span className="hero-indicator" aria-hidden="true" />
-              Catálogo MileShop
-            </p>
+            <p className="eyebrow">Selección de temporada</p>
             <h1 id="storefront-title">
               Encuentra
               <br />
@@ -387,16 +384,15 @@ export function CatalogShell({ products, unavailable, announcements }: CatalogSh
                 unoptimized
               />
             ) : (
-              <span className="hero-monogram" aria-hidden="true">M</span>
+              <span className="hero-monogram" aria-hidden="true">NUEVO</span>
             )}
-            <span className="hero-visual-label" aria-hidden="true">MILESHOP / CATÁLOGO</span>
           </div>
         </section>
 
         <section className="catalog-section" id="catalogo" aria-labelledby="catalog-title">
           <div className="catalog-heading">
             <div>
-              <p className="eyebrow">MileShop</p>
+              <p className="eyebrow">Todo disponible</p>
               <h2 id="catalog-title">Catálogo</h2>
               <p className="catalog-intro">
                 Revisa precios y disponibilidad antes de agregar productos al carrito.
