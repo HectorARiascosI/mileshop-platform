@@ -34,13 +34,76 @@ test("records an owner cancellation request without releasing inventory", async 
           customerId: "customer-1",
           status: "PAYMENT_REVIEW_PENDING",
           paymentDecision: { is: null },
-          paymentEvidence: { is: { deletedAt: null } },
           cancelRequestedAt: null,
         },
         data: { cancelRequestedAt: requestedAt, updatedAt: requestedAt },
       },
     },
   ]);
+});
+
+test("lists unresolved cancellation requests from persistent orders", async () => {
+  const requestedAt = new Date("2026-10-30T12:00:00.000Z");
+  const createdAt = new Date("2026-10-30T11:00:00.000Z");
+  const updatedAt = new Date("2026-10-30T12:00:00.000Z");
+  const calls: unknown[] = [];
+  const row = {
+    id: "db-order-1",
+    orderId: "order-1",
+    customerId: "customer-1",
+    idempotencyKey: "request-1",
+    subtotalCop: 30_000,
+    deliveryFeeCop: 12_000,
+    totalCop: 42_000,
+    status: "PAYMENT_REVIEW_PENDING",
+    createdAt,
+    updatedAt,
+    reservationExpiresAt: new Date("2026-10-30T14:00:00.000Z"),
+    paymentReportedAt: null,
+    paymentReportedByCustomerId: null,
+    cancelRequestedAt: requestedAt,
+    cancelResolvedAt: null,
+    cancelResolution: null,
+    cancelResolvedByCustomerId: null,
+    cancelResolutionNote: null,
+    cancelPaymentCaptured: null,
+    externalRefundRecordedByCustomerId: null,
+    externalRefundReference: null,
+    externalRefundHandledAt: null,
+    lines: [{
+      id: "line-1",
+      productId: "product-1",
+      sku: "SKU-1",
+      name: "Product",
+      quantity: 1,
+      unitPriceCop: 30_000,
+    }],
+  };
+  const prisma = {
+    order: {
+      findMany: async (args: unknown) => {
+        calls.push(args);
+        return [row];
+      },
+    },
+  } as unknown as PrismaClient;
+  const repository = new PrismaOrdersRepository(prisma);
+
+  const requests = await repository.listPendingCancellationRequests();
+
+  assert.deepEqual(calls, [{
+    where: {
+      status: "PAYMENT_REVIEW_PENDING",
+      cancelRequestedAt: { not: null },
+      cancelResolvedAt: null,
+    },
+    include: { lines: true },
+    orderBy: [{ cancelRequestedAt: "asc" }, { orderId: "asc" }],
+  }]);
+  assert.equal(requests.length, 1);
+  assert.equal(requests[0]?.orderId, "order-1");
+  assert.equal(requests[0]?.cancelRequestedAt?.toISOString(), requestedAt.toISOString());
+  assert.equal(requests[0]?.lines[0]?.productId, "product-1");
 });
 
 test("records external refund handling before cancellation and atomically enqueues RELEASE", async () => {

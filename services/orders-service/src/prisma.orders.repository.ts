@@ -2,7 +2,10 @@ import crypto from "node:crypto";
 
 import type { PrismaClient } from "../generated/orders-client/index.js";
 
-import type { OrderRecord } from "./orders.domain.js";
+import {
+  parseOrderCancellationResolution,
+  type OrderRecord,
+} from "./orders.domain.js";
 import type { OrdersRepository } from "./orders.repository.js";
 import type { ReservationIntent } from "./orders.repository.js";
 import type { OrderCreatedEvent } from "./orders.types.js";
@@ -231,6 +234,51 @@ export class PrismaOrdersRepository implements OrdersRepository, InventoryComman
       paymentReportedByCustomerId: row.paymentReportedByCustomerId,
       cancelRequestedAt: row.cancelRequestedAt,
       cancelResolvedAt: row.cancelResolvedAt,
+      lines: row.lines.map((line) => ({
+        id: line.id,
+        productId: line.productId,
+        sku: line.sku,
+        name: line.name,
+        quantity: line.quantity,
+        unitPriceCop: line.unitPriceCop,
+      })),
+    }));
+  }
+
+  public async listPendingCancellationRequests(): Promise<OrderRecord[]> {
+    const rows = await this.prisma.order.findMany({
+      where: {
+        status: "PAYMENT_REVIEW_PENDING",
+        cancelRequestedAt: { not: null },
+        cancelResolvedAt: null,
+      },
+      include: { lines: true },
+      orderBy: [{ cancelRequestedAt: "asc" }, { orderId: "asc" }],
+    });
+
+    return rows.map((row) => ({
+      id: row.id,
+      orderId: row.orderId,
+      customerId: row.customerId,
+      idempotencyKey: row.idempotencyKey,
+      subtotalCop: row.subtotalCop,
+      deliveryFeeCop: row.deliveryFeeCop,
+      totalCop: row.totalCop,
+      status: row.status as OrderRecord["status"],
+      createdAt: row.createdAt,
+      updatedAt: row.updatedAt,
+      reservationExpiresAt: row.reservationExpiresAt,
+      paymentReportedAt: row.paymentReportedAt,
+      paymentReportedByCustomerId: row.paymentReportedByCustomerId,
+      cancelRequestedAt: row.cancelRequestedAt,
+      cancelResolvedAt: row.cancelResolvedAt,
+      cancelResolution: parseOrderCancellationResolution(row.cancelResolution),
+      cancelResolvedByCustomerId: row.cancelResolvedByCustomerId,
+      cancelResolutionNote: row.cancelResolutionNote,
+      cancelPaymentCaptured: row.cancelPaymentCaptured,
+      externalRefundRecordedByCustomerId: row.externalRefundRecordedByCustomerId,
+      externalRefundReference: row.externalRefundReference,
+      externalRefundHandledAt: row.externalRefundHandledAt,
       lines: row.lines.map((line) => ({
         id: line.id,
         productId: line.productId,
@@ -589,7 +637,6 @@ export class PrismaOrdersRepository implements OrdersRepository, InventoryComman
           customerId,
           status: "PAYMENT_REVIEW_PENDING",
           paymentDecision: { is: null },
-          paymentEvidence: { is: { deletedAt: null } },
           cancelRequestedAt: null,
         },
         data: { cancelRequestedAt: requestedAt, updatedAt: requestedAt },

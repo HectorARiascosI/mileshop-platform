@@ -73,11 +73,13 @@ Write-Host '==> Preparing detached service logs...'
 $logDirectory = Join-Path $repoRoot '.local-stack\logs'
 New-Item -ItemType Directory -Path $logDirectory -Force | Out-Null
 
-$catalogEnv = @{ DATABASE_URL = $catalogDatabaseUrl }
+$localCatalogReservationToken = 'local-development-catalog-reservation-token-2026'
+$localInventoryCommandToken = 'local-development-inventory-command-token-2026'
+$catalogEnv = @{ DATABASE_URL = $catalogDatabaseUrl; CATALOG_RESERVATION_TOKEN = $localCatalogReservationToken; CATALOG_INVENTORY_COMMAND_TOKEN = $localInventoryCommandToken }
 $workerEnv = @{ DATABASE_URL = $notificationDatabaseUrl; NOTIFICATION_SENDER_MODE = 'log' }
-$ordersEnv = @{ DATABASE_URL = $ordersDatabaseUrl; CATALOG_SERVICE_URL = 'http://127.0.0.1:3020'; NOTIFICATION_WORKER_URL = 'http://127.0.0.1:3010' }
+$ordersEnv = @{ DATABASE_URL = $ordersDatabaseUrl; CATALOG_SERVICE_URL = 'http://127.0.0.1:3020'; NOTIFICATION_WORKER_URL = 'http://127.0.0.1:3010'; CATALOG_RESERVATION_TOKEN = $localCatalogReservationToken; CATALOG_INVENTORY_COMMAND_TOKEN = $localInventoryCommandToken }
 $identityEnv = @{ DATABASE_URL = $identityDatabaseUrl; JWT_SECRET = 'mileshop-local-dev-secret-change-in-prod'; JWT_EXPIRES_IN = '15m'; REFRESH_TOKEN_EXPIRES_DAYS = '30'; ALLOWED_ORIGINS = 'http://localhost:3001' }
-$gatewayEnv = @{ CATALOG_SERVICE_URL = 'http://127.0.0.1:3020'; ORDERS_SERVICE_URL = 'http://127.0.0.1:3030'; IDENTITY_SERVICE_URL = 'http://127.0.0.1:3040' }
+$gatewayEnv = @{ CATALOG_SERVICE_URL = 'http://127.0.0.1:3020'; ORDERS_SERVICE_URL = 'http://127.0.0.1:3030'; IDENTITY_SERVICE_URL = 'http://127.0.0.1:3040'; CATALOG_INVENTORY_COMMAND_TOKEN = $localInventoryCommandToken }
 
 $jobs = @(
     @{ Port = '3040'; Workspace = '@mileshop/identity-service'; EnvMap = $identityEnv },

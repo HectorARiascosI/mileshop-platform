@@ -28,6 +28,20 @@ import type { InventoryCommandWorker } from "./inventory-command.worker.js";
 import { ORDERS_INTERNAL_TOKEN } from "./payment-evidence/gateway-internal.guard.js";
 import type { FastifyReply } from "fastify";
 
+type MultipartFileField = {
+  data?: unknown;
+  filename?: string;
+  mimetype?: string;
+  toBuffer?: () => Promise<Buffer>;
+};
+
+type MultipartTextField = string | { value?: unknown };
+
+type PaymentEvidenceBody = {
+  file?: MultipartFileField;
+  transactionReference?: MultipartTextField;
+};
+
 @Controller()
 export class OrdersController {
   public constructor(
@@ -249,18 +263,32 @@ export class OrdersController {
     @Headers("x-orders-internal-token") token: string | undefined,
     @Headers("x-authenticated-customer-id") customerId: string | undefined,
     @Headers("x-authenticated-role") role: string | undefined,
-    @Body() body: any,
+    @Body() body: PaymentEvidenceBody,
   ): Promise<unknown> {
     this.trusted(token, customerId, role);
     if (role !== "CUSTOMER") throw new ForbiddenException();
     const evidence = this.requireEvidenceService();
     const file = body.file;
-    const bytes = file?.data ?? file?.toBuffer?.() ?? Buffer.alloc(0);
+    if (!file) {
+      throw new BadRequestException("Payment evidence file is required");
+    }
+    const bytes =
+      file.data instanceof Uint8Array
+        ? file.data
+        : await file.toBuffer?.();
+    if (!(bytes instanceof Uint8Array)) {
+      throw new BadRequestException("Payment evidence file content is unavailable");
+    }
+    const transactionReference =
+      typeof body.transactionReference === "object" &&
+      body.transactionReference !== null
+        ? body.transactionReference.value
+        : body.transactionReference;
     const result = await evidence.upload(orderId, { customerId, role }, {
-      originalFileName: file.filename ?? file.name,
-      contentType: file.mimetype ?? file.encoding,
-      bytes: Buffer.isBuffer(bytes) ? new Uint8Array(bytes) : bytes,
-    }, body.transactionReference?.value ?? body.transactionReference ?? null);
+      originalFileName: file.filename ?? "",
+      contentType: file.mimetype ?? "",
+      bytes,
+    }, transactionReference ?? null);
     return { data: result };
   }
 

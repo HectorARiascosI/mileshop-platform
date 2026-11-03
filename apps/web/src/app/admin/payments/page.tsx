@@ -3,6 +3,8 @@
 import Link from "next/link";
 import { useCallback, useEffect, useState } from "react";
 
+import { AdminConfirmDialog } from "@/components/admin-confirm-dialog";
+
 type EvidenceMetadata = {
   originalFileName: string;
   contentType: "application/pdf" | "image/jpeg" | "image/png";
@@ -325,6 +327,9 @@ export default function AdminPaymentsPage() {
   const [isDeletingEvidence, setIsDeletingEvidence] = useState(false);
   const [isRecordingRefund, setIsRecordingRefund] = useState(false);
   const [isResolvingCancellation, setIsResolvingCancellation] = useState(false);
+  const [pendingConfirmation, setPendingConfirmation] = useState<
+    "delete-evidence" | "cancel-request" | null
+  >(null);
   const [rejectionReason, setRejectionReason] = useState("");
   const [cancellationResolutionNote, setCancellationResolutionNote] = useState("");
   const [paymentCapturedSelection, setPaymentCapturedSelection] = useState<
@@ -417,13 +422,6 @@ export default function AdminPaymentsPage() {
 
   const deleteDownloadedEvidence = useCallback(async () => {
     if (!detail || !detail.evidence.available || isDeletingEvidence) {
-      return;
-    }
-    if (
-      !window.confirm(
-        "Confirma que descargaste y guardaste este comprobante en un lugar seguro. La copia del servidor se eliminará y no podrá descargarse otra vez.",
-      )
-    ) {
       return;
     }
 
@@ -580,14 +578,6 @@ export default function AdminPaymentsPage() {
 
   const resolveCancellationRequest = useCallback(async (action: "CANCEL" | "KEEP_OPEN") => {
     if (!selectedCancellationRequest || isResolvingCancellation) {
-      return;
-    }
-    if (
-      action === "CANCEL" &&
-      !window.confirm(
-        "¿Confirmas cancelar el pedido? La reserva se liberará y MileShop no procesa reembolsos.",
-      )
-    ) {
       return;
     }
     const note = cancellationResolutionNote.trim();
@@ -838,7 +828,7 @@ export default function AdminPaymentsPage() {
 
   return (
     <main className="admin-payments-page">
-      <header className="admin-payments-header">
+      <header className="admin-payments-header admin-console-header">
         <div>
           <p className="eyebrow">MileShop · Administración</p>
           <h1>Revisión de pagos</h1>
@@ -872,9 +862,8 @@ export default function AdminPaymentsPage() {
           )}
         </section>
       )}
-      {decisionError && <p className="admin-alert" role="alert">{decisionError}</p>}
+      {decisionError && detail && <p className="admin-alert" role="alert">{decisionError}</p>}
       {decisionNotice && <p className="admin-alert" role="status">{decisionNotice}</p>}
-      {cancellationError && <p className="admin-alert" role="alert">{cancellationError}</p>}
       {cancellationNotice && <p className="admin-alert" role="status">{cancellationNotice}</p>}
 
       <section className="admin-cancellation-panel">
@@ -1076,7 +1065,7 @@ export default function AdminPaymentsPage() {
                     <button
                       className="checkout-button"
                       type="button"
-                      onClick={() => void resolveCancellationRequest("CANCEL")}
+                      onClick={() => setPendingConfirmation("cancel-request")}
                       disabled={
                         isRecordingRefund ||
                         isResolvingCancellation ||
@@ -1174,7 +1163,7 @@ export default function AdminPaymentsPage() {
                       <button
                         className="checkout-button"
                         type="button"
-                        onClick={() => void deleteDownloadedEvidence()}
+                        onClick={() => setPendingConfirmation("delete-evidence")}
                         disabled={isDeletingEvidence || isApproving || isRejecting}
                       >
                         {isDeletingEvidence
@@ -1294,6 +1283,40 @@ export default function AdminPaymentsPage() {
       <footer className="admin-payments-footer">
         <Link href="/">Volver al catálogo</Link>
       </footer>
+      {pendingConfirmation && (
+        <AdminConfirmDialog
+          title={
+            pendingConfirmation === "delete-evidence"
+              ? "Eliminar copia del comprobante"
+              : "Cancelar pedido y liberar reserva"
+          }
+          message={
+            pendingConfirmation === "delete-evidence"
+              ? "Confirma que descargaste y guardaste el comprobante en un lugar seguro. La copia del servidor se eliminará y no podrá descargarse otra vez."
+              : "El pedido se cancelará y se liberará la reserva. MileShop no procesa reembolsos; registra antes el manejo del pago externo."
+          }
+          confirmLabel={
+            pendingConfirmation === "delete-evidence"
+              ? "Eliminar copia"
+              : "Cancelar pedido"
+          }
+          busy={
+            pendingConfirmation === "delete-evidence"
+              ? isDeletingEvidence
+              : isResolvingCancellation
+          }
+          onCancel={() => setPendingConfirmation(null)}
+          onConfirm={() => {
+            const action = pendingConfirmation;
+            setPendingConfirmation(null);
+            if (action === "delete-evidence") {
+              void deleteDownloadedEvidence();
+            } else {
+              void resolveCancellationRequest("CANCEL");
+            }
+          }}
+        />
+      )}
     </main>
   );
 }

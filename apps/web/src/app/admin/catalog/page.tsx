@@ -21,6 +21,7 @@ import {
   isCatalogCategoryTheme,
 } from "@/lib/catalog-category";
 import { getOptimizedImageUrl } from "@/lib/imagekit-url";
+import { AdminConfirmDialog } from "@/components/admin-confirm-dialog";
 
 type Product = {
   id: string;
@@ -168,12 +169,13 @@ async function deleteProductImage(fileId: string): Promise<void> {
 }
 
 export default function AdminCatalogPage() {
-  const [authorized, setAuthorized] = useState<boolean | null>(null);
+  const [authorized, setAuthorized] = useState<boolean>(true);
   const [products, setProducts] = useState<Product[]>([]);
   const [categories, setCategories] = useState<CatalogCategory[]>([]);
   const [form, setForm] = useState<ProductForm>(EMPTY_FORM);
   const [categoryForm, setCategoryForm] = useState<CatalogCategoryInput>(EMPTY_CATEGORY_FORM);
   const [editingCategoryId, setEditingCategoryId] = useState<string | null>(null);
+  const [pendingCategoryDeletion, setPendingCategoryDeletion] = useState<CatalogCategory | null>(null);
   const [isSavingCategory, setIsSavingCategory] = useState(false);
   const [deletingCategoryId, setDeletingCategoryId] = useState<string | null>(null);
   const [imageUrlDraft, setImageUrlDraft] = useState("");
@@ -330,8 +332,6 @@ export default function AdminCatalogPage() {
   }, [imageCleanupLoaded, pendingImageCleanup]);
 
   const refreshProducts = useCallback(async () => {
-    setIsLoading(true);
-    setError(null);
     try {
       const [response, categoriesResponse] = await Promise.all([
         fetch("/api/admin/catalog/products", { cache: "no-store" }),
@@ -374,7 +374,6 @@ export default function AdminCatalogPage() {
       ) {
         throw new Error("El servicio devolvió un catálogo inválido.");
       }
-      setAuthorized(true);
       setProducts(validProducts);
       setCategories(validCategories);
       setStockProductId((current) =>
@@ -390,30 +389,8 @@ export default function AdminCatalogPage() {
   }, []);
 
   useEffect(() => {
-    let active = true;
-    void fetch("/api/auth/me", { cache: "no-store" })
-      .then(async (response) => {
-        if (!response.ok) {
-          if (active) setAuthorized(false);
-          return;
-        }
-        const profile: unknown = await response.json();
-        const isAdmin = isRecord(profile) && profile.role === "STORE_ADMIN";
-        if (active) {
-          setAuthorized(isAdmin);
-          if (isAdmin) await refreshProducts();
-        }
-      })
-      .catch(() => {
-        if (active) {
-          setAuthorized(false);
-          setError("No pudimos verificar tu cuenta. Inténtalo de nuevo.");
-          setIsLoading(false);
-        }
-      });
-    return () => {
-      active = false;
-    };
+    const timer = window.setTimeout(() => void refreshProducts(), 0);
+    return () => window.clearTimeout(timer);
   }, [refreshProducts]);
 
   const beginEdit = (product: Product) => {
@@ -501,7 +478,6 @@ export default function AdminCatalogPage() {
       setError("Reasigna los productos antes de eliminar esta categoría.");
       return;
     }
-    if (!window.confirm(`¿Eliminar la categoría «${category.name}»?`)) return;
     setDeletingCategoryId(category.id);
     setError(null);
     setNotice(null);
@@ -711,7 +687,7 @@ export default function AdminCatalogPage() {
 
   return (
     <main className="mx-auto min-h-screen max-w-6xl px-4 py-8 text-slate-900">
-      <header className="mb-8 flex flex-wrap items-center justify-between gap-4">
+      <header className="admin-console-header mb-8 flex flex-wrap items-center justify-between gap-4">
         <div>
           <p className="text-sm font-semibold uppercase tracking-wide text-emerald-700">MileShop</p>
           <h1 className="text-3xl font-bold">Catálogo e inventario</h1>
@@ -719,20 +695,6 @@ export default function AdminCatalogPage() {
             Agrega lo que la tienda vende. Aquí también puedes indicar cuántas unidades tienes disponibles.
           </p>
         </div>
-        <nav className="flex flex-wrap gap-2">
-          <Link className="rounded border px-4 py-2 font-medium hover:bg-slate-50" href="/admin/orders">
-            Pedidos y ventas
-          </Link>
-          <Link className="rounded border px-4 py-2 font-medium hover:bg-slate-50" href="/admin/catalog/promotions">
-            Promociones
-          </Link>
-          <Link className="rounded border px-4 py-2 font-medium hover:bg-slate-50" href="/admin/catalog/announcements">
-            Anuncios
-          </Link>
-          <Link className="rounded border px-4 py-2 font-medium hover:bg-slate-50" href="/">
-            Volver a la tienda
-          </Link>
-        </nav>
       </header>
 
       {authorized === false && (
@@ -832,7 +794,7 @@ export default function AdminCatalogPage() {
                           type="button"
                           disabled={category.productCount > 0 || deletingCategoryId === category.id}
                           title={category.productCount > 0 ? "Reasigna sus productos antes de eliminarla." : undefined}
-                          onClick={() => void deleteCategory(category)}
+                          onClick={() => setPendingCategoryDeletion(category)}
                         >
                           {deletingCategoryId === category.id ? "Eliminando…" : "Eliminar"}
                         </button>
@@ -1029,7 +991,7 @@ export default function AdminCatalogPage() {
                 ¿A qué producto agregar unidades?
                 <select className="rounded border px-3 py-2" required disabled={Boolean(receiptRequest) || products.length === 0} value={stockProductId} onChange={(event) => setStockProductId(event.target.value)}>
                   {products.map((product) => (
-                    <option key={product.id} value={product.id}>{product.name} · {product.stock} disponibles</option>
+                    <option key={product.id} value={product.id}>{product.name} · {product.stock} en stock</option>
                   ))}
                 </select>
               </label>
@@ -1083,7 +1045,7 @@ export default function AdminCatalogPage() {
                 <h2 className="text-xl font-semibold">Productos</h2>
                 <p className="text-sm text-slate-600">{products.length} productos registrados, incluidos los desactivados.</p>
               </div>
-              <button className="rounded border px-3 py-2 text-sm font-medium" type="button" onClick={() => void refreshProducts()} disabled={isLoading}>
+              <button className="rounded border px-3 py-2 text-sm font-medium" type="button" onClick={() => { setIsLoading(true); setError(null); void refreshProducts(); }} disabled={isLoading}>
                 {isLoading ? "Actualizando…" : "Actualizar"}
               </button>
             </div>
@@ -1104,7 +1066,7 @@ export default function AdminCatalogPage() {
                     )}
                     <div className="min-w-48 flex-1">
                       <p className="font-semibold">{product.name} <span className="text-xs font-normal text-slate-500">{product.sku}</span></p>
-                      <p className="text-sm text-slate-600">{formatPrice(product.priceCop)} · {product.stock} disponibles · {product.isActive ? "Visible" : "Desactivado"}</p>
+                      <p className="text-sm text-slate-600">{formatPrice(product.priceCop)} · {product.stock} en stock · {product.isActive ? "Visible" : "Desactivado"}</p>
                     </div>
                     <button className="rounded border px-3 py-2 text-sm font-medium" type="button" onClick={() => beginEdit(product)}>
                       Editar
@@ -1115,6 +1077,20 @@ export default function AdminCatalogPage() {
             )}
           </section>
         </>
+      )}
+      {pendingCategoryDeletion && (
+        <AdminConfirmDialog
+          title="Eliminar categoría"
+          message={`La categoría «${pendingCategoryDeletion.name}» se eliminará. Esta acción no modifica productos.`}
+          confirmLabel="Eliminar categoría"
+          busy={deletingCategoryId === pendingCategoryDeletion.id}
+          onCancel={() => setPendingCategoryDeletion(null)}
+          onConfirm={() => {
+            const category = pendingCategoryDeletion;
+            setPendingCategoryDeletion(null);
+            void deleteCategory(category);
+          }}
+        />
       )}
     </main>
   );

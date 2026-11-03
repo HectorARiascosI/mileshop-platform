@@ -17,11 +17,11 @@ const bodyFont = DM_Sans({
 
 export const metadata: Metadata = {
   title: "MileShop | Catálogo",
-  description: "Explora el catálogo de productos de MileShop.",
+  description: "MileShop: La exclusividad hecha a tu medida.",
   icons: {
-    icon: "/favicon.svg",
-    shortcut: "/favicon.svg",
-    apple: "/favicon.svg",
+    icon: "/favicon.ico",
+    shortcut: "/favicon.ico",
+    apple: "/mileshop-apple.png",
   },
 };
 

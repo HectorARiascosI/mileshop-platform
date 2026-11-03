@@ -2,9 +2,14 @@
 
 import { useEffect, useState } from "react";
 
+import {
+  getOrderStatusMessage,
+  isOrderStatus,
+  isPaymentDecisionForStatus,
+  type OrderStatus,
+  type PaymentDecision,
+} from "@/lib/order-presentation";
 import { buildWhatsAppOrderUrl } from "@/lib/whatsapp-order";
-
-type OrderStatus = "PENDING" | "CONFIRMED" | "CANCELLED";
 
 type CheckoutOrderData = {
   orderId: string;
@@ -13,6 +18,7 @@ type CheckoutOrderData = {
   totalCop: number;
   status: OrderStatus;
   createdAt: string;
+  paymentDecision: PaymentDecision | null;
   lines: Array<{
     productId: string;
     sku: string;
@@ -36,41 +42,40 @@ function formatPrice(priceCop: number): string {
   }).format(priceCop);
 }
 
-function isCheckoutOrder(value: unknown): value is CheckoutOrderData {
-  if (!value || typeof value !== "object") {
-    return false;
-  }
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
 
-  const order = value as Partial<CheckoutOrderData>;
+function isCheckoutLine(value: unknown): value is CheckoutOrderData["lines"][number] {
   return (
-    typeof order.orderId === "string" &&
-    typeof order.subtotalCop === "number" &&
-    typeof order.deliveryFeeCop === "number" &&
-    typeof order.totalCop === "number" &&
-    (order.status === "PENDING" || order.status === "CONFIRMED" || order.status === "CANCELLED") &&
-    typeof order.createdAt === "string" &&
-    Array.isArray(order.lines) &&
-    order.lines.every((line) =>
-      line !== null &&
-      typeof line === "object" &&
-      typeof line.productId === "string" &&
-      typeof line.sku === "string" &&
-      typeof line.name === "string" &&
-      Number.isInteger(line.quantity) &&
-      Number.isInteger(line.unitPriceCop),
-    )
+    isRecord(value) &&
+    typeof value.productId === "string" &&
+    typeof value.sku === "string" &&
+    typeof value.name === "string" &&
+    Number.isSafeInteger(value.quantity) &&
+    Number(value.quantity) > 0 &&
+    Number.isSafeInteger(value.unitPriceCop) &&
+    Number(value.unitPriceCop) >= 0
   );
 }
 
-function statusLabel(status: OrderStatus): string {
-  switch (status) {
-    case "PENDING":
-      return "Recibido; pendiente de procesamiento";
-    case "CONFIRMED":
-      return "Confirmado";
-    case "CANCELLED":
-      return "Cancelado";
-  }
+function isCheckoutOrder(value: unknown): value is CheckoutOrderData {
+  if (!isRecord(value)) return false;
+  return (
+    typeof value.orderId === "string" &&
+    Number.isSafeInteger(value.subtotalCop) &&
+    Number(value.subtotalCop) >= 0 &&
+    Number.isSafeInteger(value.deliveryFeeCop) &&
+    Number(value.deliveryFeeCop) >= 0 &&
+    Number.isSafeInteger(value.totalCop) &&
+    Number(value.totalCop) >= 0 &&
+    isOrderStatus(value.status) &&
+    typeof value.createdAt === "string" &&
+    Number.isFinite(Date.parse(value.createdAt)) &&
+    isPaymentDecisionForStatus(value.paymentDecision, value.status) &&
+    Array.isArray(value.lines) &&
+    value.lines.every(isCheckoutLine)
+  );
 }
 
 export function CheckoutOrder({ orderId }: CheckoutOrderProps) {
@@ -103,7 +108,11 @@ export function CheckoutOrder({ orderId }: CheckoutOrderProps) {
         return response.json() as Promise<{ data: unknown }>;
       })
       .then((response) => {
-        if (!active || !response || !isCheckoutOrder(response.data)) {
+        if (!active || !response) {
+          return;
+        }
+        if (!isCheckoutOrder(response.data)) {
+          setStatusUnavailable(true);
           return;
         }
         setOrder(response.data);
@@ -167,18 +176,14 @@ export function CheckoutOrder({ orderId }: CheckoutOrderProps) {
     );
   }
 
+  const statusMessage = getOrderStatusMessage(order.status, order.paymentDecision);
+
   return (
     <main className="checkout-page">
       <section className="checkout-card">
         <p className="eyebrow">Estado del pedido</p>
-        <h1>
-          {order.status === "CANCELLED"
-            ? "Pedido cancelado"
-            : order.status === "CONFIRMED"
-              ? "Pedido confirmado"
-              : "Pedido recibido"}
-        </h1>
-        <p role="status">{statusLabel(order.status)}</p>
+        <h1>{statusMessage.title}</h1>
+        <p role="status">{statusMessage.description}</p>
         {statusUnavailable && (
           <p className="notice-error" role="alert">
             No pudimos actualizar el estado ahora. Mostramos los últimos datos consultados.

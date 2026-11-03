@@ -17,6 +17,10 @@ import {
 import { PrismaOrdersRepository } from "./prisma.orders.repository.js";
 import { PrismaService } from "./prisma.service.js";
 import { ORDERS_INTERNAL_TOKEN } from "./payment-evidence/gateway-internal.guard.js";
+import { PaymentEvidenceRetentionWorker } from "./payment-evidence/payment-evidence-retention.worker.js";
+import { PaymentEvidenceService } from "./payment-evidence/payment-evidence.service.js";
+import { createPaymentEvidenceStorage } from "./payment-evidence/payment-evidence.storage.js";
+import { PrismaPaymentEvidenceRepository } from "./payment-evidence/prisma.payment-evidence.repository.js";
 import { createPreviewProtectedFetch } from "./preview-protected-fetch.js";
 
 const catalogFetch = createPreviewProtectedFetch(
@@ -25,6 +29,48 @@ const catalogFetch = createPreviewProtectedFetch(
 const notificationFetch = createPreviewProtectedFetch(
   process.env.VERCEL_NOTIFICATIONS_BYPASS_SECRET,
 );
+
+export function isPaymentEvidenceStorageConfigured(
+  environment: NodeJS.ProcessEnv,
+): boolean {
+  return environment.NODE_ENV !== "production" ||
+    Boolean(environment.PAYMENT_EVIDENCE_STORAGE?.trim());
+}
+
+const paymentEvidenceProviders = isPaymentEvidenceStorageConfigured(process.env)
+  ? [
+      {
+        provide: "PAYMENT_EVIDENCE_REPOSITORY",
+        useFactory: (prisma: PrismaService) => new PrismaPaymentEvidenceRepository(prisma),
+        inject: [PrismaService],
+      },
+      {
+        provide: "PAYMENT_EVIDENCE_STORAGE",
+        useFactory: () => createPaymentEvidenceStorage(process.env),
+      },
+      {
+        provide: "PAYMENT_EVIDENCE_SERVICE",
+        useFactory: (
+          repository: PrismaPaymentEvidenceRepository,
+          storage: ReturnType<typeof createPaymentEvidenceStorage>,
+        ) => new PaymentEvidenceService(repository, storage),
+        inject: ["PAYMENT_EVIDENCE_REPOSITORY", "PAYMENT_EVIDENCE_STORAGE"],
+      },
+      {
+        provide: PaymentEvidenceRetentionWorker,
+        useFactory: (
+          repository: PrismaPaymentEvidenceRepository,
+          storage: ReturnType<typeof createPaymentEvidenceStorage>,
+        ) =>
+          new PaymentEvidenceRetentionWorker(
+            repository,
+            storage,
+            process.env.PAYMENT_EVIDENCE_RETENTION_ENABLED === "true",
+          ),
+        inject: ["PAYMENT_EVIDENCE_REPOSITORY", "PAYMENT_EVIDENCE_STORAGE"],
+      },
+    ]
+  : [];
 
 @Module({
   controllers: [OrdersController],
@@ -49,6 +95,7 @@ const notificationFetch = createPreviewProtectedFetch(
       useFactory: (prisma: PrismaService) => new PrismaOrderEventOutbox(prisma),
       inject: [PrismaService],
     },
+    ...paymentEvidenceProviders,
     {
       provide: "ORDERS_SERVICE",
       useFactory: (
@@ -63,7 +110,7 @@ const notificationFetch = createPreviewProtectedFetch(
       provide: "CATALOG_READER",
       useFactory: () => new HttpCatalogReader(
         catalogFetch,
-        process.env.CATALOG_SERVICE_URL ?? "http://localhost:3020",
+        process.env.CATALOG_SERVICE_URL ?? "http://127.0.0.1:3020",
         process.env.CATALOG_RESERVATION_TOKEN,
       ),
     },
@@ -76,7 +123,7 @@ const notificationFetch = createPreviewProtectedFetch(
       provide: "INVENTORY_COMMAND_DISPATCHER",
       useFactory: () => new HttpInventoryCommandDispatcher(
         catalogFetch,
-        process.env.CATALOG_SERVICE_URL ?? "http://localhost:3020",
+        process.env.CATALOG_SERVICE_URL ?? "http://127.0.0.1:3020",
         process.env.CATALOG_INVENTORY_COMMAND_TOKEN ?? "",
       ),
     },

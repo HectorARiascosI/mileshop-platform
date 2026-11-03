@@ -178,3 +178,87 @@ test("forwards admin payment reports to the orders service", async () => {
   assert.equal(requestHeaders?.get("x-authenticated-role"), "STORE_ADMIN");
   assert.deepEqual(result, { result: "marked", order: { orderId: "order-123" } });
 });
+
+test("forwards payment-review and cancellation queues with trusted admin identity", async () => {
+  const calls: Array<{ url: string; method: string; role: string | null }> = [];
+  const service = new OrderService(
+    async (url, init) => {
+      calls.push({
+        url,
+        method: init?.method ?? "GET",
+        role: new Headers(init?.headers).get("x-authenticated-role"),
+      });
+      return new Response(JSON.stringify({ data: [] }), { status: 200 });
+    },
+    "http://orders-service.local",
+    "orders-internal-token",
+  );
+
+  assert.deepEqual(await service.listPendingPaymentReviews("admin-1", "STORE_ADMIN"), []);
+  assert.deepEqual(await service.listPendingCancellationRequests("admin-1", "STORE_ADMIN"), []);
+  assert.deepEqual(calls, [
+    {
+      url: "http://orders-service.local/admin/payments",
+      method: "GET",
+      role: "STORE_ADMIN",
+    },
+    {
+      url: "http://orders-service.local/admin/cancellation-requests",
+      method: "GET",
+      role: "STORE_ADMIN",
+    },
+  ]);
+});
+
+test("forwards payment proof multipart data without overriding its boundary", async () => {
+  let requestUrl = "";
+  let requestBody: BodyInit | null | undefined;
+  let requestHeaders: Headers | undefined;
+  const service = new OrderService(
+    async (url, init) => {
+      requestUrl = url;
+      requestBody = init?.body;
+      requestHeaders = new Headers(init?.headers);
+      return new Response(JSON.stringify({ data: { uploaded: true } }), { status: 201 });
+    },
+    "http://orders-service.local",
+    "orders-internal-token",
+  );
+  const form = new FormData();
+  form.append("transactionReference", "transfer-123");
+  form.append("file", new Blob(["proof"]), "proof.pdf");
+
+  assert.deepEqual(await service.uploadPaymentEvidence("order-123", "customer-1", "CUSTOMER", form), {
+    uploaded: true,
+  });
+  assert.equal(requestUrl, "http://orders-service.local/orders/order-123/payment-evidence");
+  assert.equal(requestBody, form);
+  assert.equal(requestHeaders?.get("content-type"), null);
+  assert.equal(requestHeaders?.get("x-authenticated-customer-id"), "customer-1");
+  assert.equal(requestHeaders?.get("x-authenticated-role"), "CUSTOMER");
+});
+
+test("streams payment evidence and preserves its response metadata", async () => {
+  const service = new OrderService(
+    async () => new Response(new Uint8Array([112, 100, 102]), {
+      status: 200,
+      headers: {
+        "content-type": "application/pdf",
+        "content-disposition": 'attachment; filename="proof.pdf"',
+        "content-length": "3",
+      },
+    }),
+    "http://orders-service.local",
+    "orders-internal-token",
+  );
+
+  const evidence = await service.getAdminPaymentEvidence("order-123", "admin-1", "STORE_ADMIN");
+  const chunks: Buffer[] = [];
+  for await (const chunk of evidence.stream) {
+    chunks.push(Buffer.from(chunk));
+  }
+  assert.equal(Buffer.concat(chunks).toString(), "pdf");
+  assert.equal(evidence.contentType, "application/pdf");
+  assert.equal(evidence.contentDisposition, 'attachment; filename="proof.pdf"');
+  assert.equal(evidence.contentLength, 3);
+});
