@@ -16,6 +16,10 @@ npm run start:dev --workspace @mileshop/catalog-service
 El seed es idempotente: usa `sku` como identidad natural, reactiva los productos declarados y desactiva los SKUs retirados sin duplicar productos.
 Los productos incluidos son datos de desarrollo. No ejecutes el seed en producción: reemplaza el catálogo con el inventario real antes de publicar la tienda.
 
+## Migraciones
+
+Las migraciones se aplican exclusivamente a la base del servicio de catálogo con `npm run db:deploy --workspace @mileshop/catalog-service` y su propia `DATABASE_URL`. El build de Vercel solo genera Prisma Client; no aplica migraciones. La migración `20261103090000_product_categories` agrega categorías y una relación opcional, de modo que los productos existentes permanecen sin categoría. Antes de desplegar código que dependa de ella, aplica y verifica la migración en el entorno objetivo; nunca uses la conexión de otro servicio ni ejecutes la migración de Preview contra Production.
+
 Variables:
 
 - `DATABASE_URL`: conexion exclusiva de la base de datos del catalogo.
