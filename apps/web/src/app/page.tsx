@@ -78,7 +78,8 @@ async function getAnnouncements(): Promise<CatalogAnnouncement[]> {
   if (!endpoint) return [];
   try {
     const response = await fetchApiGateway(endpoint, { cache: "force-cache" });
-    if (!response.ok) throw new Error(`Announcement request failed with ${response.status}`);
+    if (response.status === 404) return [];
+    if (!response.ok) return [];
     const payload: unknown = await response.json();
     if (
       typeof payload !== "object" ||

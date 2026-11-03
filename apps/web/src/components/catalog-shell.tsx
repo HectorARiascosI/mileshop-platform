@@ -128,6 +128,7 @@ export function CatalogShell({ products, unavailable, announcements }: CatalogSh
   const [searchQuery, setSearchQuery] = useState("");
   const [selectedCategoryId, setSelectedCategoryId] = useState<string | null>(null);
   const [galleryIndices, setGalleryIndices] = useState<Record<string, number>>({});
+  const [isMenuOpen, setIsMenuOpen] = useState(false);
 
   useEffect(() => {
     if (!isCartHydrated) {
@@ -314,17 +315,56 @@ export function CatalogShell({ products, unavailable, announcements }: CatalogSh
           )}
         </nav>
 
-        <button
-          className="cart-button"
-          type="button"
-          aria-label={`Ver carrito, ${cartCount} productos`}
-          aria-expanded={isCartOpen}
-          onClick={() => setIsCartOpen((current) => !current)}
-        >
-          <span>Carrito</span>
-          <span className="cart-count" aria-hidden="true">{cartCount}</span>
-        </button>
+        <div className="store-actions">
+          <Link className="store-icon-button" href="/login" aria-label="Cuenta">
+            <svg aria-hidden="true" viewBox="0 0 24 24" fill="none">
+              <circle cx="12" cy="8" r="3.25" />
+              <path d="M5.5 19c.8-3.15 3-4.75 6.5-4.75S17.7 15.85 18.5 19" />
+            </svg>
+          </Link>
+          <Link className="store-icon-button" href="/login?view=orders" aria-label="Mis pedidos">
+            <svg aria-hidden="true" viewBox="0 0 24 24" fill="none">
+              <path d="M4.75 7.25h14.5l-1 12h-12.5l-1-12Z" />
+              <path d="M8 8V6a4 4 0 0 1 8 0v2" />
+            </svg>
+          </Link>
+          <button
+            className="cart-button"
+            type="button"
+            aria-label={`Ver carrito, ${cartCount} productos`}
+            aria-expanded={isCartOpen}
+            onClick={() => setIsCartOpen((current) => !current)}
+          >
+            <svg aria-hidden="true" viewBox="0 0 24 24" fill="none">
+              <path d="M4.75 7.25h14.5l-1 12h-12.5l-1-12Z" />
+              <path d="M8 8V6a4 4 0 0 1 8 0v2" />
+            </svg>
+            <span className="cart-count" aria-hidden="true">{cartCount}</span>
+          </button>
+          <button
+            className="store-menu-button"
+            type="button"
+            aria-label={isMenuOpen ? "Cerrar menú" : "Abrir menú"}
+            aria-expanded={isMenuOpen}
+            onClick={() => setIsMenuOpen((current) => !current)}
+          >
+            <span />
+            <span />
+          </button>
+        </div>
       </header>
+
+      <div className={`store-menu-panel${isMenuOpen ? " is-open" : ""}`} aria-hidden={!isMenuOpen}>
+        <div>
+          <p>Explorar MileShop</p>
+          <a href="#catalogo" onClick={() => setIsMenuOpen(false)}>Catálogo</a>
+          <Link href="/login" onClick={() => setIsMenuOpen(false)}>Mi cuenta</Link>
+          <Link href="/login?view=orders" onClick={() => setIsMenuOpen(false)}>Mis pedidos</Link>
+          {isStoreAdmin && (
+            <Link href="/admin/orders" onClick={() => setIsMenuOpen(false)}>Administración</Link>
+          )}
+        </div>
+      </div>
 
       <main className="catalog-page">
         {announcements.length > 0 && (
