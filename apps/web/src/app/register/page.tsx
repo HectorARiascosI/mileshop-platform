@@ -124,7 +124,7 @@ export default function RegisterPage() {
             disabled={pending}
             aria-busy={pending}
           >
-            {pending ? "Registrando…" : "Continuar con la compra"}
+            {pending ? "Registrando…" : "Registrarse"}
           </button>
         </form>
 
