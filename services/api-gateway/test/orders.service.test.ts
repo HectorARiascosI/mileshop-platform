@@ -103,6 +103,75 @@ test("forwards the order created result from the orders service", async () => {
   });
 });
 
+test("waits for order creation that takes longer than three seconds", async () => {
+  const service = new OrderService(
+    async (_url, init) => {
+      const signal = init?.signal;
+      if (!signal) {
+        throw new Error("Order creation request must have a timeout signal");
+      }
+
+      await new Promise<void>((resolve, reject) => {
+        const timer = setTimeout(resolve, 3_250);
+        signal.addEventListener(
+          "abort",
+          () => {
+            clearTimeout(timer);
+            reject(signal.reason);
+          },
+          { once: true },
+        );
+      });
+
+      return new Response(
+        JSON.stringify({
+          data: {
+            orderId: "order-slow-123",
+            customerId: "customer-42",
+            subtotalCop: 28000,
+            deliveryFeeCop: 12000,
+            totalCop: 40000,
+            status: "AWAITING_PAYMENT_PROOF",
+            createdAt: "2026-10-29T00:00:00.000Z",
+            updatedAt: "2026-10-29T00:00:00.000Z",
+            lines: [
+              {
+                productId: "p-1",
+                sku: "SKU-01",
+                name: "Taza de cerámica",
+                quantity: 1,
+                unitPriceCop: 28000,
+              },
+            ],
+            event: {
+              eventType: "OrderCreated.v1",
+              eventId: "order-slow-123-created",
+              occurredAt: "2026-10-29T00:00:00.000Z",
+              aggregateId: "order-slow-123",
+              payload: {
+                customerId: "customer-42",
+                totalCop: 40000,
+                currency: "COP",
+                lines: [],
+              },
+            },
+          },
+        }),
+        { status: 201, headers: { "content-type": "application/json" } },
+      );
+    },
+    "http://orders-service.local",
+  );
+
+  const result = await service.createOrder(
+    { lines: [{ productId: "p-1", sku: "SKU-01", name: "Taza de cerámica", quantity: 1, unitPriceCop: 28000 }] },
+    "customer-42",
+    "00000000-0000-4000-8000-000000000005",
+  );
+
+  assert.equal(result.orderId, "order-slow-123");
+});
+
 test("maps an orders-service validation failure to HTTP 400", async () => {
   const service = new OrderService(
     async () => new Response(JSON.stringify({ message: "invalid" }), { status: 400 }),

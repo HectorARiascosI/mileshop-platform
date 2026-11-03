@@ -195,17 +195,19 @@ export function CheckoutOrder({ orderId }: CheckoutOrderProps) {
           <strong>{order.orderId}</strong>
         </div>
 
-        <p>
-          Revisa el resumen que se abre en WhatsApp. Si realizas un pago, adjunta el comprobante en el chat y pulsa
-          Enviar para compartir la información con la tienda.
-        </p>
         {whatsAppUrl ? (
-          <a className="checkout-button" href={whatsAppUrl} target="_blank" rel="noopener noreferrer">
-            Abrir WhatsApp con el resumen
-          </a>
+          <>
+            <p>
+              Revisa el resumen que se abre en WhatsApp. Si realizas un pago, adjunta el comprobante en el chat y pulsa
+              Enviar para compartir la información con la tienda.
+            </p>
+            <a className="checkout-button" href={whatsAppUrl} target="_blank" rel="noopener noreferrer">
+              Abrir WhatsApp con el resumen
+            </a>
+          </>
         ) : (
           <p className="notice-error" role="status">
-            Tu pedido está guardado, pero falta configurar el número internacional de WhatsApp Business de la tienda.
+            El pedido está guardado, pero no se pudo abrir el WhatsApp Business de MileShop. No realices pagos hasta que la tienda confirme cómo continuar.
           </p>
         )}
 
