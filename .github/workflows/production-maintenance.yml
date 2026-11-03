@@ -1,0 +1,31 @@
+name: Production reservation maintenance
+
+on:
+  schedule:
+    - cron: "*/10 * * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  maintain-reservations:
+    name: Expire due reservations
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Call Orders maintenance endpoint
+        shell: bash
+        env:
+          MAINTENANCE_URL: ${{ secrets.ORDERS_MAINTENANCE_URL }}
+          CRON_SECRET: ${{ secrets.CRON_SECRET }}
+        run: |
+          if [[ -z "$MAINTENANCE_URL" || -z "$CRON_SECRET" ]]; then
+            echo "ORDERS_MAINTENANCE_URL and CRON_SECRET repository secrets are required"
+            exit 1
+          fi
+          curl --fail-with-body --silent --show-error \
+            --request POST \
+            --header "Authorization: Bearer $CRON_SECRET" \
+            --header "Content-Type: application/json" \
+            "$MAINTENANCE_URL"

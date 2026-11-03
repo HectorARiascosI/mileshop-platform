@@ -8,7 +8,7 @@ Este repositorio contiene la plataforma distribuida de MileShop. El repositorio 
 
 Se utiliza un flujo de ramas claro y protegido:
 
-- `main`: rama de producción, protegida, desplegable y estable.
+- `main`: rama de producción, destinada a ser protegida, desplegable y estable.
 - `develop`: rama de integración para características validadas y listas para release.
 - `feature/<dominio>-<descripcion>`: trabajo nuevo, de una intención concreta.
 - `fix/<dominio>-<problema>`: corrección de defectos en una funcionalidad existente.
@@ -23,6 +23,7 @@ Reglas:
 - Todo cambio sale desde una rama corta y específica.
 - Las PRs se abren hacia `develop` para cambios de funcionalidad.
 - `main` solo recibe cambios a través de `release/*` o `hotfix/*`, siempre con revisión y verificación completa.
+- La política escrita no protege una rama por sí sola: verifica que las reglas de GitHub para `main` y `develop` exijan PR y que `main` requiera una aprobación de otra persona y las verificaciones de CI antes de publicar.
 - Cada rama debe mantener un objetivo único y medible.
 
 ## 3. Política de pull requests
@@ -167,7 +168,7 @@ npm run db:deploy
 
 El script raíz usa puertos, usuarios y contraseñas fijos de desarrollo en `localhost`; no lo uses contra producción ni staging. Para ejecutar una migración de un solo servicio, configura `DATABASE_URL` con la conexión exclusiva de ese dominio y ejecuta `npm run db:deploy --workspace @mileshop/<servicio>`. Nunca compartas una URL de base entre servicios.
 
-`services/orders-service/.env.example` es una plantilla, no la carga automáticamente Node.js. Configura esos valores en el entorno del proceso. `PAYMENT_EVIDENCE_LOCAL_DIR=../../.data/payment-evidence` está pensado para ejecutar Orders desde su workspace; la ruta es relativa al directorio de trabajo del proceso. `.data/` está excluido de Git y conserva archivos entre reinicios locales. Protege ese directorio como información privada, no lo publiques ni lo montes en un contenedor PostgreSQL. En producción, configura `PAYMENT_EVIDENCE_STORAGE=local` y un `PAYMENT_EVIDENCE_LOCAL_DIR` absoluto fuera de las rutas temporales, montado en un volumen privado y persistente; Orders falla al iniciar si falta o apunta al directorio temporal.
+`services/orders-service/.env.example` es una plantilla, no la carga automáticamente Node.js. Configura esos valores en el entorno del proceso. `PAYMENT_EVIDENCE_LOCAL_DIR=../../.data/payment-evidence` está pensado para ejecutar Orders desde su workspace; la ruta es relativa al directorio de trabajo del proceso. `.data/` está excluido de Git y conserva archivos entre reinicios locales. Protege ese directorio como información privada, no lo publiques ni lo montes en un contenedor PostgreSQL. No configures `PAYMENT_EVIDENCE_STORAGE=local` en Vercel: sus funciones no ofrecen almacenamiento persistente y Orders no registra actualmente un proveedor de almacenamiento para las rutas de comprobantes. El flujo de pago soportado en producción es WhatsApp Business con verificación manual; no habilites la carga ni la retención de comprobantes hasta implementar y validar almacenamiento privado durable, su recuperación y la integración del proveedor. En un host no serverless, el almacenamiento local solo es adecuado con una ruta absoluta sobre un volumen privado y persistente.
 
 `npm run verify:local-purchase` usa los puertos locales predeterminados. Si el stack actual está aislado en otros puertos, define `MILESHOP_GATEWAY_URL`, `MILESHOP_NOTIFICATION_WORKER_URL`, `MILESHOP_ORDERS_SERVICE_URL` y `MILESHOP_IDENTITY_SERVICE_URL` antes de ejecutarlo; así el smoke test no termina usando servicios de otro repositorio que ocupen los puertos predeterminados.
 
