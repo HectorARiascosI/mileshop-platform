@@ -1,9 +1,8 @@
-import type { FastifyInstance, HTTPMethods } from "fastify";
+import type { FastifyInstance } from "fastify";
 import type { IncomingMessage, ServerResponse } from "node:http";
 
 const MAX_REQUEST_BODY_BYTES = 4_500_000;
-const allowedMethods = new Set<HTTPMethods>([
-  "CONNECT",
+const allowedMethods = [
   "DELETE",
   "GET",
   "HEAD",
@@ -11,8 +10,12 @@ const allowedMethods = new Set<HTTPMethods>([
   "PATCH",
   "POST",
   "PUT",
-  "TRACE",
-]);
+] as const;
+type AllowedMethod = (typeof allowedMethods)[number];
+
+function isAllowedMethod(method: string | undefined): method is AllowedMethod {
+  return method !== undefined && allowedMethods.some((allowedMethod) => allowedMethod === method);
+}
 
 export async function handleFastifyRequest(
   app: FastifyInstance,
@@ -20,7 +23,7 @@ export async function handleFastifyRequest(
   response: ServerResponse,
 ): Promise<void> {
   const method = request.method;
-  if (!method || !allowedMethods.has(method as HTTPMethods)) {
+  if (!isAllowedMethod(method)) {
     response.statusCode = 405;
     response.setHeader("content-type", "application/json; charset=utf-8");
     response.end(JSON.stringify({ statusCode: 405, message: "Method not allowed" }));
@@ -56,7 +59,7 @@ export async function handleFastifyRequest(
   }
 
   const result = await app.inject({
-    method: method as HTTPMethods,
+    method,
     url: `${url.pathname}${url.search}`,
     headers,
     ...(body === undefined ? {} : { payload: body }),
