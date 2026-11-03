@@ -4,6 +4,7 @@
   "buildCommand": "npm run build",
   "functions": {
     "api/handler.ts": {
+      "includeFiles": "../../packages/contracts/src/**",
       "maxDuration": 30
     }
   },
