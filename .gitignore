@@ -5,6 +5,7 @@ coverage/
 services/*/generated/
 .data/
 .local-stack/
+.vercel/
 .tsupgrader/runtime-validation/
 .env
 .env.*
