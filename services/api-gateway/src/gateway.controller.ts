@@ -16,6 +16,8 @@ import {
   StreamableFile,
   UseGuards,
 } from "@nestjs/common";
+import { CATALOG_CATEGORY_THEMES } from "@mileshop/contracts";
+import type { CatalogCategoryInput } from "@mileshop/contracts";
 
 import {
   CatalogClient,
@@ -134,6 +136,46 @@ export class GatewayController {
     };
   }
 
+  @Get("admin/catalog/categories")
+  @UseGuards(StoreAdminGuard)
+  @Header("Cache-Control", "private, no-store")
+  public async adminCatalogCategories(): Promise<{ data: unknown }> {
+    return { data: await this.catalog.listCategories() };
+  }
+
+  @Post("admin/catalog/categories")
+  @UseGuards(StoreAdminGuard)
+  @HttpCode(201)
+  @Header("Cache-Control", "private, no-store")
+  public async createCatalogCategory(
+    @Body() body: unknown,
+  ): Promise<{ data: unknown }> {
+    return { data: await this.catalog.createCategory(this.parseCatalogCategory(body)) };
+  }
+
+  @Patch("admin/catalog/categories/:categoryId")
+  @UseGuards(StoreAdminGuard)
+  @Header("Cache-Control", "private, no-store")
+  public async updateCatalogCategory(
+    @Param("categoryId") categoryId: string,
+    @Body() body: unknown,
+  ): Promise<{ data: unknown }> {
+    if (!categoryId.trim()) throw new BadRequestException("Category id is required");
+    return {
+      data: await this.catalog.updateCategory(categoryId, this.parseCatalogCategory(body)),
+    };
+  }
+
+  @Delete("admin/catalog/categories/:categoryId")
+  @UseGuards(StoreAdminGuard)
+  @Header("Cache-Control", "private, no-store")
+  public async deleteCatalogCategory(
+    @Param("categoryId") categoryId: string,
+  ): Promise<{ data: { deleted: true } }> {
+    if (!categoryId.trim()) throw new BadRequestException("Category id is required");
+    return { data: await this.catalog.deleteCategory(categoryId) };
+  }
+
   @Post("admin/catalog/stock-receipts")
   @UseGuards(StoreAdminGuard)
   @HttpCode(201)
@@ -195,6 +237,9 @@ export class GatewayController {
       ("imageFileId" in body &&
         body.imageFileId !== null &&
         typeof body.imageFileId !== "string") ||
+      ("categoryId" in body &&
+        body.categoryId !== null &&
+        (typeof body.categoryId !== "string" || !body.categoryId.trim())) ||
       !("isActive" in body) ||
       typeof body.isActive !== "boolean"
     ) {
@@ -212,8 +257,30 @@ export class GatewayController {
               typeof body.imageFileId === "string" ? body.imageFileId : null,
           }
         : {}),
+      ...("categoryId" in body
+        ? {
+            categoryId:
+              typeof body.categoryId === "string" ? body.categoryId : null,
+          }
+        : {}),
       isActive: body.isActive,
     };
+  }
+
+  private parseCatalogCategory(body: unknown): CatalogCategoryInput {
+    if (
+      typeof body !== "object" ||
+      body === null ||
+      !("name" in body) ||
+      typeof body.name !== "string" ||
+      !("theme" in body) ||
+      typeof body.theme !== "string"
+    ) {
+      throw new BadRequestException("Invalid category request");
+    }
+    const theme = CATALOG_CATEGORY_THEMES.find((candidate) => candidate === body.theme);
+    if (!theme) throw new BadRequestException("Invalid category request");
+    return { name: body.name, theme };
   }
 
   // ─── Identity ────────────────────────────────────────────────────────────

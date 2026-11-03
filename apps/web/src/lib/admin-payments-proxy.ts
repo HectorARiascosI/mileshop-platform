@@ -14,7 +14,7 @@ function jsonError(message: string, status: number): Response {
 export async function proxyAdminPayments(
   path: string,
   stream = false,
-  method: "GET" | "POST" | "PATCH" = "GET",
+  method: "GET" | "POST" | "PATCH" | "DELETE" = "GET",
   body?: string,
   extraHeaders: Record<string, string> = {},
 ): Promise<Response> {

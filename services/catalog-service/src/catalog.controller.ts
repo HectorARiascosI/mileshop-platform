@@ -3,6 +3,7 @@ import {
   Body,
   ConflictException,
   Controller,
+  Delete,
   Get,
   Headers,
   HttpCode,
@@ -21,12 +22,14 @@ import {
   CatalogConflictError,
   CatalogInputError,
   CatalogNotFoundError,
+  CATEGORY_THEMES,
   InventoryConflictError,
   ManualSaleIdempotencyConflictError,
   ReservationIdempotencyConflictError,
   StockReceiptIdempotencyConflictError,
 } from "./catalog.service.js";
 import type {
+  CategoryInput,
   InventoryReservation,
   ProductInput,
   ReservationRequestLine,
@@ -112,8 +115,27 @@ function parseProductInput(input: unknown): ProductInput {
     ...("imageFileId" in input
       ? { imageFileId: parseNullableString(input.imageFileId) }
       : {}),
+    ...("categoryId" in input
+      ? { categoryId: parseNullableString(input.categoryId) }
+      : {}),
     isActive: input.isActive,
   };
+}
+
+function parseCategoryInput(input: unknown): CategoryInput {
+  if (
+    typeof input !== "object" ||
+    input === null ||
+    !("name" in input) ||
+    typeof input.name !== "string" ||
+    !("theme" in input) ||
+    typeof input.theme !== "string"
+  ) {
+    throw new BadRequestException("Invalid category request");
+  }
+  const theme = CATEGORY_THEMES.find((candidate) => candidate === input.theme);
+  if (!theme) throw new BadRequestException("Invalid category request");
+  return { name: input.name, theme };
 }
 
 function parseNullableString(input: unknown): string | null {
@@ -187,6 +209,51 @@ export class CatalogController {
   @UseGuards(InventoryCommandGuard)
   public async adminProducts(): Promise<{ data: Awaited<ReturnType<CatalogService["listAdminProducts"]>> }> {
     return { data: await this.catalog.listAdminProducts() };
+  }
+
+  @Get("internal/admin/categories")
+  @UseGuards(InventoryCommandGuard)
+  public async adminCategories(): Promise<{ data: Awaited<ReturnType<CatalogService["listCategories"]>> }> {
+    return { data: await this.catalog.listCategories() };
+  }
+
+  @Post("internal/admin/categories")
+  @HttpCode(201)
+  @UseGuards(InventoryCommandGuard)
+  public async createCategory(
+    @Body() input: unknown,
+  ): Promise<{ data: Awaited<ReturnType<CatalogService["createCategory"]>> }> {
+    try {
+      return { data: await this.catalog.createCategory(parseCategoryInput(input)) };
+    } catch (error) {
+      return rethrowCatalogError(error);
+    }
+  }
+
+  @Patch("internal/admin/categories/:categoryId")
+  @UseGuards(InventoryCommandGuard)
+  public async updateCategory(
+    @Param("categoryId") categoryId: string,
+    @Body() input: unknown,
+  ): Promise<{ data: Awaited<ReturnType<CatalogService["updateCategory"]>> }> {
+    try {
+      return { data: await this.catalog.updateCategory(categoryId, parseCategoryInput(input)) };
+    } catch (error) {
+      return rethrowCatalogError(error);
+    }
+  }
+
+  @Delete("internal/admin/categories/:categoryId")
+  @UseGuards(InventoryCommandGuard)
+  public async deleteCategory(
+    @Param("categoryId") categoryId: string,
+  ): Promise<{ data: { deleted: true } }> {
+    try {
+      await this.catalog.deleteCategory(categoryId);
+      return { data: { deleted: true } };
+    } catch (error) {
+      return rethrowCatalogError(error);
+    }
   }
 
   @Post("internal/admin/products")

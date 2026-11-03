@@ -12,6 +12,7 @@
     "typecheck": "tsc -p tsconfig.json --noEmit"
   },
   "dependencies": {
+    "@mileshop/contracts": "*",
     "@fastify/helmet": "^13.1.1",
     "@fastify/multipart": "^10.1.6",
     "@fastify/rate-limit": "^11.2.0",

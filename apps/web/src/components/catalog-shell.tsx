@@ -5,6 +5,7 @@ import Image from "next/image";
 import { useRouter } from "next/navigation";
 import { useEffect, useState, useSyncExternalStore } from "react";
 
+import type { CatalogCategorySummary } from "@mileshop/contracts";
 import {
   addProductToCart,
   getCartItemCount,
@@ -30,6 +31,8 @@ type Product = {
   priceCop: number;
   stock: number;
   imageUrl?: string | null;
+  categoryId?: string | null;
+  category?: CatalogCategorySummary | null;
 };
 
 type CatalogShellProps = {
@@ -114,6 +117,7 @@ export function CatalogShell({ products, unavailable }: CatalogShellProps) {
   const [checkoutError, setCheckoutError] = useState<string | null>(null);
   const [isStoreAdmin, setIsStoreAdmin] = useState(false);
   const [searchQuery, setSearchQuery] = useState("");
+  const [selectedCategoryId, setSelectedCategoryId] = useState<string | null>(null);
 
   useEffect(() => {
     if (!isCartHydrated) {
@@ -149,7 +153,14 @@ export function CatalogShell({ products, unavailable }: CatalogShellProps) {
   const cartCount = getCartItemCount(visibleCart);
   const checkoutSummary = buildCheckoutSummary(visibleCart);
   const heroProduct = products.find((product) => product.imageUrl);
-  const visibleProducts = filterCatalogProducts(products, searchQuery);
+  const categoriesById = new Map<string, CatalogCategorySummary>();
+  for (const product of products) {
+    if (product.category) categoriesById.set(product.category.id, product.category);
+  }
+  const categories = [...categoriesById.values()].sort((left, right) =>
+    left.name.localeCompare(right.name, "es"),
+  );
+  const visibleProducts = filterCatalogProducts(products, searchQuery, selectedCategoryId);
 
   const handleAddToCart = (product: Product) => {
     if (product.stock <= 0) return;
@@ -352,7 +363,7 @@ export function CatalogShell({ products, unavailable }: CatalogShellProps) {
             </div>
             {!unavailable && (
               <p className="product-count" aria-live="polite">
-                {searchQuery.trim()
+                {searchQuery.trim() || selectedCategoryId
                   ? `${visibleProducts.length} ${visibleProducts.length === 1 ? "resultado" : "resultados"}`
                   : `${products.length} ${products.length === 1 ? "producto" : "productos"}`}
               </p>
@@ -381,6 +392,30 @@ export function CatalogShell({ products, unavailable }: CatalogShellProps) {
             </label>
           )}
 
+          {!unavailable && categories.length > 0 && (
+            <div className="category-filters" role="group" aria-label="Filtrar por categoría">
+              <button
+                className="category-filter"
+                type="button"
+                aria-pressed={selectedCategoryId === null}
+                onClick={() => setSelectedCategoryId(null)}
+              >
+                Todas
+              </button>
+              {categories.map((category) => (
+                <button
+                  className="category-filter"
+                  type="button"
+                  key={category.id}
+                  aria-pressed={selectedCategoryId === category.id}
+                  onClick={() => setSelectedCategoryId(category.id)}
+                >
+                  {category.name}
+                </button>
+              ))}
+            </div>
+          )}
+
           {unavailable ? (
             <section className="notice notice-error" role="alert">
               <strong>No pudimos cargar el catálogo.</strong>
@@ -398,14 +433,21 @@ export function CatalogShell({ products, unavailable }: CatalogShellProps) {
             <section className="notice catalog-no-results" role="status">
               <strong>No encontramos productos con ese criterio.</strong>
               <span>Prueba con otro nombre o código de producto.</span>
-              <button className="add-button self-start" type="button" onClick={() => setSearchQuery("")}>
+              <button
+                className="add-button self-start"
+                type="button"
+                onClick={() => {
+                  setSearchQuery("");
+                  setSelectedCategoryId(null);
+                }}
+              >
                 Ver todos los productos
               </button>
             </section>
           ) : (
             <ul className="product-grid" aria-label="Productos disponibles">
               {visibleProducts.map((product) => (
-                <li className="product-card" key={product.id}>
+                <li className="product-card" key={product.id} data-theme={product.category?.theme ?? "neutral"}>
                   <div className="product-art">
                     {product.imageUrl ? (
                       <Image
@@ -430,6 +472,9 @@ export function CatalogShell({ products, unavailable }: CatalogShellProps) {
                       <span className="stock-indicator" aria-hidden="true" />
                       {product.stock > 0 ? `${product.stock} disponibles` : "Agotado"}
                     </p>
+                    {product.category && (
+                      <p className="product-category">{product.category.name}</p>
+                    )}
                     <h3>{product.name}</h3>
                     {product.description && (
                       <p className="product-description">{product.description}</p>

@@ -1,6 +1,6 @@
 generator client {
-  provider = "prisma-client-js"
-  output   = "../generated/catalog-client"
+  provider        = "prisma-client-js"
+  output          = "../generated/catalog-client"
   previewFeatures = ["driverAdapters"]
 }
 
@@ -9,32 +9,53 @@ datasource db {
   url      = env("DATABASE_URL")
 }
 
+enum CategoryTheme {
+  neutral
+  gold
+  blue
+  fuchsia
+  wood
+}
+
 model Product {
-  id          String   @id @default(cuid())
-  sku         String   @unique
-  name        String
-  description String
-  priceCop    Int
-  stock       Int
-  imageUrl    String?
-  imageFileId String?
-  isActive    Boolean  @default(true)
-  createdAt   DateTime @default(now())
-  updatedAt   DateTime @updatedAt
-  manualSales ManualSaleLine[]
+  id            String             @id @default(cuid())
+  sku           String             @unique
+  name          String
+  description   String
+  priceCop      Int
+  stock         Int
+  imageUrl      String?
+  imageFileId   String?
+  categoryId    String?
+  isActive      Boolean            @default(true)
+  createdAt     DateTime           @default(now())
+  updatedAt     DateTime           @updatedAt
+  category      Category?          @relation(fields: [categoryId], references: [id], onDelete: Restrict)
+  manualSales   ManualSaleLine[]
   stockReceipts StockReceiptLine[]
 
   @@index([isActive, name])
+  @@index([categoryId])
+}
+
+model Category {
+  id        String        @id @default(cuid())
+  name      String        @unique
+  slug      String        @unique
+  theme     CategoryTheme @default(neutral)
+  createdAt DateTime      @default(now())
+  updatedAt DateTime      @updatedAt
+  products  Product[]
 }
 
 model StockReceipt {
-  id              String             @id @default(cuid())
-  idempotencyKey  String             @unique
-  adminCustomerId String
-  reason          String
+  id                 String             @id @default(cuid())
+  idempotencyKey     String             @unique
+  adminCustomerId    String
+  reason             String
   requestFingerprint String
-  createdAt       DateTime           @default(now())
-  lines           StockReceiptLine[]
+  createdAt          DateTime           @default(now())
+  lines              StockReceiptLine[]
 
   @@index([createdAt])
   @@index([adminCustomerId, createdAt])
@@ -65,15 +86,15 @@ model ManualSale {
 }
 
 model ManualSaleLine {
-  id             String     @id @default(cuid())
-  saleId         String
-  productId      String
-  sku            String
-  name           String
-  quantity       Int
-  unitPriceCop   Int
-  sale           ManualSale @relation(fields: [saleId], references: [id], onDelete: Cascade)
-  product        Product    @relation(fields: [productId], references: [id], onDelete: Restrict)
+  id           String     @id @default(cuid())
+  saleId       String
+  productId    String
+  sku          String
+  name         String
+  quantity     Int
+  unitPriceCop Int
+  sale         ManualSale @relation(fields: [saleId], references: [id], onDelete: Cascade)
+  product      Product    @relation(fields: [productId], references: [id], onDelete: Restrict)
 
   @@unique([saleId, productId])
 }
@@ -91,26 +112,26 @@ model InventoryReservation {
 }
 
 model InventoryReservationLine {
-  id             String               @id @default(cuid())
-  reservationId  String
-  productId      String
-  sku            String
-  name           String
-  quantity       Int
-  unitPriceCop   Int
-  reservation    InventoryReservation @relation(fields: [reservationId], references: [id], onDelete: Cascade)
+  id            String               @id @default(cuid())
+  reservationId String
+  productId     String
+  sku           String
+  name          String
+  quantity      Int
+  unitPriceCop  Int
+  reservation   InventoryReservation @relation(fields: [reservationId], references: [id], onDelete: Cascade)
 
   @@unique([reservationId, productId])
 }
 
 model InventoryMovement {
-  id             String               @id @default(cuid())
-  reservationId  String
-  productId      String
-  movementType   String
-  quantityDelta  Int
-  createdAt      DateTime             @default(now())
-  reservation    InventoryReservation @relation(fields: [reservationId], references: [id], onDelete: Restrict)
+  id            String               @id @default(cuid())
+  reservationId String
+  productId     String
+  movementType  String
+  quantityDelta Int
+  createdAt     DateTime             @default(now())
+  reservation   InventoryReservation @relation(fields: [reservationId], references: [id], onDelete: Restrict)
 
   @@unique([reservationId, productId, movementType])
   @@index([productId, createdAt])

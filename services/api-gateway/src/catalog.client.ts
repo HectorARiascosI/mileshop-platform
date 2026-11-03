@@ -6,6 +6,11 @@ import {
   NotFoundException,
   ServiceUnavailableException,
 } from "@nestjs/common";
+import type {
+  CatalogCategory,
+  CatalogCategoryInput,
+  CatalogCategorySummary,
+} from "@mileshop/contracts";
 
 export const CATALOG_FETCH = "CATALOG_FETCH";
 
@@ -18,6 +23,8 @@ export type GatewayProduct = {
   stock: number;
   imageUrl?: string | null;
   imageFileId?: string | null;
+  categoryId?: string | null;
+  category?: CatalogCategorySummary | null;
   isActive?: boolean;
 };
 
@@ -29,6 +36,7 @@ export type CatalogProductInput = {
   priceCop: number;
   imageUrl: string | null;
   imageFileId?: string | null;
+  categoryId?: string | null;
   isActive: boolean;
 };
 export type StockReceiptLineInput = ManualSaleLineInput;
@@ -123,6 +131,32 @@ export class CatalogClient {
     return this.adminRequest<GatewayProduct[]>("GET", "/internal/admin/products");
   }
 
+  public async listCategories(): Promise<CatalogCategory[]> {
+    return this.adminRequest<CatalogCategory[]>("GET", "/internal/admin/categories");
+  }
+
+  public async createCategory(input: CatalogCategoryInput): Promise<CatalogCategory> {
+    return this.adminRequest<CatalogCategory>("POST", "/internal/admin/categories", input);
+  }
+
+  public async updateCategory(
+    categoryId: string,
+    input: CatalogCategoryInput,
+  ): Promise<CatalogCategory> {
+    return this.adminRequest<CatalogCategory>(
+      "PATCH",
+      `/internal/admin/categories/${encodeURIComponent(categoryId)}`,
+      input,
+    );
+  }
+
+  public async deleteCategory(categoryId: string): Promise<{ deleted: true }> {
+    return this.adminRequest<{ deleted: true }>(
+      "DELETE",
+      `/internal/admin/categories/${encodeURIComponent(categoryId)}`,
+    );
+  }
+
   public async createProduct(input: CatalogProductInput): Promise<GatewayProduct> {
     return this.adminRequest<GatewayProduct>("POST", "/internal/admin/products", input);
   }
@@ -153,7 +187,7 @@ export class CatalogClient {
   }
 
   private async adminRequest<T>(
-    method: "GET" | "POST" | "PATCH",
+    method: "GET" | "POST" | "PATCH" | "DELETE",
     path: string,
     body?: unknown,
     idempotencyKey?: string,
@@ -183,10 +217,10 @@ export class CatalogClient {
       throw new BadRequestException("Catalog request was rejected");
     }
     if (response.status === 404) {
-      throw new NotFoundException("Catalog product was not found");
+      throw new NotFoundException("Catalog resource was not found");
     }
     if (response.status === 409) {
-      throw new ConflictException("Catalog request conflicts with current data");
+      throw new ConflictException("Catalog resource conflicts with current data");
     }
     if (!response.ok) {
       throw new ServiceUnavailableException("Catalog service is unavailable");

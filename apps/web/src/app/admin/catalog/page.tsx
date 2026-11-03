@@ -4,6 +4,18 @@ import Image from "next/image";
 import Link from "next/link";
 import { useCallback, useEffect, useState, type FormEvent } from "react";
 
+import { CATALOG_CATEGORY_THEMES } from "@mileshop/contracts";
+import type {
+  CatalogCategory,
+  CatalogCategoryInput,
+  CatalogCategorySummary,
+} from "@mileshop/contracts";
+import {
+  CATEGORY_THEME_LABELS,
+  isCatalogCategory,
+  isCatalogCategorySummary,
+  isCatalogCategoryTheme,
+} from "@/lib/catalog-category";
 import { getOptimizedImageUrl } from "@/lib/imagekit-url";
 
 type Product = {
@@ -15,6 +27,8 @@ type Product = {
   stock: number;
   imageUrl: string | null;
   imageFileId: string | null;
+  categoryId: string | null;
+  category: CatalogCategorySummary | null;
   isActive: boolean;
 };
 
@@ -25,6 +39,7 @@ type ProductForm = {
   priceCop: string;
   imageUrl: string;
   imageFileId: string | null;
+  categoryId: string | null;
   isActive: boolean;
 };
 
@@ -42,7 +57,13 @@ const EMPTY_FORM: ProductForm = {
   priceCop: "",
   imageUrl: "",
   imageFileId: null,
+  categoryId: null,
   isActive: true,
+};
+
+const EMPTY_CATEGORY_FORM: CatalogCategoryInput = {
+  name: "",
+  theme: "neutral",
 };
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -60,6 +81,8 @@ function isProduct(value: unknown): value is Product {
     Number.isSafeInteger(value.stock) &&
     (typeof value.imageUrl === "string" || value.imageUrl === null) &&
     (typeof value.imageFileId === "string" || value.imageFileId === null) &&
+    (typeof value.categoryId === "string" || value.categoryId === null) &&
+    (value.category === null || isCatalogCategorySummary(value.category)) &&
     typeof value.isActive === "boolean"
   );
 }
@@ -122,7 +145,12 @@ async function deleteProductImage(fileId: string): Promise<void> {
 export default function AdminCatalogPage() {
   const [authorized, setAuthorized] = useState<boolean | null>(null);
   const [products, setProducts] = useState<Product[]>([]);
+  const [categories, setCategories] = useState<CatalogCategory[]>([]);
   const [form, setForm] = useState<ProductForm>(EMPTY_FORM);
+  const [categoryForm, setCategoryForm] = useState<CatalogCategoryInput>(EMPTY_CATEGORY_FORM);
+  const [editingCategoryId, setEditingCategoryId] = useState<string | null>(null);
+  const [isSavingCategory, setIsSavingCategory] = useState(false);
+  const [deletingCategoryId, setDeletingCategoryId] = useState<string | null>(null);
   const [selectedImageFile, setSelectedImageFile] = useState<File | null>(null);
   const [previewImageUrl, setPreviewImageUrl] = useState<string | null>(null);
   const [pendingImageCleanup, setPendingImageCleanup] = useState<string[]>([]);
@@ -198,26 +226,50 @@ export default function AdminCatalogPage() {
     setIsLoading(true);
     setError(null);
     try {
-      const response = await fetch("/api/admin/catalog/products", { cache: "no-store" });
-      if (response.status === 401 || response.status === 403) {
+      const [response, categoriesResponse] = await Promise.all([
+        fetch("/api/admin/catalog/products", { cache: "no-store" }),
+        fetch("/api/admin/catalog/categories", { cache: "no-store" }),
+      ]);
+      if (
+        response.status === 401 ||
+        response.status === 403 ||
+        categoriesResponse.status === 401 ||
+        categoriesResponse.status === 403
+      ) {
         setAuthorized(false);
         setProducts([]);
+        setCategories([]);
         return;
       }
       if (!response.ok) {
         throw new Error(await responseError(response, "No se pudo cargar el catálogo."));
       }
+      if (!categoriesResponse.ok) {
+        throw new Error(await responseError(categoriesResponse, "No se pudieron cargar las categorías."));
+      }
       const payload: unknown = await response.json();
-      if (!isRecord(payload) || !Array.isArray(payload.data)) {
+      const categoriesPayload: unknown = await categoriesResponse.json();
+      if (
+        !isRecord(payload) ||
+        !Array.isArray(payload.data) ||
+        !isRecord(categoriesPayload) ||
+        !Array.isArray(categoriesPayload.data)
+      ) {
         throw new Error("El servicio devolvió un catálogo inválido.");
       }
       const receivedProducts: unknown[] = payload.data;
+      const receivedCategories: unknown[] = categoriesPayload.data;
       const validProducts = receivedProducts.filter(isProduct);
-      if (validProducts.length !== receivedProducts.length) {
+      const validCategories = receivedCategories.filter(isCatalogCategory);
+      if (
+        validProducts.length !== receivedProducts.length ||
+        validCategories.length !== receivedCategories.length
+      ) {
         throw new Error("El servicio devolvió un catálogo inválido.");
       }
       setAuthorized(true);
       setProducts(validProducts);
+      setCategories(validCategories);
       setStockProductId((current) =>
         validProducts.some((product) => product.id === current)
           ? current
@@ -266,6 +318,7 @@ export default function AdminCatalogPage() {
       priceCop: String(product.priceCop),
       imageUrl: product.imageUrl ?? "",
       imageFileId: product.imageFileId,
+      categoryId: product.categoryId,
       isActive: product.isActive,
     });
     selectImageFile(null);
@@ -277,6 +330,78 @@ export default function AdminCatalogPage() {
     setEditingProductId(null);
     setForm(EMPTY_FORM);
     selectImageFile(null);
+  };
+
+  const resetCategoryForm = () => {
+    setEditingCategoryId(null);
+    setCategoryForm(EMPTY_CATEGORY_FORM);
+  };
+
+  const beginEditCategory = (category: CatalogCategory) => {
+    setEditingCategoryId(category.id);
+    setCategoryForm({ name: category.name, theme: category.theme });
+    setError(null);
+    setNotice(null);
+  };
+
+  const saveCategory = async (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    setIsSavingCategory(true);
+    setError(null);
+    setNotice(null);
+    try {
+      const response = await fetch(
+        editingCategoryId
+          ? `/api/admin/catalog/categories/${encodeURIComponent(editingCategoryId)}`
+          : "/api/admin/catalog/categories",
+        {
+          method: editingCategoryId ? "PATCH" : "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify(categoryForm),
+        },
+      );
+      if (!response.ok) {
+        throw new Error(await responseError(response, "No se pudo guardar la categoría."));
+      }
+      const payload: unknown = await response.json();
+      if (!isRecord(payload) || !isCatalogCategory(payload.data)) {
+        throw new Error("El servicio devolvió una categoría inválida.");
+      }
+      setNotice(editingCategoryId ? "Categoría actualizada." : "Categoría creada.");
+      resetCategoryForm();
+      await refreshProducts();
+    } catch (requestError) {
+      setError(requestError instanceof Error ? requestError.message : "Error inesperado.");
+    } finally {
+      setIsSavingCategory(false);
+    }
+  };
+
+  const deleteCategory = async (category: CatalogCategory) => {
+    if (category.productCount > 0) {
+      setError("Reasigna los productos antes de eliminar esta categoría.");
+      return;
+    }
+    if (!window.confirm(`¿Eliminar la categoría «${category.name}»?`)) return;
+    setDeletingCategoryId(category.id);
+    setError(null);
+    setNotice(null);
+    try {
+      const response = await fetch(
+        `/api/admin/catalog/categories/${encodeURIComponent(category.id)}`,
+        { method: "DELETE" },
+      );
+      if (!response.ok) {
+        throw new Error(await responseError(response, "No se pudo eliminar la categoría."));
+      }
+      if (editingCategoryId === category.id) resetCategoryForm();
+      setNotice("Categoría eliminada.");
+      await refreshProducts();
+    } catch (requestError) {
+      setError(requestError instanceof Error ? requestError.message : "Error inesperado.");
+    } finally {
+      setDeletingCategoryId(null);
+    }
   };
 
   const saveProduct = async (event: FormEvent<HTMLFormElement>) => {
@@ -320,6 +445,7 @@ export default function AdminCatalogPage() {
             priceCop,
             imageUrl,
             imageFileId,
+            categoryId: form.categoryId,
             isActive: form.isActive,
           }),
         },
@@ -459,6 +585,103 @@ export default function AdminCatalogPage() {
           {error && <p className="mb-4 rounded-lg bg-red-50 p-3 text-red-800" role="alert">{error}</p>}
           {notice && <p className="mb-4 rounded-lg bg-emerald-50 p-3 text-emerald-800" role="status">{notice}</p>}
 
+          <section className="mb-8 grid gap-6 lg:grid-cols-2" aria-labelledby="category-management-title">
+            <form className="grid content-start gap-4 rounded-xl border bg-white p-5 shadow-sm" onSubmit={saveCategory}>
+              <div>
+                <h2 className="text-xl font-semibold" id="category-management-title">
+                  {editingCategoryId ? "Editar categoría" : "Categorías"}
+                </h2>
+                <p className="mt-1 text-sm text-slate-600">
+                  Organiza los productos con temas visuales predefinidos. Cada producto puede tener una categoría principal.
+                </p>
+              </div>
+              <label className="grid gap-1 text-sm font-medium">
+                Nombre de la categoría
+                <input
+                  className="rounded border px-3 py-2"
+                  required
+                  minLength={2}
+                  maxLength={60}
+                  value={categoryForm.name}
+                  onChange={(event) => setCategoryForm({ ...categoryForm, name: event.target.value })}
+                />
+              </label>
+              <label className="grid gap-1 text-sm font-medium">
+                Tema visual
+                <select
+                  className="rounded border px-3 py-2"
+                  value={categoryForm.theme}
+                  onChange={(event) => {
+                    if (isCatalogCategoryTheme(event.target.value)) {
+                      setCategoryForm({
+                        ...categoryForm,
+                        theme: event.target.value,
+                      });
+                    }
+                  }}
+                >
+                  {CATALOG_CATEGORY_THEMES.map((theme) => (
+                    <option key={theme} value={theme}>{CATEGORY_THEME_LABELS[theme]}</option>
+                  ))}
+                </select>
+                <span className="text-xs font-normal text-slate-600">
+                  El tema cambia el acento visual; no altera precios, descuentos ni disponibilidad.
+                </span>
+              </label>
+              <div className="flex flex-wrap gap-2">
+                <button className="rounded bg-slate-900 px-4 py-2 font-semibold text-white disabled:opacity-50" type="submit" disabled={isSavingCategory}>
+                  {isSavingCategory ? "Guardando…" : editingCategoryId ? "Guardar categoría" : "Crear categoría"}
+                </button>
+                {editingCategoryId && (
+                  <button className="rounded border px-4 py-2 font-medium" type="button" onClick={resetCategoryForm}>
+                    Cancelar edición
+                  </button>
+                )}
+              </div>
+            </form>
+
+            <div className="grid content-start gap-3 rounded-xl border bg-white p-5 shadow-sm">
+              <h2 className="text-xl font-semibold">Categorías registradas</h2>
+              {categories.length === 0 ? (
+                <p className="text-sm text-slate-600">Aún no hay categorías. Los productos pueden permanecer sin categoría.</p>
+              ) : (
+                <ul className="divide-y">
+                  {categories.map((category) => (
+                    <li className="flex flex-wrap items-center justify-between gap-3 py-3" key={category.id}>
+                      <div className="flex items-center gap-3">
+                        <span
+                          className="category-theme-swatch"
+                          data-theme={category.theme}
+                          aria-label={`Tema ${CATEGORY_THEME_LABELS[category.theme]}`}
+                        />
+                        <div>
+                          <p className="font-semibold">{category.name}</p>
+                          <p className="text-sm text-slate-600">
+                            {CATEGORY_THEME_LABELS[category.theme]} · {category.productCount} productos
+                          </p>
+                        </div>
+                      </div>
+                      <div className="flex gap-2">
+                        <button className="rounded border px-3 py-2 text-sm font-medium" type="button" onClick={() => beginEditCategory(category)}>
+                          Editar
+                        </button>
+                        <button
+                          className="rounded border px-3 py-2 text-sm font-medium disabled:cursor-not-allowed disabled:opacity-50"
+                          type="button"
+                          disabled={category.productCount > 0 || deletingCategoryId === category.id}
+                          title={category.productCount > 0 ? "Reasigna sus productos antes de eliminarla." : undefined}
+                          onClick={() => void deleteCategory(category)}
+                        >
+                          {deletingCategoryId === category.id ? "Eliminando…" : "Eliminar"}
+                        </button>
+                      </div>
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </div>
+          </section>
+
           <section className="mb-8 grid gap-6 lg:grid-cols-[minmax(0,1.3fr)_minmax(18rem,0.7fr)]">
             <form className="grid gap-4 rounded-xl border bg-white p-5 shadow-sm" onSubmit={saveProduct}>
               <div>
@@ -493,6 +716,22 @@ export default function AdminCatalogPage() {
                   </span>
                 </label>
               </div>
+              <label className="grid gap-1 text-sm font-medium">
+                Categoría principal
+                <select
+                  className="rounded border px-3 py-2"
+                  value={form.categoryId ?? ""}
+                  onChange={(event) => setForm({ ...form, categoryId: event.target.value || null })}
+                >
+                  <option value="">Sin categoría</option>
+                  {categories.map((category) => (
+                    <option key={category.id} value={category.id}>{category.name}</option>
+                  ))}
+                </select>
+                <span className="text-xs font-normal text-slate-600">
+                  La tienda usa el tema de esta categoría para distinguir el producto y ofrecer filtros.
+                </span>
+              </label>
               <fieldset className="grid gap-3 rounded-lg border p-4">
                 <legend className="px-1 text-sm font-semibold">Foto del producto</legend>
                 <label className="grid gap-1 text-sm font-medium">

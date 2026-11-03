@@ -1,7 +1,11 @@
+import type { CatalogCategorySummary } from "@mileshop/contracts";
+
 export type SearchableProduct = {
   name: string;
   sku: string;
   description: string;
+  categoryId?: string | null;
+  category?: CatalogCategorySummary | null;
 };
 
 function normalizeSearchText(value: string): string {
@@ -14,15 +18,14 @@ function normalizeSearchText(value: string): string {
 export function filterCatalogProducts<T extends SearchableProduct>(
   products: readonly T[],
   query: string,
+  categoryId: string | null = null,
 ): T[] {
   const normalizedQuery = normalizeSearchText(query.trim());
-  if (!normalizedQuery) {
-    return [...products];
-  }
-
   return products.filter((product) =>
-    normalizeSearchText(`${product.name} ${product.sku} ${product.description}`).includes(
-      normalizedQuery,
-    ),
+    (categoryId === null || (product.category?.id ?? product.categoryId) === categoryId) &&
+    (!normalizedQuery ||
+      normalizeSearchText(
+        `${product.name} ${product.sku} ${product.description} ${product.category?.name ?? ""}`,
+      ).includes(normalizedQuery)),
   );
 }

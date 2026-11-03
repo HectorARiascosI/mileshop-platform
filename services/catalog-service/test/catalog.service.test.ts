@@ -113,6 +113,70 @@ test("managed image references require a URL and a safe file id", async () => {
   );
 });
 
+test("admin manages predefined category themes and protects categories assigned to products", async () => {
+  const service = new CatalogService(new InMemoryCatalogStore([]));
+  const category = await service.createCategory({
+    name: "Accesorios para moto",
+    theme: "blue",
+  });
+  assert.equal(category.slug, "accesorios-para-moto");
+  assert.equal(category.productCount, 0);
+
+  const product = await service.createProduct({
+    sku: "CATEGORY-01",
+    name: "Pitillos para moto",
+    description: "Accesorios para ruedas",
+    priceCop: 10000,
+    imageUrl: null,
+    categoryId: category.id,
+    isActive: true,
+  });
+  assert.equal(product.category?.id, category.id);
+  assert.equal(product.category?.theme, "blue");
+  assert.equal((await service.listCategories())[0]?.productCount, 1);
+  assert.equal((await service.listProducts())[0]?.category?.name, "Accesorios para moto");
+
+  await assert.rejects(
+    () => service.deleteCategory(category.id),
+    { code: "CONFLICT" },
+  );
+  await assert.rejects(
+    () => service.createCategory({ name: "ACCESORIOS-PARA-MOTO", theme: "gold" }),
+    { code: "CONFLICT" },
+  );
+
+  const updatedCategory = await service.updateCategory(category.id, {
+    name: "Accesorios de moto",
+    theme: "gold",
+  });
+  assert.equal(updatedCategory.slug, "accesorios-de-moto");
+  assert.equal((await service.listProducts())[0]?.category?.theme, "gold");
+
+  await service.updateProduct(product.id, {
+    sku: product.sku,
+    name: product.name,
+    description: product.description,
+    priceCop: product.priceCop,
+    imageUrl: null,
+    isActive: true,
+  });
+  assert.equal((await service.listProducts())[0]?.category?.id, category.id);
+
+  await service.updateProduct(product.id, {
+    sku: product.sku,
+    name: product.name,
+    description: product.description,
+    priceCop: product.priceCop,
+    imageUrl: null,
+    categoryId: null,
+    isActive: true,
+  });
+  assert.equal((await service.listProducts())[0]?.category, undefined);
+  assert.equal((await service.listCategories())[0]?.productCount, 0);
+  await service.deleteCategory(category.id);
+  assert.deepEqual(await service.listCategories(), []);
+});
+
 test("admin can soft-disable a product without deleting its inventory history", async () => {
   const service = new CatalogService(new InMemoryCatalogStore([]));
   const product = await service.createProduct({

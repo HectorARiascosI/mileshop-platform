@@ -1,4 +1,11 @@
 import { Injectable } from "@nestjs/common";
+import { CATALOG_CATEGORY_THEMES } from "@mileshop/contracts";
+import type {
+  CatalogCategory,
+  CatalogCategoryInput,
+  CatalogCategorySummary,
+  CatalogCategoryTheme,
+} from "@mileshop/contracts";
 
 export type Product = {
   id: string;
@@ -9,8 +16,16 @@ export type Product = {
   stock: number;
   imageUrl?: string | null;
   imageFileId?: string | null;
+  categoryId?: string | null;
+  category?: CategorySummary | null;
   isActive?: boolean;
 };
+
+export const CATEGORY_THEMES = CATALOG_CATEGORY_THEMES;
+export type CategoryTheme = CatalogCategoryTheme;
+export type CategorySummary = CatalogCategorySummary;
+export type Category = CatalogCategory;
+export type CategoryInput = CatalogCategoryInput;
 
 export type ProductInput = {
   sku: string;
@@ -19,6 +34,7 @@ export type ProductInput = {
   priceCop: number;
   imageUrl: string | null;
   imageFileId?: string | null;
+  categoryId?: string | null;
   isActive: boolean;
 };
 
@@ -46,6 +62,10 @@ export type ManualSale = {
 export interface CatalogStore {
   listActiveProducts(): Promise<Product[]>;
   listAdminProducts(): Promise<Product[]>;
+  listCategories(): Promise<Category[]>;
+  createCategory(input: CategoryInput): Promise<Category>;
+  updateCategory(categoryId: string, input: CategoryInput): Promise<Category>;
+  deleteCategory(categoryId: string): Promise<void>;
   createProduct(input: ProductInput): Promise<Product>;
   updateProduct(productId: string, input: ProductInput): Promise<Product>;
   recordStockReceipt(adminCustomerId: string, idempotencyKey: string, reason: string, lines: ReservationRequestLine[]): Promise<StockReceipt>;
@@ -181,6 +201,13 @@ export function normalizeProductInput(input: ProductInput): ProductInput {
   if (typeof input.isActive !== "boolean") {
     throw new CatalogInputError("Product active status is invalid");
   }
+  let categoryId: string | null | undefined;
+  if (input.categoryId !== undefined) {
+    if (input.categoryId !== null && (typeof input.categoryId !== "string" || !input.categoryId.trim())) {
+      throw new CatalogInputError("Product category is invalid");
+    }
+    categoryId = typeof input.categoryId === "string" ? input.categoryId.trim() : null;
+  }
   let imageUrl: string | null = null;
   let imageUrlHost: string | null = null;
   if (input.imageUrl !== null && input.imageUrl !== undefined && input.imageUrl !== "") {
@@ -222,8 +249,29 @@ export function normalizeProductInput(input: ProductInput): ProductInput {
     priceCop: input.priceCop,
     imageUrl,
     ...(imageFileId !== undefined ? { imageFileId } : {}),
+    ...(categoryId !== undefined ? { categoryId } : {}),
     isActive: input.isActive,
   };
+}
+
+export function normalizeCategoryInput(input: CategoryInput): CategoryInput & { slug: string } {
+  const name = typeof input.name === "string" ? input.name.trim() : "";
+  if (name.length < 2 || name.length > 60) {
+    throw new CatalogInputError("Category name must contain 2–60 characters");
+  }
+  if (!CATEGORY_THEMES.includes(input.theme)) {
+    throw new CatalogInputError("Category theme is invalid");
+  }
+  const slug = name
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-|-$/g, "");
+  if (!slug) {
+    throw new CatalogInputError("Category name must contain letters or numbers");
+  }
+  return { name, slug, theme: input.theme };
 }
 
 export function normalizeStockReceipt(
@@ -249,6 +297,7 @@ export function normalizeStockReceipt(
 @Injectable()
 export class InMemoryCatalogStore implements CatalogStore {
   private readonly products: Product[];
+  private readonly categories: CategorySummary[];
   private readonly defaultProducts: Product[] = [
     {
       id: "prod-mug-001",
@@ -284,21 +333,25 @@ export class InMemoryCatalogStore implements CatalogStore {
   private readonly stockReceipts = new Map<string, { requestFingerprint: string; result: StockReceipt }>();
   private operationTail: Promise<void> = Promise.resolve();
 
-  public constructor(products?: Product[]) {
+  public constructor(products?: Product[], categories: CategorySummary[] = []) {
     this.products = (products ?? this.defaultProducts).map((product) => ({ ...product }));
+    this.categories = categories.map((category) => ({ ...category }));
   }
 
   public async listActiveProducts(): Promise<Product[]> {
     return this.products
       .filter((product) => product.isActive !== false)
-      .map(({ id, sku, name, description, priceCop, stock, imageUrl }) => ({
-        id,
-        sku,
-        name,
-        description,
-        priceCop,
-        stock,
-        ...(imageUrl ? { imageUrl } : {}),
+      .map((product) => ({
+        id: product.id,
+        sku: product.sku,
+        name: product.name,
+        description: product.description,
+        priceCop: product.priceCop,
+        stock: product.stock,
+        ...(product.imageUrl ? { imageUrl: product.imageUrl } : {}),
+        ...(this.getCategorySummary(product.categoryId)
+          ? { category: this.getCategorySummary(product.categoryId) }
+          : {}),
       }))
       .sort((left, right) => left.name.localeCompare(right.name, "es"));
   }
@@ -310,13 +363,61 @@ export class InMemoryCatalogStore implements CatalogStore {
         isActive: product.isActive !== false,
         imageUrl: product.imageUrl ?? null,
         imageFileId: product.imageFileId ?? null,
+        categoryId: product.categoryId ?? null,
+        category: this.getCategorySummary(product.categoryId),
       }))
       .sort((left, right) => left.name.localeCompare(right.name, "es"));
+  }
+
+  public async listCategories(): Promise<Category[]> {
+    return this.categories
+      .map((category) => ({
+        ...category,
+        productCount: this.products.filter((product) => product.categoryId === category.id).length,
+      }))
+      .sort((left, right) => left.name.localeCompare(right.name, "es"));
+  }
+
+  public async createCategory(input: CategoryInput): Promise<Category> {
+    const normalized = normalizeCategoryInput(input);
+    if (this.categories.some((category) => category.slug === normalized.slug)) {
+      throw new CatalogConflictError("A category with this name already exists");
+    }
+    const category: CategorySummary = {
+      id: `cat-${crypto.randomUUID()}`,
+      ...normalized,
+    };
+    this.categories.push(category);
+    return { ...category, productCount: 0 };
+  }
+
+  public async updateCategory(categoryId: string, input: CategoryInput): Promise<Category> {
+    const normalized = normalizeCategoryInput(input);
+    const category = this.categories.find((candidate) => candidate.id === categoryId);
+    if (!category) throw new CatalogNotFoundError("Category not found");
+    if (this.categories.some((candidate) => candidate.id !== categoryId && candidate.slug === normalized.slug)) {
+      throw new CatalogConflictError("A category with this name already exists");
+    }
+    Object.assign(category, normalized);
+    return {
+      ...category,
+      productCount: this.products.filter((product) => product.categoryId === categoryId).length,
+    };
+  }
+
+  public async deleteCategory(categoryId: string): Promise<void> {
+    const index = this.categories.findIndex((category) => category.id === categoryId);
+    if (index < 0) throw new CatalogNotFoundError("Category not found");
+    if (this.products.some((product) => product.categoryId === categoryId)) {
+      throw new CatalogConflictError("Reassign products before deleting this category");
+    }
+    this.categories.splice(index, 1);
   }
 
   public async createProduct(input: ProductInput): Promise<Product> {
     return this.withExclusiveLock(async () => {
       const normalized = normalizeProductInput(input);
+      this.assertCategoryExists(normalized.categoryId);
       if (this.products.some((product) => product.sku.toUpperCase() === normalized.sku)) {
         throw new CatalogConflictError("A product with this SKU already exists");
       }
@@ -324,24 +425,37 @@ export class InMemoryCatalogStore implements CatalogStore {
         id: `prod-${crypto.randomUUID()}`,
         ...normalized,
         imageFileId: normalized.imageFileId ?? null,
+        categoryId: normalized.categoryId ?? null,
         stock: 0,
       };
       this.products.push(product);
-      return { ...product };
+      return { ...product, category: this.getCategorySummary(product.categoryId) };
     });
   }
 
   public async updateProduct(productId: string, input: ProductInput): Promise<Product> {
     return this.withExclusiveLock(async () => {
       const normalized = normalizeProductInput(input);
+      this.assertCategoryExists(normalized.categoryId);
       const product = this.products.find((candidate) => candidate.id === productId);
       if (!product) throw new CatalogNotFoundError("Product not found");
       if (this.products.some((candidate) => candidate.id !== productId && candidate.sku.toUpperCase() === normalized.sku)) {
         throw new CatalogConflictError("A product with this SKU already exists");
       }
       Object.assign(product, normalized);
-      return { ...product };
+      return { ...product, categoryId: product.categoryId ?? null, category: this.getCategorySummary(product.categoryId) };
     });
+  }
+
+  private assertCategoryExists(categoryId: string | null | undefined): void {
+    if (categoryId && !this.categories.some((category) => category.id === categoryId)) {
+      throw new CatalogNotFoundError("Category not found");
+    }
+  }
+
+  private getCategorySummary(categoryId: string | null | undefined): CategorySummary | null {
+    const category = this.categories.find((candidate) => candidate.id === categoryId);
+    return category ? { ...category } : null;
   }
 
   public async recordStockReceipt(
@@ -576,6 +690,24 @@ export class CatalogService {
 
   public async listAdminProducts(): Promise<Product[]> {
     return this.store.listAdminProducts();
+  }
+
+  public async listCategories(): Promise<Category[]> {
+    return this.store.listCategories();
+  }
+
+  public async createCategory(input: CategoryInput): Promise<Category> {
+    return this.store.createCategory(normalizeCategoryInput(input));
+  }
+
+  public async updateCategory(categoryId: string, input: CategoryInput): Promise<Category> {
+    if (!categoryId.trim()) throw new CatalogInputError("Category id is required");
+    return this.store.updateCategory(categoryId, normalizeCategoryInput(input));
+  }
+
+  public async deleteCategory(categoryId: string): Promise<void> {
+    if (!categoryId.trim()) throw new CatalogInputError("Category id is required");
+    return this.store.deleteCategory(categoryId);
   }
 
   public async createProduct(input: ProductInput): Promise<Product> {

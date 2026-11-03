@@ -7,12 +7,15 @@ import {
   ManualSaleIdempotencyConflictError,
   ReservationIdempotencyConflictError,
   StockReceiptIdempotencyConflictError,
+  normalizeCategoryInput,
   normalizeProductInput,
   normalizeReservationLines,
   normalizeStockReceipt,
 } from "./catalog.service.js";
 import type {
   CatalogStore,
+  Category,
+  CategoryInput,
   InventoryReservation,
   ManualSale,
   ProductInput,
@@ -27,6 +30,15 @@ function isPrismaUniqueConstraintError(error: unknown): boolean {
     error !== null &&
     "code" in error &&
     error.code === "P2002"
+  );
+}
+
+function isPrismaForeignKeyConstraintError(error: unknown): boolean {
+  return (
+    typeof error === "object" &&
+    error !== null &&
+    "code" in error &&
+    error.code === "P2003"
   );
 }
 
@@ -45,12 +57,16 @@ export class PrismaCatalogStore implements CatalogStore {
         priceCop: true,
         stock: true,
         imageUrl: true,
-        imageFileId: true,
+        category: {
+          select: { id: true, name: true, slug: true, theme: true },
+        },
       },
     });
-    return products.map(({ imageUrl, ...product }) =>
-      imageUrl ? { ...product, imageUrl } : product,
-    );
+    return products.map(({ imageUrl, category, ...product }) => ({
+      ...product,
+      ...(imageUrl ? { imageUrl } : {}),
+      ...(category ? { category } : {}),
+    }));
   }
 
   public async listAdminProducts(): Promise<Product[]> {
@@ -66,8 +82,82 @@ export class PrismaCatalogStore implements CatalogStore {
         imageUrl: true,
         imageFileId: true,
         isActive: true,
+        categoryId: true,
+        category: {
+          select: { id: true, name: true, slug: true, theme: true },
+        },
       },
     });
+  }
+
+  public async listCategories(): Promise<Category[]> {
+    const categories = await this.prisma.category.findMany({
+      orderBy: { name: "asc" },
+      include: { _count: { select: { products: true } } },
+    });
+    return categories.map(({ _count, ...category }) => ({ ...category, productCount: _count.products }));
+  }
+
+  public async createCategory(input: CategoryInput): Promise<Category> {
+    const normalized = normalizeCategoryInput(input);
+    try {
+      return {
+        ...(await this.prisma.category.create({
+          data: normalized,
+        })),
+        productCount: 0,
+      };
+    } catch (error) {
+      if (isPrismaUniqueConstraintError(error)) {
+        throw new CatalogConflictError("A category with this name already exists");
+      }
+      throw error;
+    }
+  }
+
+  public async updateCategory(categoryId: string, input: CategoryInput): Promise<Category> {
+    const normalized = normalizeCategoryInput(input);
+    try {
+      const category = await this.prisma.category.update({
+        where: { id: categoryId },
+        data: normalized,
+        include: { _count: { select: { products: true } } },
+      });
+      const { _count, ...updatedCategory } = category;
+      return { ...updatedCategory, productCount: _count.products };
+    } catch (error) {
+      if (isPrismaUniqueConstraintError(error)) {
+        throw new CatalogConflictError("A category with this name already exists");
+      }
+      if (
+        typeof error === "object" &&
+        error !== null &&
+        "code" in error &&
+        error.code === "P2025"
+      ) {
+        throw new CatalogNotFoundError("Category not found");
+      }
+      throw error;
+    }
+  }
+
+  public async deleteCategory(categoryId: string): Promise<void> {
+    try {
+      await this.prisma.category.delete({ where: { id: categoryId } });
+    } catch (error) {
+      if (isPrismaForeignKeyConstraintError(error)) {
+        throw new CatalogConflictError("Reassign products before deleting this category");
+      }
+      if (
+        typeof error === "object" &&
+        error !== null &&
+        "code" in error &&
+        error.code === "P2025"
+      ) {
+        throw new CatalogNotFoundError("Category not found");
+      }
+      throw error;
+    }
   }
 
   public async createProduct(input: ProductInput): Promise<Product> {
@@ -85,6 +175,10 @@ export class PrismaCatalogStore implements CatalogStore {
           imageUrl: true,
           imageFileId: true,
           isActive: true,
+          categoryId: true,
+          category: {
+            select: { id: true, name: true, slug: true, theme: true },
+          },
         },
       });
     } catch (error) {
@@ -111,6 +205,10 @@ export class PrismaCatalogStore implements CatalogStore {
           imageUrl: true,
           imageFileId: true,
           isActive: true,
+          categoryId: true,
+          category: {
+            select: { id: true, name: true, slug: true, theme: true },
+          },
         },
       });
     } catch (error) {
