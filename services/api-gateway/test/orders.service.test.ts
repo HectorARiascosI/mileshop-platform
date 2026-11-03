@@ -152,3 +152,29 @@ test("maps a network failure from orders-service to HTTP 503", async () => {
     { name: "ServiceUnavailableException" },
   );
 });
+
+test("forwards admin payment reports to the orders service", async () => {
+  let requestUrl = "";
+  let requestMethod = "";
+  let requestHeaders: Headers | undefined;
+  const service = new OrderService(
+    async (url, init) => {
+      requestUrl = url;
+      requestMethod = init?.method ?? "GET";
+      requestHeaders = new Headers(init?.headers);
+      return new Response(JSON.stringify({
+        data: { result: "marked", order: { orderId: "order-123" } },
+      }), { status: 200 });
+    },
+    "http://orders-service.local",
+    "orders-internal-token",
+  );
+
+  const result = await service.markPaymentReported("admin-123", "order-123");
+
+  assert.equal(requestUrl, "http://orders-service.local/admin/orders/order-123/payment-reported");
+  assert.equal(requestMethod, "POST");
+  assert.equal(requestHeaders?.get("x-authenticated-customer-id"), "admin-123");
+  assert.equal(requestHeaders?.get("x-authenticated-role"), "STORE_ADMIN");
+  assert.deepEqual(result, { result: "marked", order: { orderId: "order-123" } });
+});

@@ -3,6 +3,7 @@ import type { OrderCreatedEvent } from "./orders.types.js";
 import type { ClaimedInventoryCommand, InventoryCommand, InventoryCommandFailureResult } from "./inventory-command.repository.js";
 
 export interface OrdersRepository {
+  checkConnectivity(): Promise<void>;
   save(record: OrderRecord, event: OrderCreatedEvent): Promise<void>;
   findByOrderId(orderId: string): Promise<OrderRecord | null>;
   findByIdempotencyKey(idempotencyKey: string): Promise<OrderRecord | null>;
@@ -12,6 +13,11 @@ export interface OrdersRepository {
   listPendingReservationIntents?(now: Date): Promise<ReservationIntent[]>;
   getReservationIntentPayload?(intentId: string): Promise<{ record: OrderRecord; event: OrderCreatedEvent } | null>;
   expireDueOrders(now: Date, limit: number): Promise<number>;
+  markPaymentReported(
+    orderId: string,
+    adminCustomerId: string,
+    reportedAt: Date,
+  ): Promise<"marked" | "already-reported" | "not-pending">;
   approvePayment(orderId: string, adminCustomerId: string, decidedAt: Date, command: InventoryCommand): Promise<"approved" | "already-approved" | "decision-conflict" | "not-pending" | "cancel-requested">;
   rejectPayment(orderId: string, adminCustomerId: string, reason: string, decidedAt: Date, command: InventoryCommand): Promise<"rejected" | "already-rejected" | "decision-conflict" | "not-pending" | "cancel-requested">;
   markCommandCompleted(commandId: string, claimToken: string, completedAt: Date): Promise<void>;
@@ -48,8 +54,26 @@ export class InMemoryOrdersRepository implements OrdersRepository {
 
   public constructor(private readonly outbox?: OrderEventStore) {}
 
+  public async checkConnectivity(): Promise<void> {}
+
   public async expireDueOrders(_now: Date, _limit: number): Promise<number> {
     return 0;
+  }
+
+  public async markPaymentReported(
+    orderId: string,
+    adminCustomerId: string,
+    reportedAt: Date,
+  ): Promise<"marked" | "already-reported" | "not-pending"> {
+    const record = this.records.get(orderId);
+    if (!record || record.status !== "AWAITING_PAYMENT_PROOF") return "not-pending";
+    if (record.paymentReportedAt) return "already-reported";
+    if (record.reservationExpiresAt && record.reservationExpiresAt <= reportedAt) {
+      return "not-pending";
+    }
+    record.paymentReportedAt = reportedAt;
+    record.paymentReportedByCustomerId = adminCustomerId;
+    return "marked";
   }
 
   public add(command: InventoryCommand): void {

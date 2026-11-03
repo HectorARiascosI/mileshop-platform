@@ -31,11 +31,25 @@ model Product {
   createdAt     DateTime           @default(now())
   updatedAt     DateTime           @updatedAt
   category      Category?          @relation(fields: [categoryId], references: [id], onDelete: Restrict)
+  images        ProductImage[]
+  promotions    PromotionProduct[]
   manualSales   ManualSaleLine[]
   stockReceipts StockReceiptLine[]
 
   @@index([isActive, name])
   @@index([categoryId])
+}
+
+model ProductImage {
+  id          String  @id @default(cuid())
+  productId   String
+  imageUrl    String
+  imageFileId String?
+  position    Int
+  product     Product @relation(fields: [productId], references: [id], onDelete: Cascade)
+
+  @@unique([productId, position])
+  @@index([productId])
 }
 
 model Category {
@@ -46,6 +60,46 @@ model Category {
   createdAt DateTime      @default(now())
   updatedAt DateTime      @updatedAt
   products  Product[]
+}
+
+model Promotion {
+  id          String             @id @default(cuid())
+  title       String
+  description String
+  startsAt    DateTime
+  endsAt      DateTime
+  isActive    Boolean            @default(true)
+  createdAt   DateTime           @default(now())
+  updatedAt   DateTime           @updatedAt
+  products    PromotionProduct[]
+
+  @@index([isActive, startsAt, endsAt])
+}
+
+model PromotionProduct {
+  promotionId     String
+  productId       String
+  discountPercent Int
+  promotion       Promotion @relation(fields: [promotionId], references: [id], onDelete: Cascade)
+  product         Product   @relation(fields: [productId], references: [id], onDelete: Cascade)
+
+  @@id([promotionId, productId])
+  @@index([productId])
+}
+
+model Announcement {
+  id        String   @id @default(cuid())
+  title     String
+  message   String
+  linkUrl   String?
+  linkLabel String?
+  startsAt  DateTime
+  endsAt    DateTime
+  isActive  Boolean  @default(true)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([isActive, startsAt, endsAt])
 }
 
 model StockReceipt {

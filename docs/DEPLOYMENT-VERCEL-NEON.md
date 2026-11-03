@@ -6,7 +6,7 @@
 - **Cuatro bases PostgreSQL en Neon:** `catalog`, `identity`, `notifications` y `orders`, una por servicio propietario de datos.
 - El catálogo guarda fotos en ImageKit. El servicio web necesita `IMAGEKIT_PRIVATE_KEY` como variable secreta en cada entorno donde se administren imágenes.
 - Cada servicio NestJS se ejecuta como una función Vercel mediante el adaptador Fastify compartido; no requiere procesos residentes.
-- La reserva de inventario se ejecuta en el flujo de creación del pedido. En Vercel no se usan timers; el cron diario de Orders solo recupera trabajo pendiente y no libera reservas por antigüedad.
+- La reserva de inventario se ejecuta en el flujo de creación del pedido por una ventana de pago de dos horas. En Vercel no se usan timers ni Cron Jobs de Vercel; un scheduler externo gratuito llama el mantenimiento de Orders cada minuto para recuperar trabajo pendiente y liberar reservas vencidas.
 - El pago es manual y fuera de la plataforma: el cliente continúa por WhatsApp Business y la administradora valida el pago. No hay pasarela de pago.
 - `notification-worker` queda en modo `log`; el enlace de WhatsApp se inicia desde el storefront. El worker no envía mensajes externos en esta configuración.
 
@@ -77,13 +77,27 @@ Los Preview de Vercel están protegidos por Vercel Authentication. Para habilita
 
 Los valores de `ORDERS_INTERNAL_TOKEN` deben coincidir entre Gateway y Orders. `CATALOG_INVENTORY_COMMAND_TOKEN` debe coincidir entre Gateway, Orders y Catálogo; `CATALOG_RESERVATION_TOKEN` debe coincidir entre Orders y Catálogo. Genera secretos independientes y aleatorios de al menos 32 caracteres; por ejemplo, localmente con `node -e "console.log(require('node:crypto').randomBytes(48).toString('base64'))"`. No uses el mismo secreto para propósitos distintos.
 
-Los servicios fallan al inicializar en producción cuando faltan las variables marcadas como requeridas por su `app.ts`, en vez de iniciar con URLs locales. El cron de Orders debe poder enviar `Authorization: Bearer <CRON_SECRET>`; Vercel lo configura automáticamente cuando se define `CRON_SECRET`.
+Los servicios fallan al inicializar en producción cuando faltan las variables marcadas como requeridas por su `app.ts`, en vez de iniciar con URLs locales. El endpoint de mantenimiento autentica mediante `Authorization: Bearer <CRON_SECRET>` enviado por el scheduler externo; Vercel no programa esta tarea.
+
+### Scheduler externo gratuito para Orders
+
+Se usa [cron-job.org](https://cron-job.org/en/) como disparador externo; la aplicación y sus funciones continúan ejecutándose en Vercel. Según la [página oficial](https://cron-job.org/en/) y sus [FAQ](https://cron-job.org/en/faq/), ofrece ejecución hasta una vez por minuto, método HTTP y headers personalizados sin costo. La cuenta externa almacena el secreto de autorización; protégela con contraseña única y MFA.
+
+1. En Vercel, configura `CRON_SECRET` únicamente en **Production** para el proyecto Orders. Usa un secreto aleatorio propio de al menos 32 caracteres; no lo incluyas en Git, URL, capturas ni mensajes. Si ya existe, conserva ese valor y no lo rotes sin actualizar también el scheduler.
+2. Crea un trabajo en cron-job.org con método `POST`, URL `https://<dominio-orders>/api/internal/maintenance` y frecuencia **cada minuto**.
+3. En los headers personalizados del trabajo, añade `Authorization` con valor `Bearer <el mismo CRON_SECRET>`. Nunca pongas el token en la URL o el cuerpo.
+4. Ejecuta el test del trabajo y confirma HTTP `200`; revisa los logs de la función Orders en Vercel y activa avisos de fallo en cron-job.org. La respuesta solo se considera exitosa cuando Orders termina el mantenimiento.
+5. El endpoint procesa hasta 25 reservas vencidas por ejecución; si hay más, las siguientes llamadas continúan los lotes. La liberación queda registrada como comando durable e idempotente.
+
+El proveedor limita cada solicitud a 30 segundos, no garantiza puntualidad exacta y puede desactivar un trabajo tras fallos repetidos. Vercel Orders también tiene `maxDuration: 30`. El intervalo de un minuto reduce el retraso esperado, pero no ofrece SLA ni garantiza costo/disponibilidad permanente; vigila las notificaciones y el historial de ejecuciones. No configures además un segundo scheduler para el mismo endpoint salvo durante una prueba controlada.
+
+Con el límite publicado de Hobby de un millón de invocaciones mensuales, un trabajo por minuto representa aproximadamente 43.200 invocaciones al mes si se ejecuta sin interrupciones, antes de contar el tráfico normal. Vercel también limita Hobby a cuatro horas de CPU activa mensuales; la función pasa la mayor parte del tiempo esperando a Neon/red, pero mide el uso real en Usage y configura alertas. Las cuotas y precios pueden cambiar.
 
 ## 4. Aplicar migraciones y preparar datos
 
 Hazlo desde la raíz del repositorio, desde una máquina confiable con Node.js/npm y acceso a Neon. Usa la URL directa correspondiente para cada comando; no coloques URLs reales en documentación ni archivos rastreados:
 
-La migración `20261102090000_product_imagekit_asset` añade el identificador de archivo gestionado a `Product`. Aplícala en la base `catalog` antes de desplegar el nuevo servicio de Catálogo y la aplicación web.
+Las migraciones `20261102090000_product_imagekit_asset`, `20261103100000_product_image_gallery` y `20261103110000_catalog_marketing` añaden la gestión de assets de imagen, galerías, promociones y anuncios en `catalog`. La migración `20261103120000_payment_reported_reservation_hold` añade la marca auditable de pago reportado en `orders`. Aplica cada migración a su base antes de desplegar los servicios que la utilizan.
 
 ```powershell
 $env:DATABASE_URL = "<URL directa de catalog>"
@@ -124,7 +138,7 @@ El bootstrap es de una sola vez y solo puede conceder el primer rol `STORE_ADMIN
 6. Desde el dominio real del storefront, registra e inicia sesión, consulta el catálogo, crea un pedido, verifica que se reserve el inventario y comprueba que el cliente llegue al WhatsApp Business correcto.
 7. No abras la tienda a clientes hasta que la administradora pueda revisar pedidos de WhatsApp, confirmarlos/cancelarlos y registrar ventas manuales desde una interfaz probada.
 
-Orders define un cron diario para `/api/internal/maintenance`. Su función es secundaria: recuperar intents, outbox y comandos pendientes. Las operaciones de pedido y reserva no deben depender de que el cron corra con más frecuencia.
+Después de desplegar Orders, revisa los pedidos pendientes heredados sin fecha de expiración antes de activar el scheduler: no se expiran automáticamente por esta implementación y no deben liberarse sin comprobar que no haya acuerdos de pago en WhatsApp. Para pedidos nuevos, si el cliente informa que pagó antes del vencimiento, la administradora debe usar **Marcar pago informado** en `/admin/orders`; la marca queda auditada con actor y fecha y la exclusión de expiración se aplica transaccionalmente. La reserva se conserva hasta que el pago se confirme o el pedido se cancele. Revisa diariamente las marcas pendientes; el panel las señala cuando superan 24 horas. Luego configura y prueba el scheduler externo descrito arriba; sin él, la expiración automática y la recuperación periódica no ocurren en Vercel. Comprueba en cron-job.org que el `POST /api/internal/maintenance` responde `200` cada minuto y revisa los logs de Orders. El endpoint recupera intents, outbox y comandos pendientes, además de expirar reservas.
 
 ## Límites actuales que no se deben ocultar
 
@@ -132,5 +146,5 @@ Orders define un cron diario para `/api/internal/maintenance`. Su función es se
 - La pantalla `/admin/orders` permite revisar pedidos recibidos por WhatsApp, confirmar pagos verificados, cancelar pedidos y registrar ventas manuales por producto/cantidad. `/admin/payments` sigue siendo el flujo antiguo de comprobantes subidos y no es necesario para la operación WhatsApp.
 - El enlace WhatsApp no equivale a una confirmación de pago. La administradora debe verificar la transferencia y luego confirmar o cancelar el pedido.
 - La administración de productos y entradas de inventario está disponible en `/admin/catalog`; `/admin/orders` permite revisar pedidos de WhatsApp, confirmarlos/cancelarlos y registrar ventas presenciales. Antes de abrir la tienda, carga el catálogo real desde el panel y verifica las operaciones con la cuenta `STORE_ADMIN`.
-- Las funciones serverless no mantienen timers entre solicitudes. Los reintentos periódicos dependen del cron diario de Vercel Hobby; si se necesita recuperación más frecuente, usa un scheduler externo o un plan que permita esa frecuencia.
+- Las funciones serverless no mantienen timers entre solicitudes. La recuperación periódica depende del scheduler externo y puede retrasarse o detenerse si el proveedor gratuito falla o desactiva el trabajo; revisa sus alertas e historial.
 - Vercel Functions no ofrece almacenamiento persistente local. No guardes comprobantes, sesiones ni estado durable en el filesystem de una función.

@@ -28,6 +28,7 @@ export const AUTHENTICATED_ROUTES = [
   { path: "admin/payments", method: RequestMethod.GET },
   { path: "admin/orders", method: RequestMethod.GET },
   { path: "admin/orders/:orderId/confirm", method: RequestMethod.POST },
+  { path: "admin/orders/:orderId/payment-reported", method: RequestMethod.POST },
   { path: "admin/orders/:orderId/cancel", method: RequestMethod.POST },
   { path: "admin/catalog/manual-sales", method: RequestMethod.POST },
   { path: "admin/catalog/products", method: RequestMethod.GET },

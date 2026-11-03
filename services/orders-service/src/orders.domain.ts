@@ -3,6 +3,7 @@ import type { CreateOrderCommand, OrderLine, OrderStatus } from "./orders.types.
 export const FREE_DELIVERY_THRESHOLD_COP = 150_000;
 export const MINIMUM_DELIVERY_FEE_COP = 12_000;
 export const DELIVERY_FEE_RATE = 0.08;
+export const ORDER_RESERVATION_TTL_MS = 2 * 60 * 60 * 1000;
 
 export type OrderCancellationResolution =
   | "CANCELLED_NO_PAYMENT"
@@ -35,6 +36,8 @@ export type OrderRecord = {
   updatedAt: Date;
   requestFingerprint?: string;
   reservationExpiresAt?: Date | null;
+  paymentReportedAt?: Date | null;
+  paymentReportedByCustomerId?: string | null;
   cancelRequestedAt?: Date | null;
   cancelResolvedAt?: Date | null;
   cancelResolution?: OrderCancellationResolution | null;
@@ -55,6 +58,73 @@ export type OrderRecord = {
 };
 
 export class OrderDomain {
+  public static applyReservedPrices(
+    record: OrderRecord,
+    reservedLines: Array<{
+      productId: string;
+      sku: string;
+      name: string;
+      quantity: number;
+      unitPriceCop: number;
+    }>,
+  ): OrderRecord {
+    const reservationByProduct = new Map(reservedLines.map((line) => [line.productId, line]));
+    if (
+      reservationByProduct.size !== reservedLines.length ||
+      reservedLines.some(
+        (line) =>
+          !Number.isSafeInteger(line.unitPriceCop) ||
+          line.unitPriceCop < 0 ||
+          !Number.isSafeInteger(line.quantity) ||
+          line.quantity <= 0,
+      )
+    ) {
+      throw new Error("Catalog reservation contains invalid line data");
+    }
+    const orderQuantities = new Map<string, number>();
+    for (const line of record.lines) {
+      orderQuantities.set(
+        line.productId,
+        (orderQuantities.get(line.productId) ?? 0) + line.quantity,
+      );
+    }
+    if (
+      reservationByProduct.size !== orderQuantities.size ||
+      [...orderQuantities].some(([productId, quantity]) => {
+        const reserved = reservationByProduct.get(productId);
+        return !reserved || reserved.quantity !== quantity;
+      })
+    ) {
+      throw new Error("Catalog reservation does not match the order lines");
+    }
+
+    const lines = record.lines.map((line) => {
+      const reserved = reservationByProduct.get(line.productId);
+      if (!reserved) throw new Error("Catalog reservation snapshot does not match the order lines");
+      return {
+        ...line,
+        sku: reserved.sku,
+        name: reserved.name,
+        unitPriceCop: reserved.unitPriceCop,
+      };
+    });
+    const subtotalCop = lines.reduce(
+      (sum, line) => sum + line.unitPriceCop * line.quantity,
+      0,
+    );
+    const deliveryFeeCop =
+      subtotalCop >= FREE_DELIVERY_THRESHOLD_COP
+        ? 0
+        : Math.max(MINIMUM_DELIVERY_FEE_COP, Math.round(subtotalCop * DELIVERY_FEE_RATE));
+    return {
+      ...record,
+      lines,
+      subtotalCop,
+      deliveryFeeCop,
+      totalCop: subtotalCop + deliveryFeeCop,
+    };
+  }
+
   public static createOrder(command: CreateOrderCommand): OrderRecord {
     const normalizedLines = command.lines.filter((line: CreateOrderCommand["lines"][number]) => line.quantity > 0);
 
@@ -107,6 +177,7 @@ export class OrderDomain {
     totalCop: number;
     status: OrderStatus;
     reservationExpiresAt: Date | null;
+    paymentReportedAt: Date | null;
     createdAt: string;
     updatedAt: string;
     lines: OrderLine[];
@@ -129,6 +200,7 @@ export class OrderDomain {
       totalCop: record.totalCop,
       status: record.status,
       reservationExpiresAt: record.reservationExpiresAt ?? null,
+      paymentReportedAt: record.paymentReportedAt ?? null,
       createdAt: record.createdAt.toISOString(),
       updatedAt: record.updatedAt.toISOString(),
       lines: record.lines.map((line) => ({

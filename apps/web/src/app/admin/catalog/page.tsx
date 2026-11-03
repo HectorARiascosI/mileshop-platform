@@ -2,13 +2,17 @@
 
 import Image from "next/image";
 import Link from "next/link";
-import { useCallback, useEffect, useState, type FormEvent } from "react";
+import { useCallback, useEffect, useRef, useState, type FormEvent } from "react";
 
-import { CATALOG_CATEGORY_THEMES } from "@mileshop/contracts";
+import {
+  CATALOG_CATEGORY_THEMES,
+  CATALOG_PRODUCT_IMAGE_LIMIT,
+} from "@mileshop/contracts";
 import type {
   CatalogCategory,
   CatalogCategoryInput,
   CatalogCategorySummary,
+  CatalogProductImage,
 } from "@mileshop/contracts";
 import {
   CATEGORY_THEME_LABELS,
@@ -27,6 +31,7 @@ type Product = {
   stock: number;
   imageUrl: string | null;
   imageFileId: string | null;
+  images?: CatalogProductImage[];
   categoryId: string | null;
   category: CatalogCategorySummary | null;
   isActive: boolean;
@@ -37,10 +42,17 @@ type ProductForm = {
   name: string;
   description: string;
   priceCop: string;
-  imageUrl: string;
-  imageFileId: string | null;
+  images: ProductImageDraft[];
   categoryId: string | null;
   isActive: boolean;
+};
+
+type ProductImageDraft = {
+  key: string;
+  imageUrl: string;
+  imageFileId: string | null;
+  file: File | null;
+  previewUrl: string | null;
 };
 
 type ReceiptRequest = {
@@ -55,8 +67,7 @@ const EMPTY_FORM: ProductForm = {
   name: "",
   description: "",
   priceCop: "",
-  imageUrl: "",
-  imageFileId: null,
+  images: [],
   categoryId: null,
   isActive: true,
 };
@@ -71,8 +82,22 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 }
 
 function isProduct(value: unknown): value is Product {
+  const validImages =
+    isRecord(value) &&
+    (value.images === undefined ||
+      (Array.isArray(value.images) &&
+        value.images.every(
+          (image) =>
+            isRecord(image) &&
+            typeof image.imageUrl === "string" &&
+            (image.imageFileId === undefined ||
+              typeof image.imageFileId === "string" ||
+              image.imageFileId === null) &&
+            Number.isSafeInteger(image.position),
+        )));
   return (
     isRecord(value) &&
+    validImages &&
     typeof value.id === "string" &&
     typeof value.sku === "string" &&
     typeof value.name === "string" &&
@@ -151,8 +176,7 @@ export default function AdminCatalogPage() {
   const [editingCategoryId, setEditingCategoryId] = useState<string | null>(null);
   const [isSavingCategory, setIsSavingCategory] = useState(false);
   const [deletingCategoryId, setDeletingCategoryId] = useState<string | null>(null);
-  const [selectedImageFile, setSelectedImageFile] = useState<File | null>(null);
-  const [previewImageUrl, setPreviewImageUrl] = useState<string | null>(null);
+  const [imageUrlDraft, setImageUrlDraft] = useState("");
   const [pendingImageCleanup, setPendingImageCleanup] = useState<string[]>([]);
   const [imageCleanupLoaded, setImageCleanupLoaded] = useState(false);
   const [cleaningImageId, setCleaningImageId] = useState<string | null>(null);
@@ -166,15 +190,98 @@ export default function AdminCatalogPage() {
   const [isReceivingStock, setIsReceivingStock] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
+  const imagePreviewUrls = useRef(new Set<string>());
 
-  const selectImageFile = (file: File | null) => {
-    setSelectedImageFile(file);
-    setPreviewImageUrl(file ? URL.createObjectURL(file) : null);
+  useEffect(() => () => {
+    for (const previewUrl of imagePreviewUrls.current) URL.revokeObjectURL(previewUrl);
+    imagePreviewUrls.current.clear();
+  }, []);
+
+  const releaseImagePreviews = (images: ProductImageDraft[]) => {
+    for (const image of images) {
+      if (!image.previewUrl) continue;
+      URL.revokeObjectURL(image.previewUrl);
+      imagePreviewUrls.current.delete(image.previewUrl);
+    }
   };
 
-  useEffect(() => {
-    if (previewImageUrl) return () => URL.revokeObjectURL(previewImageUrl);
-  }, [previewImageUrl]);
+  const addImageFiles = (files: FileList | null) => {
+    const selectedFiles = Array.from(files ?? []);
+    if (selectedFiles.length === 0) return;
+    if (form.images.length + selectedFiles.length > CATALOG_PRODUCT_IMAGE_LIMIT) {
+      setError(`Puedes agregar hasta ${CATALOG_PRODUCT_IMAGE_LIMIT} fotos por producto.`);
+      return;
+    }
+    const invalidFile = selectedFiles.find(
+      (file) =>
+        !["image/jpeg", "image/png", "image/webp", "image/avif"].includes(file.type) ||
+        file.size > 4 * 1024 * 1024,
+    );
+    if (invalidFile) {
+      setError("Cada foto debe ser JPG, PNG, WebP o AVIF y no superar 4 MB.");
+      return;
+    }
+    setError(null);
+    setForm((current) => ({
+      ...current,
+      images: [
+        ...current.images,
+        ...selectedFiles.map((file) => {
+          const previewUrl = URL.createObjectURL(file);
+          imagePreviewUrls.current.add(previewUrl);
+          return {
+            key: crypto.randomUUID(),
+            imageUrl: "",
+            imageFileId: null,
+            file,
+            previewUrl,
+          };
+        }),
+      ],
+    }));
+  };
+
+  const addImageUrl = () => {
+    const imageUrl = imageUrlDraft.trim();
+    if (!imageUrl) return;
+    if (form.images.length >= CATALOG_PRODUCT_IMAGE_LIMIT) {
+      setError(`Puedes agregar hasta ${CATALOG_PRODUCT_IMAGE_LIMIT} fotos por producto.`);
+      return;
+    }
+    setForm((current) => ({
+      ...current,
+      images: [
+        ...current.images,
+        {
+          key: crypto.randomUUID(),
+          imageUrl,
+          imageFileId: null,
+          file: null,
+          previewUrl: null,
+        },
+      ],
+    }));
+    setImageUrlDraft("");
+    setError(null);
+  };
+
+  const removeProductImage = (key: string) => {
+    setForm((current) => {
+      const removedImage = current.images.find((image) => image.key === key);
+      if (removedImage) releaseImagePreviews([removedImage]);
+      return { ...current, images: current.images.filter((image) => image.key !== key) };
+    });
+  };
+
+  const moveProductImage = (index: number, offset: -1 | 1) => {
+    setForm((current) => {
+      const destination = index + offset;
+      if (destination < 0 || destination >= current.images.length) return current;
+      const images = [...current.images];
+      [images[index], images[destination]] = [images[destination]!, images[index]!];
+      return { ...current, images };
+    });
+  };
 
   useEffect(() => {
     const timeoutId = window.setTimeout(() => {
@@ -310,26 +417,38 @@ export default function AdminCatalogPage() {
   }, [refreshProducts]);
 
   const beginEdit = (product: Product) => {
+    releaseImagePreviews(form.images);
     setEditingProductId(product.id);
+    const productImages = product.images?.length
+      ? product.images
+      : product.imageUrl
+        ? [{ imageUrl: product.imageUrl, imageFileId: product.imageFileId, position: 0 }]
+        : [];
     setForm({
       sku: product.sku,
       name: product.name,
       description: product.description,
       priceCop: String(product.priceCop),
-      imageUrl: product.imageUrl ?? "",
-      imageFileId: product.imageFileId,
+      images: productImages.map((image, index) => ({
+        key: `existing-${product.id}-${index}`,
+        imageUrl: image.imageUrl,
+        imageFileId: image.imageFileId ?? null,
+        file: null,
+        previewUrl: null,
+      })),
       categoryId: product.categoryId,
       isActive: product.isActive,
     });
-    selectImageFile(null);
+    setImageUrlDraft("");
     setError(null);
     setNotice(null);
   };
 
   const resetForm = () => {
+    releaseImagePreviews(form.images);
     setEditingProductId(null);
     setForm(EMPTY_FORM);
-    selectImageFile(null);
+    setImageUrlDraft("");
   };
 
   const resetCategoryForm = () => {
@@ -414,22 +533,39 @@ export default function AdminCatalogPage() {
     setIsSavingProduct(true);
     setError(null);
     setNotice(null);
-    const previousImageFileId = editingProductId
-      ? products.find((product) => product.id === editingProductId)?.imageFileId ?? null
-      : null;
-    let uploadedImage: { fileId: string; imageUrl: string } | null = null;
+    const previousProduct = editingProductId
+      ? products.find((product) => product.id === editingProductId)
+      : undefined;
+    const previousImageFileIds = [
+      ...new Set([
+        ...(previousProduct?.images ?? [])
+          .map((image) => image.imageFileId)
+          .filter((fileId): fileId is string => Boolean(fileId)),
+        ...(previousProduct?.imageFileId ? [previousProduct.imageFileId] : []),
+      ]),
+    ];
+    const uploadedImages: Array<{ fileId: string; imageUrl: string }> = [];
     let productSaved = false;
-    let imageFileId = form.imageFileId;
     try {
-      let imageUrl: string | null = form.imageUrl.trim() || null;
-      if (!form.isActive) {
-        imageUrl = null;
-        imageFileId = null;
-      } else if (selectedImageFile) {
-        uploadedImage = await uploadProductImage(selectedImageFile);
-        imageUrl = uploadedImage.imageUrl;
-        imageFileId = uploadedImage.fileId;
+      const savedImages: Array<{ imageUrl: string; imageFileId: string | null }> = [];
+      if (form.isActive) {
+        for (const image of form.images) {
+          if (image.file) {
+            const uploadedImage = await uploadProductImage(image.file);
+            uploadedImages.push(uploadedImage);
+            savedImages.push({
+              imageUrl: uploadedImage.imageUrl,
+              imageFileId: uploadedImage.fileId,
+            });
+          } else {
+            savedImages.push({
+              imageUrl: image.imageUrl,
+              imageFileId: image.imageFileId,
+            });
+          }
+        }
       }
+      const primaryImage = savedImages[0] ?? null;
 
       const response = await fetch(
         editingProductId
@@ -443,8 +579,9 @@ export default function AdminCatalogPage() {
             name: form.name,
             description: form.description,
             priceCop,
-            imageUrl,
-            imageFileId,
+            imageUrl: primaryImage?.imageUrl ?? null,
+            imageFileId: primaryImage?.imageFileId ?? null,
+            images: savedImages,
             categoryId: form.categoryId,
             isActive: form.isActive,
           }),
@@ -457,32 +594,51 @@ export default function AdminCatalogPage() {
       setNotice(editingProductId ? "Producto actualizado." : "Producto creado.");
       resetForm();
       await refreshProducts();
-      if (previousImageFileId && previousImageFileId !== imageFileId) {
+      let cleanupFailed = false;
+      const retainedImageFileIds = new Set(
+        savedImages
+          .map((image) => image.imageFileId)
+          .filter((fileId): fileId is string => Boolean(fileId)),
+      );
+      for (const fileId of previousImageFileIds) {
+        if (retainedImageFileIds.has(fileId)) continue;
         try {
-          await deleteProductImage(previousImageFileId);
+          await deleteProductImage(fileId);
         } catch {
+          cleanupFailed = true;
           setPendingImageCleanup((current) =>
-            current.includes(previousImageFileId)
+            current.includes(fileId)
               ? current
-              : [...current, previousImageFileId],
+              : [...current, fileId],
           );
-          setError("El producto se guardó, pero no se pudo retirar la foto anterior del almacenamiento.");
         }
+      }
+      if (cleanupFailed) {
+        setError("El producto se guardó, pero algunas fotos anteriores siguen pendientes de retirar.");
       }
     } catch (requestError) {
-      const failedUploadFileId = !productSaved ? uploadedImage?.fileId : null;
-      if (failedUploadFileId) {
-        try {
-          await deleteProductImage(failedUploadFileId);
-        } catch {
-          setPendingImageCleanup((current) =>
-            current.includes(failedUploadFileId)
-              ? current
-              : [...current, failedUploadFileId],
-          );
+      let cleanupFailed = false;
+      if (!productSaved) {
+        for (const image of uploadedImages) {
+          try {
+            await deleteProductImage(image.fileId);
+          } catch {
+            cleanupFailed = true;
+            setPendingImageCleanup((current) =>
+              current.includes(image.fileId)
+                ? current
+                : [...current, image.fileId],
+            );
+          }
         }
       }
-      setError(requestError instanceof Error ? requestError.message : "Error inesperado.");
+      const requestMessage =
+        requestError instanceof Error ? requestError.message : "Error inesperado.";
+      setError(
+        cleanupFailed
+          ? `${requestMessage} Algunas fotos cargadas quedaron pendientes de retirar.`
+          : requestMessage,
+      );
     } finally {
       setIsSavingProduct(false);
     }
@@ -566,6 +722,12 @@ export default function AdminCatalogPage() {
         <nav className="flex flex-wrap gap-2">
           <Link className="rounded border px-4 py-2 font-medium hover:bg-slate-50" href="/admin/orders">
             Pedidos y ventas
+          </Link>
+          <Link className="rounded border px-4 py-2 font-medium hover:bg-slate-50" href="/admin/catalog/promotions">
+            Promociones
+          </Link>
+          <Link className="rounded border px-4 py-2 font-medium hover:bg-slate-50" href="/admin/catalog/announcements">
+            Anuncios
           </Link>
           <Link className="rounded border px-4 py-2 font-medium hover:bg-slate-50" href="/">
             Volver a la tienda
@@ -733,65 +895,102 @@ export default function AdminCatalogPage() {
                 </span>
               </label>
               <fieldset className="grid gap-3 rounded-lg border p-4">
-                <legend className="px-1 text-sm font-semibold">Foto del producto</legend>
+                <legend className="px-1 text-sm font-semibold">Galería del producto</legend>
+                <p className="text-sm text-slate-600">
+                  Agrega hasta {CATALOG_PRODUCT_IMAGE_LIMIT} perspectivas. La primera foto será la principal; puedes cambiar el orden antes de guardar.
+                </p>
                 <label className="grid gap-1 text-sm font-medium">
-                  Cargar desde el dispositivo
+                  Importar fotos desde el dispositivo
                   <input
-                    key={selectedImageFile?.name ?? "product-image-input"}
                     className="rounded border px-3 py-2 font-normal"
                     type="file"
+                    multiple
                     accept="image/jpeg,image/png,image/webp,image/avif"
                     onChange={(event) => {
-                      const file = event.target.files?.[0] ?? null;
-                      selectImageFile(file);
-                      setError(null);
+                      addImageFiles(event.target.files);
+                      event.currentTarget.value = "";
                     }}
                   />
                   <span className="text-xs font-normal text-slate-600">
-                    JPG, PNG, WebP o AVIF; hasta 4 MB. La foto se carga al guardar el producto.
+                    JPG, PNG, WebP o AVIF; hasta 4 MB por foto. Se cargan al guardar el producto.
                   </span>
                 </label>
-                <label className="grid gap-1 text-sm font-medium">
-                  O pegar un enlace público HTTPS
-                  <input
-                    className="rounded border px-3 py-2 font-normal"
-                    type="url"
-                    placeholder="https://"
-                    value={form.imageUrl}
-                    onChange={(event) => {
-                      selectImageFile(null);
-                      setForm({
-                        ...form,
-                        imageUrl: event.target.value,
-                        imageFileId: null,
-                      });
-                    }}
-                  />
-                  <span className="text-xs font-normal text-slate-600">
-                    Usa un enlace HTTPS que abra directamente la imagen. Al quitarlo, MileShop solo desvincula el archivo externo.
-                  </span>
-                </label>
-                {(previewImageUrl || form.imageUrl) && (
-                  <div className="flex items-center gap-3">
-                    <Image
-                      className="h-20 w-20 rounded-lg object-cover"
-                      src={getOptimizedImageUrl(previewImageUrl ?? form.imageUrl, 160)}
-                      alt="Vista previa de la foto del producto"
-                      width={80}
-                      height={80}
-                      unoptimized
+                <div className="flex flex-wrap items-end gap-2">
+                  <label className="grid min-w-0 flex-1 gap-1 text-sm font-medium">
+                    Agregar una URL pública HTTPS
+                    <input
+                      className="rounded border px-3 py-2 font-normal"
+                      type="url"
+                      placeholder="https://"
+                      value={imageUrlDraft}
+                      onChange={(event) => setImageUrlDraft(event.target.value)}
                     />
-                    <button
-                      className="rounded border px-3 py-2 text-sm font-medium"
-                      type="button"
-                      onClick={() => {
-                        selectImageFile(null);
-                        setForm({ ...form, imageUrl: "", imageFileId: null });
-                      }}
-                    >
-                      Quitar foto
-                    </button>
-                  </div>
+                  </label>
+                  <button
+                    className="rounded border px-3 py-2 text-sm font-medium disabled:opacity-50"
+                    type="button"
+                    disabled={!imageUrlDraft.trim() || form.images.length >= CATALOG_PRODUCT_IMAGE_LIMIT}
+                    onClick={addImageUrl}
+                  >
+                    Agregar enlace
+                  </button>
+                </div>
+                {form.images.length > 0 ? (
+                  <ol className="grid gap-3 sm:grid-cols-2" aria-label="Fotos del producto">
+                    {form.images.map((image, index) => (
+                      <li className="flex items-center gap-3 rounded-lg border p-3" key={image.key}>
+                        {image.previewUrl || image.imageUrl ? (
+                          <Image
+                            className="h-16 w-16 shrink-0 rounded-lg object-cover"
+                            src={getOptimizedImageUrl(image.previewUrl ?? image.imageUrl, 160)}
+                            alt={`Vista previa de la foto ${index + 1} de ${form.images.length}`}
+                            width={64}
+                            height={64}
+                            unoptimized
+                          />
+                        ) : null}
+                        <div className="min-w-0 flex-1">
+                          <p className="text-sm font-semibold">
+                            {index === 0 ? "Foto principal" : `Perspectiva ${index + 1}`}
+                          </p>
+                          <p className="truncate text-xs text-slate-600">
+                            {image.file?.name ?? image.imageUrl}
+                          </p>
+                          <div className="mt-2 flex flex-wrap gap-1">
+                            <button
+                              className="rounded border px-2 py-1 text-xs disabled:opacity-50"
+                              type="button"
+                              aria-label={`Mover foto ${index + 1} hacia adelante`}
+                              disabled={index === 0}
+                              onClick={() => moveProductImage(index, -1)}
+                            >
+                              Subir
+                            </button>
+                            <button
+                              className="rounded border px-2 py-1 text-xs disabled:opacity-50"
+                              type="button"
+                              aria-label={`Mover foto ${index + 1} hacia atrás`}
+                              disabled={index === form.images.length - 1}
+                              onClick={() => moveProductImage(index, 1)}
+                            >
+                              Bajar
+                            </button>
+                            <button
+                              className="rounded border px-2 py-1 text-xs"
+                              type="button"
+                              onClick={() => removeProductImage(image.key)}
+                            >
+                              Quitar
+                            </button>
+                          </div>
+                        </div>
+                      </li>
+                    ))}
+                  </ol>
+                ) : (
+                  <p className="text-sm text-slate-600">
+                    No hay fotos agregadas. Puedes publicar el producto sin imágenes.
+                  </p>
                 )}
               </fieldset>
               {editingProductId && (
@@ -802,7 +1001,7 @@ export default function AdminCatalogPage() {
                   </label>
                   {!form.isActive && (
                     <span className="text-xs text-slate-600">
-                      Al guardar, el producto dejará de mostrarse. Las fotos cargadas aquí se eliminarán; los enlaces externos solo se desvinculan.
+                      Al guardar, el producto dejará de mostrarse y se retirarán sus fotos administradas; las URL externas solo se desvinculan.
                     </span>
                   )}
                 </div>

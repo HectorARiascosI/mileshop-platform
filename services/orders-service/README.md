@@ -46,6 +46,7 @@ En Vercel, configura URLs HTTPS terminadas en `/api` para los servicios remotos 
 
 - `GET /healthz`
 - `GET /readyz`
+- `POST /internal/maintenance` (interno; requiere `Authorization: Bearer <CRON_SECRET>`)
 - `POST /orders`
 - `GET /orders/:orderId`
 - `POST /orders/:orderId/cancel`
@@ -61,7 +62,8 @@ Las rutas de negocio deben recibirse desde API Gateway, que verifica el JWT y tr
 - Cada línea debe tener cantidad positiva.
 - El subtotal se calcula como suma de `unitPriceCop * quantity`; el envío es gratis desde COP 150.000 y, por debajo, corresponde al mayor entre COP 12.000 y 8 % del subtotal, redondeado al peso.
 - El total persistido es subtotal más envío; el cliente no decide estos importes.
-- El pedido reserva inventario durante su creación y permanece pendiente de confirmación administrativa o cancelación; no libera stock por vencimiento en la configuración Vercel.
+- El pedido reserva inventario durante su creación y mantiene la reserva por dos horas para el pago manual. Si no se confirma a tiempo, Orders expira el pedido y libera el stock mediante el mantenimiento programado.
+- Si el cliente informa por WhatsApp que ya pagó, la administradora debe usar **Marcar pago informado** antes del vencimiento. Esto crea una marca auditable y suspende la expiración automática hasta confirmar o cancelar el pedido; no sustituye la verificación de la transferencia.
 - El pago se coordina manualmente por WhatsApp Business; no existe pasarela de pago.
 - La identidad de pedido es estable por `orderId`.
 - Los reintentos con la misma clave UUID y el mismo cliente recuperan el pedido original; otra identidad que reutilice la clave recibe conflicto.
@@ -69,7 +71,7 @@ Las rutas de negocio deben recibirse desde API Gateway, que verifica el JWT y tr
 - Cada línea se contrasta contra el catálogo activo por `productId`, SKU, precio y stock; el nombre persistido se canonicaliza desde catálogo.
 - Si el catálogo no está disponible, la creación responde como dependencia no disponible y no persiste el pedido.
 
-La publicación de `OrderCreated.v1` se intenta después de persistir el pedido. Si falla, la outbox conserva el evento para reintento. En Vercel no hay timers residentes: el cron diario de `/internal/maintenance` solo recupera trabajo pendiente y no forma parte del flujo síncrono de reserva.
+La publicación de `OrderCreated.v1` se intenta después de persistir el pedido. Si falla, la outbox conserva el evento para reintento. En Vercel no hay timers residentes: un scheduler externo gratuito llama cada minuto a `POST /internal/maintenance`, que recupera intents, outbox y comandos pendientes y expira hasta 25 reservas vencidas por ejecución. Los lotes restantes se procesan en las siguientes ejecuciones. Los pedidos existentes sin `reservationExpiresAt` no se modifican automáticamente; requieren revisión operativa antes de activar la expiración.
 
 El proveedor de almacenamiento de comprobantes no está registrado en `AppModule`; sus rutas responden con error explícito y no deben usarse en Vercel. El flujo actual comparte el pedido por WhatsApp, y la administradora valida el pago fuera de la plataforma.
 

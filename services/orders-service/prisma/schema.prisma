@@ -27,6 +27,8 @@ model Order {
   status          String      @default("PENDING")
   requestFingerprint String
   reservationExpiresAt DateTime?
+  paymentReportedAt DateTime?
+  paymentReportedByCustomerId String?
   cancelRequestedAt DateTime?
   cancelResolvedAt DateTime?
   cancelResolution String?

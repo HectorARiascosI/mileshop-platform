@@ -26,6 +26,10 @@ function inventoryCommandRetryDelay(attemptCount: number): number {
 export class PrismaOrdersRepository implements OrdersRepository, InventoryCommandRepository {
   public constructor(private readonly prisma: PrismaClient) {}
 
+  public async checkConnectivity(): Promise<void> {
+    await this.prisma.$queryRaw`SELECT 1`;
+  }
+
   public async createReservationIntent(
     intent: ReservationIntent,
     record: OrderRecord,
@@ -151,6 +155,9 @@ export class PrismaOrdersRepository implements OrdersRepository, InventoryComman
       status: row.status as OrderRecord["status"],
       createdAt: row.createdAt,
       updatedAt: row.updatedAt,
+      reservationExpiresAt: row.reservationExpiresAt,
+      paymentReportedAt: row.paymentReportedAt,
+      paymentReportedByCustomerId: row.paymentReportedByCustomerId,
       lines: row.lines.map((line) => ({
         id: line.id,
         productId: line.productId,
@@ -183,6 +190,9 @@ export class PrismaOrdersRepository implements OrdersRepository, InventoryComman
       status: row.status as OrderRecord["status"],
       createdAt: row.createdAt,
       updatedAt: row.updatedAt,
+      reservationExpiresAt: row.reservationExpiresAt,
+      paymentReportedAt: row.paymentReportedAt,
+      paymentReportedByCustomerId: row.paymentReportedByCustomerId,
       lines: row.lines.map((line) => ({
         id: line.id,
         productId: line.productId,
@@ -217,6 +227,8 @@ export class PrismaOrdersRepository implements OrdersRepository, InventoryComman
       createdAt: row.createdAt,
       updatedAt: row.updatedAt,
       reservationExpiresAt: row.reservationExpiresAt,
+      paymentReportedAt: row.paymentReportedAt,
+      paymentReportedByCustomerId: row.paymentReportedByCustomerId,
       cancelRequestedAt: row.cancelRequestedAt,
       cancelResolvedAt: row.cancelResolvedAt,
       lines: row.lines.map((line) => ({
@@ -235,6 +247,7 @@ export class PrismaOrdersRepository implements OrdersRepository, InventoryComman
       where: {
         status: "AWAITING_PAYMENT_PROOF",
         reservationExpiresAt: { lte: now },
+        paymentReportedAt: null,
         paymentDecision: { is: null },
         paymentEvidence: { is: null },
       },
@@ -250,6 +263,7 @@ export class PrismaOrdersRepository implements OrdersRepository, InventoryComman
             orderId: row.orderId,
             status: "AWAITING_PAYMENT_PROOF",
             reservationExpiresAt: { lte: now },
+            paymentReportedAt: null,
             paymentDecision: { is: null },
             paymentEvidence: { is: null },
           },
@@ -268,6 +282,39 @@ export class PrismaOrdersRepository implements OrdersRepository, InventoryComman
       if (transitioned) expired += 1;
     }
     return expired;
+  }
+
+  public async markPaymentReported(
+    orderId: string,
+    adminCustomerId: string,
+    reportedAt: Date,
+  ): Promise<"marked" | "already-reported" | "not-pending"> {
+    const where = {
+      orderId,
+      status: "AWAITING_PAYMENT_PROOF",
+      paymentReportedAt: null,
+      paymentDecision: { is: null },
+      paymentEvidence: { is: null },
+      OR: [
+        { reservationExpiresAt: null },
+        { reservationExpiresAt: { gt: reportedAt } },
+      ],
+    };
+    const result = await this.prisma.order.updateMany({
+      where,
+      data: {
+        paymentReportedAt: reportedAt,
+        paymentReportedByCustomerId: adminCustomerId,
+        updatedAt: reportedAt,
+      },
+    });
+    if (result.count === 1) return "marked";
+
+    const current = await this.prisma.order.findUnique({
+      where: { orderId },
+      select: { paymentReportedAt: true },
+    });
+    return current?.paymentReportedAt ? "already-reported" : "not-pending";
   }
 
   public async claimPendingCommands(

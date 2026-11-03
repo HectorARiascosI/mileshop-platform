@@ -1,10 +1,20 @@
 import { Injectable } from "@nestjs/common";
-import { CATALOG_CATEGORY_THEMES } from "@mileshop/contracts";
+import {
+  CATALOG_CATEGORY_THEMES,
+  CATALOG_PRODUCT_IMAGE_LIMIT,
+} from "@mileshop/contracts";
 import type {
   CatalogCategory,
   CatalogCategoryInput,
   CatalogCategorySummary,
   CatalogCategoryTheme,
+  CatalogProductImage,
+  CatalogProductImageInput,
+  CatalogAnnouncement,
+  CatalogAnnouncementInput,
+  CatalogPromotion,
+  CatalogPromotionInput,
+  CatalogProductPromotion,
 } from "@mileshop/contracts";
 
 export type Product = {
@@ -16,6 +26,9 @@ export type Product = {
   stock: number;
   imageUrl?: string | null;
   imageFileId?: string | null;
+  images?: CatalogProductImage[];
+  priceBeforeDiscountCop?: number;
+  promotion?: CatalogProductPromotion | null;
   categoryId?: string | null;
   category?: CategorySummary | null;
   isActive?: boolean;
@@ -26,6 +39,10 @@ export type CategoryTheme = CatalogCategoryTheme;
 export type CategorySummary = CatalogCategorySummary;
 export type Category = CatalogCategory;
 export type CategoryInput = CatalogCategoryInput;
+export type Promotion = CatalogPromotion;
+export type PromotionInput = CatalogPromotionInput;
+export type Announcement = CatalogAnnouncement;
+export type AnnouncementInput = CatalogAnnouncementInput;
 
 export type ProductInput = {
   sku: string;
@@ -34,6 +51,7 @@ export type ProductInput = {
   priceCop: number;
   imageUrl: string | null;
   imageFileId?: string | null;
+  images?: CatalogProductImageInput[];
   categoryId?: string | null;
   isActive: boolean;
 };
@@ -66,6 +84,14 @@ export interface CatalogStore {
   createCategory(input: CategoryInput): Promise<Category>;
   updateCategory(categoryId: string, input: CategoryInput): Promise<Category>;
   deleteCategory(categoryId: string): Promise<void>;
+  listPromotions(includeInactive?: boolean): Promise<Promotion[]>;
+  createPromotion(input: PromotionInput): Promise<Promotion>;
+  updatePromotion(promotionId: string, input: PromotionInput): Promise<Promotion>;
+  deletePromotion(promotionId: string): Promise<void>;
+  listAnnouncements(includeInactive?: boolean): Promise<Announcement[]>;
+  createAnnouncement(input: AnnouncementInput): Promise<Announcement>;
+  updateAnnouncement(announcementId: string, input: AnnouncementInput): Promise<Announcement>;
+  deleteAnnouncement(announcementId: string): Promise<void>;
   createProduct(input: ProductInput): Promise<Product>;
   updateProduct(productId: string, input: ProductInput): Promise<Product>;
   recordStockReceipt(adminCustomerId: string, idempotencyKey: string, reason: string, lines: ReservationRequestLine[]): Promise<StockReceipt>;
@@ -182,7 +208,107 @@ export class CatalogInputError extends Error {
   }
 }
 
-export function normalizeProductInput(input: ProductInput): ProductInput {
+function validateMarketingDates(startsAt: string, endsAt: string): { startsAt: Date; endsAt: Date } {
+  const start = new Date(startsAt);
+  const end = new Date(endsAt);
+  if (
+    !Number.isFinite(start.getTime()) ||
+    !Number.isFinite(end.getTime()) ||
+    end.getTime() <= start.getTime()
+  ) {
+    throw new CatalogInputError("Campaign end must be later than its start");
+  }
+  return { startsAt: start, endsAt: end };
+}
+
+export function normalizePromotionInput(input: PromotionInput): PromotionInput {
+  const title = typeof input.title === "string" ? input.title.trim() : "";
+  const description = typeof input.description === "string" ? input.description.trim() : "";
+  if (title.length < 3 || title.length > 100) {
+    throw new CatalogInputError("Promotion title must contain 3–100 characters");
+  }
+  if (description.length > 1000) {
+    throw new CatalogInputError("Promotion description cannot exceed 1000 characters");
+  }
+  if (typeof input.isActive !== "boolean") {
+    throw new CatalogInputError("Promotion status is invalid");
+  }
+  const dates = validateMarketingDates(input.startsAt, input.endsAt);
+  if (!Array.isArray(input.products) || input.products.length < 1 || input.products.length > 100) {
+    throw new CatalogInputError("A promotion must include between 1 and 100 products");
+  }
+  const productIds = new Set<string>();
+  const products = input.products.map((product) => {
+    if (
+      typeof product.productId !== "string" ||
+      !product.productId.trim() ||
+      !Number.isSafeInteger(product.discountPercent) ||
+      product.discountPercent < 1 ||
+      product.discountPercent > 90 ||
+      productIds.has(product.productId)
+    ) {
+      throw new CatalogInputError("Promotion products or discount percentages are invalid");
+    }
+    const productId = product.productId.trim();
+    if (productIds.has(productId)) {
+      throw new CatalogInputError("Promotion products or discount percentages are invalid");
+    }
+    productIds.add(productId);
+    return { productId, discountPercent: product.discountPercent };
+  });
+  return {
+    title,
+    description,
+    startsAt: dates.startsAt.toISOString(),
+    endsAt: dates.endsAt.toISOString(),
+    isActive: input.isActive,
+    products,
+  };
+}
+
+export function normalizeAnnouncementInput(input: AnnouncementInput): AnnouncementInput {
+  const title = typeof input.title === "string" ? input.title.trim() : "";
+  const message = typeof input.message === "string" ? input.message.trim() : "";
+  const linkLabel = typeof input.linkLabel === "string" ? input.linkLabel.trim() : null;
+  const linkUrl = typeof input.linkUrl === "string" ? input.linkUrl.trim() : null;
+  if (title.length < 3 || title.length > 100 || message.length < 3 || message.length > 500) {
+    throw new CatalogInputError("Announcement title or message is invalid");
+  }
+  if (typeof input.isActive !== "boolean") {
+    throw new CatalogInputError("Announcement status is invalid");
+  }
+  if ((linkUrl === null) !== (linkLabel === null)) {
+    throw new CatalogInputError("Announcement links require both a URL and a label");
+  }
+  if (linkLabel !== null && (linkLabel.length < 2 || linkLabel.length > 40)) {
+    throw new CatalogInputError("Announcement link label must contain 2–40 characters");
+  }
+  if (linkUrl !== null) {
+    let parsed: URL;
+    try {
+      parsed = new URL(linkUrl);
+    } catch {
+      throw new CatalogInputError("Announcement link must be a valid HTTPS URL");
+    }
+    if (parsed.protocol !== "https:" || parsed.username || parsed.password) {
+      throw new CatalogInputError("Announcement link must use HTTPS and cannot include credentials");
+    }
+  }
+  const dates = validateMarketingDates(input.startsAt, input.endsAt);
+  return {
+    title,
+    message,
+    linkUrl,
+    linkLabel,
+    startsAt: dates.startsAt.toISOString(),
+    endsAt: dates.endsAt.toISOString(),
+    isActive: input.isActive,
+  };
+}
+
+export function normalizeProductInput(
+  input: ProductInput,
+): ProductInput & { images: CatalogProductImageInput[] } {
   const sku = typeof input.sku === "string" ? input.sku.trim().toUpperCase() : "";
   const name = typeof input.name === "string" ? input.name.trim() : "";
   const description = typeof input.description === "string" ? input.description.trim() : "";
@@ -208,40 +334,73 @@ export function normalizeProductInput(input: ProductInput): ProductInput {
     }
     categoryId = typeof input.categoryId === "string" ? input.categoryId.trim() : null;
   }
-  let imageUrl: string | null = null;
-  let imageUrlHost: string | null = null;
-  if (input.imageUrl !== null && input.imageUrl !== undefined && input.imageUrl !== "") {
-    if (typeof input.imageUrl !== "string" || input.imageUrl.length > 2048) {
+  const normalizeImage = (
+    imageUrlInput: unknown,
+    imageFileIdInput: unknown,
+  ): CatalogProductImageInput => {
+    if (typeof imageUrlInput !== "string" || imageUrlInput.length > 2048) {
       throw new CatalogInputError("Product image URL is invalid");
     }
     let parsed: URL;
     try {
-      parsed = new URL(input.imageUrl);
+      parsed = new URL(imageUrlInput);
     } catch {
       throw new CatalogInputError("Product image URL must be a valid HTTPS URL");
     }
     if (parsed.protocol !== "https:" || parsed.username || parsed.password) {
       throw new CatalogInputError("Product image URL must use HTTPS and cannot include credentials");
     }
-    imageUrl = parsed.toString();
-    imageUrlHost = parsed.hostname;
-  }
-  let imageFileId: string | null | undefined;
-  if (input.imageFileId !== undefined && input.imageFileId !== null && input.imageFileId !== "") {
-    if (
-      typeof input.imageFileId !== "string" ||
-      input.imageFileId.length > 128 ||
-      !/^[A-Za-z0-9_-]+$/.test(input.imageFileId)
-    ) {
-      throw new CatalogInputError("Product image file reference is invalid");
+
+    let imageFileId: string | null | undefined;
+    if (imageFileIdInput !== undefined && imageFileIdInput !== null && imageFileIdInput !== "") {
+      if (
+        typeof imageFileIdInput !== "string" ||
+        imageFileIdInput.length > 128 ||
+        !/^[A-Za-z0-9_-]+$/.test(imageFileIdInput)
+      ) {
+        throw new CatalogInputError("Product image file reference is invalid");
+      }
+      if (parsed.hostname !== "ik.imagekit.io") {
+        throw new CatalogInputError("A managed image must use its ImageKit URL");
+      }
+      imageFileId = imageFileIdInput;
+    } else if (imageFileIdInput !== undefined) {
+      imageFileId = null;
     }
-    if (!imageUrl || imageUrlHost !== "ik.imagekit.io") {
+    return {
+      imageUrl: parsed.toString(),
+      ...(imageFileId !== undefined ? { imageFileId } : {}),
+    };
+  };
+
+  let images: CatalogProductImageInput[];
+  if (input.images !== undefined) {
+    if (!Array.isArray(input.images) || input.images.length > CATALOG_PRODUCT_IMAGE_LIMIT) {
+      throw new CatalogInputError(`A product can have at most ${CATALOG_PRODUCT_IMAGE_LIMIT} images`);
+    }
+    images = input.images.map((image) => {
+      if (typeof image !== "object" || image === null || !("imageUrl" in image)) {
+        throw new CatalogInputError("Product image is invalid");
+      }
+      return normalizeImage(
+        image.imageUrl,
+        "imageFileId" in image ? image.imageFileId : undefined,
+      );
+    });
+  } else if (input.imageUrl) {
+    images = [normalizeImage(input.imageUrl, input.imageFileId)];
+  } else {
+    if (input.imageFileId !== undefined && input.imageFileId !== null && input.imageFileId !== "") {
       throw new CatalogInputError("A managed image must use its ImageKit URL");
     }
-    imageFileId = input.imageFileId;
-  } else if (input.imageFileId !== undefined) {
-    imageFileId = null;
+    images = [];
   }
+  const imageUrl = images[0]?.imageUrl ?? null;
+  const imageFileId =
+    input.images !== undefined
+      ? images[0]?.imageFileId ?? null
+      : images[0]?.imageFileId ??
+        (images[0] && input.imageFileId === undefined ? undefined : null);
   return {
     sku,
     name,
@@ -249,6 +408,7 @@ export function normalizeProductInput(input: ProductInput): ProductInput {
     priceCop: input.priceCop,
     imageUrl,
     ...(imageFileId !== undefined ? { imageFileId } : {}),
+    images,
     ...(categoryId !== undefined ? { categoryId } : {}),
     isActive: input.isActive,
   };
@@ -298,6 +458,8 @@ export function normalizeStockReceipt(
 export class InMemoryCatalogStore implements CatalogStore {
   private readonly products: Product[];
   private readonly categories: CategorySummary[];
+  private readonly promotions: Promotion[] = [];
+  private readonly announcements: Announcement[] = [];
   private readonly defaultProducts: Product[] = [
     {
       id: "prod-mug-001",
@@ -339,20 +501,36 @@ export class InMemoryCatalogStore implements CatalogStore {
   }
 
   public async listActiveProducts(): Promise<Product[]> {
+    const now = Date.now();
     return this.products
       .filter((product) => product.isActive !== false)
-      .map((product) => ({
-        id: product.id,
-        sku: product.sku,
-        name: product.name,
-        description: product.description,
-        priceCop: product.priceCop,
-        stock: product.stock,
-        ...(product.imageUrl ? { imageUrl: product.imageUrl } : {}),
-        ...(this.getCategorySummary(product.categoryId)
-          ? { category: this.getCategorySummary(product.categoryId) }
-          : {}),
-      }))
+      .map((product) => {
+        const promotion = this.getProductPromotion(product.id, now);
+        const priceCop = promotion
+          ? Math.round((product.priceCop * (100 - promotion.discountPercent)) / 100)
+          : product.priceCop;
+        return {
+          id: product.id,
+          sku: product.sku,
+          name: product.name,
+          description: product.description,
+          priceCop,
+          stock: product.stock,
+          ...(promotion ? { priceBeforeDiscountCop: product.priceCop, promotion } : {}),
+          ...(product.imageUrl ? { imageUrl: product.imageUrl } : {}),
+          ...(product.images?.length
+            ? {
+                images: product.images.map(({ imageUrl, position }) => ({
+                  imageUrl,
+                  position,
+                })),
+              }
+            : {}),
+          ...(this.getCategorySummary(product.categoryId)
+            ? { category: this.getCategorySummary(product.categoryId) }
+            : {}),
+        };
+      })
       .sort((left, right) => left.name.localeCompare(right.name, "es"));
   }
 
@@ -363,6 +541,11 @@ export class InMemoryCatalogStore implements CatalogStore {
         isActive: product.isActive !== false,
         imageUrl: product.imageUrl ?? null,
         imageFileId: product.imageFileId ?? null,
+        images: (product.images ?? []).map((image, position) => ({
+          ...image,
+          imageFileId: image.imageFileId ?? null,
+          position,
+        })),
         categoryId: product.categoryId ?? null,
         category: this.getCategorySummary(product.categoryId),
       }))
@@ -414,6 +597,159 @@ export class InMemoryCatalogStore implements CatalogStore {
     this.categories.splice(index, 1);
   }
 
+  public async listPromotions(includeInactive = false): Promise<Promotion[]> {
+    const now = Date.now();
+    return this.promotions
+      .filter((promotion) =>
+        includeInactive ||
+        (promotion.isActive &&
+          new Date(promotion.startsAt).getTime() <= now &&
+          new Date(promotion.endsAt).getTime() > now),
+      )
+      .map((promotion) => structuredClone(promotion))
+      .sort((left, right) => left.startsAt.localeCompare(right.startsAt));
+  }
+
+  public async createPromotion(input: PromotionInput): Promise<Promotion> {
+    const normalized = normalizePromotionInput(input);
+    this.assertPromotionProductsAvailable(normalized);
+    const promotion: Promotion = {
+      ...normalized,
+      id: `promotion-${crypto.randomUUID()}`,
+      products: normalized.products.map((item) => {
+        const product = this.products.find((candidate) => candidate.id === item.productId);
+        if (!product) throw new CatalogNotFoundError(`Product not found: ${item.productId}`);
+        return { ...item, name: product.name, sku: product.sku };
+      }),
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+    };
+    this.promotions.push(promotion);
+    return structuredClone(promotion);
+  }
+
+  public async updatePromotion(promotionId: string, input: PromotionInput): Promise<Promotion> {
+    const normalized = normalizePromotionInput(input);
+    const index = this.promotions.findIndex((promotion) => promotion.id === promotionId);
+    if (index < 0) throw new CatalogNotFoundError("Promotion not found");
+    this.assertPromotionProductsAvailable(normalized, promotionId);
+    const promotion: Promotion = {
+      ...normalized,
+      id: promotionId,
+      products: normalized.products.map((item) => {
+        const product = this.products.find((candidate) => candidate.id === item.productId);
+        if (!product) throw new CatalogNotFoundError(`Product not found: ${item.productId}`);
+        return { ...item, name: product.name, sku: product.sku };
+      }),
+      createdAt: this.promotions[index]!.createdAt,
+      updatedAt: new Date().toISOString(),
+    };
+    this.promotions[index] = promotion;
+    return structuredClone(promotion);
+  }
+
+  public async deletePromotion(promotionId: string): Promise<void> {
+    const index = this.promotions.findIndex((promotion) => promotion.id === promotionId);
+    if (index < 0) throw new CatalogNotFoundError("Promotion not found");
+    this.promotions.splice(index, 1);
+  }
+
+  public async listAnnouncements(includeInactive = false): Promise<Announcement[]> {
+    const now = Date.now();
+    return this.announcements
+      .filter((announcement) =>
+        includeInactive ||
+        (announcement.isActive &&
+          new Date(announcement.startsAt).getTime() <= now &&
+          new Date(announcement.endsAt).getTime() > now),
+      )
+      .map((announcement) => structuredClone(announcement))
+      .sort((left, right) => left.startsAt.localeCompare(right.startsAt));
+  }
+
+  public async createAnnouncement(input: AnnouncementInput): Promise<Announcement> {
+    const normalized = normalizeAnnouncementInput(input);
+    const now = new Date().toISOString();
+    const announcement: Announcement = {
+      ...normalized,
+      id: `announcement-${crypto.randomUUID()}`,
+      createdAt: now,
+      updatedAt: now,
+    };
+    this.announcements.push(announcement);
+    return structuredClone(announcement);
+  }
+
+  public async updateAnnouncement(announcementId: string, input: AnnouncementInput): Promise<Announcement> {
+    const normalized = normalizeAnnouncementInput(input);
+    const index = this.announcements.findIndex((announcement) => announcement.id === announcementId);
+    if (index < 0) throw new CatalogNotFoundError("Announcement not found");
+    const announcement: Announcement = {
+      ...normalized,
+      id: announcementId,
+      createdAt: this.announcements[index]!.createdAt,
+      updatedAt: new Date().toISOString(),
+    };
+    this.announcements[index] = announcement;
+    return structuredClone(announcement);
+  }
+
+  public async deleteAnnouncement(announcementId: string): Promise<void> {
+    const index = this.announcements.findIndex((announcement) => announcement.id === announcementId);
+    if (index < 0) throw new CatalogNotFoundError("Announcement not found");
+    this.announcements.splice(index, 1);
+  }
+
+  private assertPromotionProductsAvailable(input: PromotionInput, excludedPromotionId?: string): void {
+    const productIds = new Set(input.products.map((product) => product.productId));
+    for (const productId of productIds) {
+      if (!this.products.some((product) => product.id === productId)) {
+        throw new CatalogNotFoundError(`Product not found: ${productId}`);
+      }
+    }
+    const startsAt = new Date(input.startsAt).getTime();
+    const endsAt = new Date(input.endsAt).getTime();
+    const conflict = this.promotions.some((promotion) =>
+      promotion.id !== excludedPromotionId &&
+      promotion.isActive &&
+      new Date(promotion.startsAt).getTime() < endsAt &&
+      new Date(promotion.endsAt).getTime() > startsAt &&
+      promotion.products.some((product) => productIds.has(product.productId)),
+    );
+    if (conflict) {
+      throw new CatalogConflictError("An active promotion already overlaps for one or more products");
+    }
+  }
+
+  private getProductPromotion(productId: string, now: number): CatalogProductPromotion | null {
+    for (const promotion of this.promotions) {
+      if (
+        promotion.isActive &&
+        new Date(promotion.startsAt).getTime() <= now &&
+        new Date(promotion.endsAt).getTime() > now
+      ) {
+        const product = promotion.products.find((item) => item.productId === productId);
+        if (product) {
+          return {
+            id: promotion.id,
+            title: promotion.title,
+            discountPercent: product.discountPercent,
+            startsAt: promotion.startsAt,
+            endsAt: promotion.endsAt,
+          };
+        }
+      }
+    }
+    return null;
+  }
+
+  private getEffectivePrice(product: Product, now: number): number {
+    const promotion = this.getProductPromotion(product.id, now);
+    return promotion
+      ? Math.round((product.priceCop * (100 - promotion.discountPercent)) / 100)
+      : product.priceCop;
+  }
+
   public async createProduct(input: ProductInput): Promise<Product> {
     return this.withExclusiveLock(async () => {
       const normalized = normalizeProductInput(input);
@@ -424,7 +760,13 @@ export class InMemoryCatalogStore implements CatalogStore {
       const product: Product = {
         id: `prod-${crypto.randomUUID()}`,
         ...normalized,
-        imageFileId: normalized.imageFileId ?? null,
+        imageUrl: normalized.images[0]?.imageUrl ?? null,
+        imageFileId: normalized.images[0]?.imageFileId ?? null,
+        images: normalized.images.map((image, position) => ({
+          ...image,
+          imageFileId: image.imageFileId ?? null,
+          position,
+        })),
         categoryId: normalized.categoryId ?? null,
         stock: 0,
       };
@@ -442,7 +784,25 @@ export class InMemoryCatalogStore implements CatalogStore {
       if (this.products.some((candidate) => candidate.id !== productId && candidate.sku.toUpperCase() === normalized.sku)) {
         throw new CatalogConflictError("A product with this SKU already exists");
       }
-      Object.assign(product, normalized);
+      const images = normalized.images.map((image, position) => {
+        const previousImage = product.images?.find(
+          (candidate) => candidate.imageUrl === image.imageUrl,
+        );
+        return {
+          ...image,
+          imageFileId:
+            image.imageFileId === undefined
+              ? previousImage?.imageFileId ?? null
+              : image.imageFileId,
+          position,
+        };
+      });
+      Object.assign(product, {
+        ...normalized,
+        imageUrl: images[0]?.imageUrl ?? null,
+        imageFileId: images[0]?.imageFileId ?? null,
+        images,
+      });
       return { ...product, categoryId: product.categoryId ?? null, category: this.getCategorySummary(product.categoryId) };
     });
   }
@@ -529,7 +889,7 @@ export class InMemoryCatalogStore implements CatalogStore {
           sku: product.sku,
           name: product.name,
           quantity,
-          unitPriceCop: product.priceCop,
+          unitPriceCop: this.getEffectivePrice(product, Date.now()),
         })),
       };
       for (const { product, quantity } of products) product.stock -= quantity;
@@ -573,7 +933,7 @@ export class InMemoryCatalogStore implements CatalogStore {
           sku: product.sku,
           name: product.name,
           quantity,
-          unitPriceCop: product.priceCop,
+          unitPriceCop: this.getEffectivePrice(product, Date.now()),
         })),
       };
 
@@ -625,7 +985,7 @@ export class InMemoryCatalogStore implements CatalogStore {
           sku: product.sku,
           name: product.name,
           quantity,
-          unitPriceCop: product.priceCop,
+          unitPriceCop: this.getEffectivePrice(product, Date.now()),
         })),
       };
       for (const { product, quantity } of products) product.stock -= quantity;
@@ -708,6 +1068,42 @@ export class CatalogService {
   public async deleteCategory(categoryId: string): Promise<void> {
     if (!categoryId.trim()) throw new CatalogInputError("Category id is required");
     return this.store.deleteCategory(categoryId);
+  }
+
+  public async listPromotions(includeInactive = false): Promise<Promotion[]> {
+    return this.store.listPromotions(includeInactive);
+  }
+
+  public async createPromotion(input: PromotionInput): Promise<Promotion> {
+    return this.store.createPromotion(normalizePromotionInput(input));
+  }
+
+  public async updatePromotion(promotionId: string, input: PromotionInput): Promise<Promotion> {
+    if (!promotionId.trim()) throw new CatalogInputError("Promotion id is required");
+    return this.store.updatePromotion(promotionId, normalizePromotionInput(input));
+  }
+
+  public async deletePromotion(promotionId: string): Promise<void> {
+    if (!promotionId.trim()) throw new CatalogInputError("Promotion id is required");
+    return this.store.deletePromotion(promotionId);
+  }
+
+  public async listAnnouncements(includeInactive = false): Promise<Announcement[]> {
+    return this.store.listAnnouncements(includeInactive);
+  }
+
+  public async createAnnouncement(input: AnnouncementInput): Promise<Announcement> {
+    return this.store.createAnnouncement(normalizeAnnouncementInput(input));
+  }
+
+  public async updateAnnouncement(announcementId: string, input: AnnouncementInput): Promise<Announcement> {
+    if (!announcementId.trim()) throw new CatalogInputError("Announcement id is required");
+    return this.store.updateAnnouncement(announcementId, normalizeAnnouncementInput(input));
+  }
+
+  public async deleteAnnouncement(announcementId: string): Promise<void> {
+    if (!announcementId.trim()) throw new CatalogInputError("Announcement id is required");
+    return this.store.deleteAnnouncement(announcementId);
   }
 
   public async createProduct(input: ProductInput): Promise<Product> {

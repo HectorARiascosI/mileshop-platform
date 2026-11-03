@@ -129,6 +129,16 @@ test("admin product and stock receipt endpoints require internal auth and persis
         priceCop: 5000,
         imageUrl: "https://ik.imagekit.io/store/products/product-1.jpg",
         imageFileId: "image-file-01",
+        images: [
+          {
+            imageUrl: "https://ik.imagekit.io/store/products/product-1.jpg",
+            imageFileId: "image-file-01",
+          },
+          {
+            imageUrl: "https://images.example.com/products/product-1-side.jpg",
+            imageFileId: null,
+          },
+        ],
         isActive: true,
       }),
     });
@@ -199,10 +209,108 @@ test("admin product and stock receipt endpoints require internal auth and persis
         else process.env.CATALOG_INVENTORY_COMMAND_TOKEN = previousToken;
       }
     });
+
+    await test("marketing endpoints authenticate writes and expose only current announcements and sale prices", async () => {
+      const token = "catalog-inventory-token-for-tests-0123456789";
+      const previousToken = process.env.CATALOG_INVENTORY_COMMAND_TOKEN;
+      process.env.CATALOG_INVENTORY_COMMAND_TOKEN = token;
+      const catalog = new CatalogService(new InMemoryCatalogStore([{
+        id: "marketing-product",
+        sku: "MARKETING-01",
+        name: "Artículo campaña",
+        description: "",
+        priceCop: 50000,
+        stock: 5,
+        isActive: true,
+      }]));
+      const app = await createCatalogApp(catalog);
+      await app.listen(0, "127.0.0.1");
+      try {
+        const baseUrl = await app.getUrl();
+        const headers = {
+          authorization: `Bearer ${token}`,
+          "content-type": "application/json",
+        };
+        const unauthorized = await fetch(`${baseUrl}/internal/admin/promotions`);
+        assert.equal(unauthorized.status, 401);
+
+        const startsAt = new Date(Date.now() - 60_000).toISOString();
+        const endsAt = new Date(Date.now() + 60 * 60_000).toISOString();
+
+        const promotionResponse = await fetch(`${baseUrl}/internal/admin/promotions`, {
+          method: "POST",
+          headers,
+          body: JSON.stringify({
+            title: "Campaña HTTP",
+            description: "",
+            startsAt,
+            endsAt,
+            isActive: true,
+            products: [{ productId: "marketing-product", discountPercent: 20 }],
+          }),
+        });
+        assert.equal(promotionResponse.status, 201);
+        const promotion = (await promotionResponse.json()).data;
+        assert.equal(promotion.products[0].discountPercent, 20);
+        const productsResponse = await fetch(`${baseUrl}/products`);
+        const publicProduct = (await productsResponse.json()).data[0];
+        assert.equal(publicProduct.priceCop, 40000);
+        assert.equal(publicProduct.priceBeforeDiscountCop, 50000);
+        assert.equal(publicProduct.promotion.title, "Campaña HTTP");
+
+        const announcementResponse = await fetch(`${baseUrl}/internal/admin/announcements`, {
+          method: "POST",
+          headers,
+          body: JSON.stringify({
+            title: "Aviso HTTP",
+            message: "Horario extendido este viernes.",
+            linkUrl: null,
+            linkLabel: null,
+            startsAt,
+            endsAt,
+            isActive: true,
+          }),
+        });
+        assert.equal(announcementResponse.status, 201);
+        const announcement = (await announcementResponse.json()).data;
+        const publicAnnouncements = await fetch(`${baseUrl}/announcements`);
+        assert.equal(publicAnnouncements.status, 200);
+        assert.equal((await publicAnnouncements.json()).data[0].id, announcement.id);
+
+        const disabled = await fetch(
+          `${baseUrl}/internal/admin/promotions/${encodeURIComponent(promotion.id)}`,
+          {
+            method: "PATCH",
+            headers,
+            body: JSON.stringify({
+              title: "Campaña HTTP",
+              description: "",
+              startsAt,
+              endsAt,
+              isActive: false,
+              products: [{ productId: "marketing-product", discountPercent: 20 }],
+            }),
+          },
+        );
+        assert.equal(disabled.status, 200);
+        const regularPrice = (await (await fetch(`${baseUrl}/products`)).json()).data[0];
+        assert.equal(regularPrice.priceCop, 50000);
+        assert.equal(regularPrice.promotion, undefined);
+      } finally {
+        await app.close();
+        if (previousToken === undefined) delete process.env.CATALOG_INVENTORY_COMMAND_TOKEN;
+        else process.env.CATALOG_INVENTORY_COMMAND_TOKEN = previousToken;
+      }
+    });
     assert.equal(productResponse.status, 201);
     const productPayload = await productResponse.json();
     const productId = productPayload.data.id as string;
     assert.equal(productPayload.data.imageFileId, "image-file-01");
+    assert.deepEqual(productPayload.data.images.map((image: { position: number }) => image.position), [0, 1]);
+    const publicProducts = await fetch(`${baseUrl}/products`);
+    const publicProduct = (await publicProducts.json()).data[0];
+    assert.equal(publicProduct.images.length, 2);
+    assert.equal("imageFileId" in publicProduct.images[0], false);
 
     const receiptUrl = `${baseUrl}/internal/admin/stock-receipts`;
     const receiptHeaders = { ...headers, "idempotency-key": "http-receipt-1" };

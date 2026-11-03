@@ -64,6 +64,7 @@ export type Order = {
   totalCop: number;
   status: OrderStatus;
   reservationExpiresAt: Date | null;
+  paymentReportedAt: Date | null;
   createdAt: string;
   updatedAt: string;
   lines: OrderLine[];

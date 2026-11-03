@@ -5,7 +5,12 @@ import Image from "next/image";
 import { useRouter } from "next/navigation";
 import { useEffect, useState, useSyncExternalStore } from "react";
 
-import type { CatalogCategorySummary } from "@mileshop/contracts";
+import type {
+  CatalogAnnouncement,
+  CatalogCategorySummary,
+  CatalogProductImageSummary,
+  CatalogProductPromotion,
+} from "@mileshop/contracts";
 import {
   addProductToCart,
   getCartItemCount,
@@ -30,7 +35,10 @@ type Product = {
   description: string;
   priceCop: number;
   stock: number;
+  priceBeforeDiscountCop?: number;
+  promotion?: CatalogProductPromotion | null;
   imageUrl?: string | null;
+  images?: CatalogProductImageSummary[];
   categoryId?: string | null;
   category?: CatalogCategorySummary | null;
 };
@@ -38,6 +46,7 @@ type Product = {
 type CatalogShellProps = {
   products: Product[];
   unavailable: boolean;
+  announcements: CatalogAnnouncement[];
 };
 
 const STORAGE_KEY = "mileshop-cart-v1";
@@ -86,7 +95,7 @@ function getIdempotencyKey(cart: CartLine[]): string {
   return key;
 }
 
-export function CatalogShell({ products, unavailable }: CatalogShellProps) {
+export function CatalogShell({ products, unavailable, announcements }: CatalogShellProps) {
   const router = useRouter();
   const isCartHydrated = useSyncExternalStore(
     subscribeToHydration,
@@ -118,6 +127,7 @@ export function CatalogShell({ products, unavailable }: CatalogShellProps) {
   const [isStoreAdmin, setIsStoreAdmin] = useState(false);
   const [searchQuery, setSearchQuery] = useState("");
   const [selectedCategoryId, setSelectedCategoryId] = useState<string | null>(null);
+  const [galleryIndices, setGalleryIndices] = useState<Record<string, number>>({});
 
   useEffect(() => {
     if (!isCartHydrated) {
@@ -174,6 +184,13 @@ export function CatalogShell({ products, unavailable }: CatalogShellProps) {
       }),
     );
     setIsCartOpen(true);
+  };
+
+  const moveGallery = (productId: string, offset: -1 | 1, imageCount: number) => {
+    setGalleryIndices((current) => ({
+      ...current,
+      [productId]: ((current[productId] ?? 0) + offset + imageCount) % imageCount,
+    }));
   };
 
   const increaseQuantity = (productId: string) => {
@@ -310,6 +327,30 @@ export function CatalogShell({ products, unavailable }: CatalogShellProps) {
       </header>
 
       <main className="catalog-page">
+        {announcements.length > 0 && (
+          <section className="announcement-stack" aria-label="Anuncios de MileShop">
+            {announcements.map((announcement) => (
+              <article className="announcement-banner" key={announcement.id}>
+                <div>
+                  <p className="announcement-eyebrow">Aviso de la tienda</p>
+                  <h2>{announcement.title}</h2>
+                  <p>{announcement.message}</p>
+                </div>
+                {announcement.linkUrl && announcement.linkLabel && (
+                  <a
+                    className="announcement-link"
+                    href={announcement.linkUrl}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                  >
+                    {announcement.linkLabel}
+                    <span aria-hidden="true">↗</span>
+                  </a>
+                )}
+              </article>
+            ))}
+          </section>
+        )}
         <section className="storefront-hero" aria-labelledby="storefront-title">
           <div className="hero-copy">
             <p className="eyebrow">
@@ -446,14 +487,25 @@ export function CatalogShell({ products, unavailable }: CatalogShellProps) {
             </section>
           ) : (
             <ul className="product-grid" aria-label="Productos disponibles">
-              {visibleProducts.map((product) => (
-                <li className="product-card" key={product.id} data-theme={product.category?.theme ?? "neutral"}>
+              {visibleProducts.map((product) => {
+                const productImages = product.images?.length
+                  ? product.images
+                  : product.imageUrl
+                    ? [{ imageUrl: product.imageUrl, position: 0 }]
+                    : [];
+                const galleryIndex = Math.min(
+                  galleryIndices[product.id] ?? 0,
+                  Math.max(productImages.length - 1, 0),
+                );
+                const currentImage = productImages[galleryIndex];
+                return (
+                  <li className="product-card" key={product.id} data-theme={product.category?.theme ?? "neutral"}>
                   <div className="product-art">
-                    {product.imageUrl ? (
+                    {currentImage ? (
                       <Image
                         className="product-image"
-                        src={getOptimizedImageUrl(product.imageUrl, 800)}
-                        alt={product.name}
+                        src={getOptimizedImageUrl(currentImage.imageUrl, 800)}
+                        alt={`${product.name}, foto ${galleryIndex + 1} de ${productImages.length}`}
                         width={600}
                         height={480}
                         sizes="(max-width: 480px) 46vw, (max-width: 760px) 44vw, (max-width: 1100px) 30vw, 22vw"
@@ -463,6 +515,33 @@ export function CatalogShell({ products, unavailable }: CatalogShellProps) {
                       <div className="product-image-fallback" aria-label={`Fotografía no disponible para ${product.name}`}>
                         <span className="fallback-mark" aria-hidden="true">M</span>
                         <span>Fotografía no disponible</span>
+                      </div>
+                    )}
+                    {productImages.length > 1 && (
+                      <div
+                        className="product-gallery-controls"
+                        role="group"
+                        aria-label={`Fotos de ${product.name}`}
+                      >
+                        <button
+                          className="product-gallery-button"
+                          type="button"
+                          aria-label={`Ver foto anterior de ${product.name}`}
+                          onClick={() => moveGallery(product.id, -1, productImages.length)}
+                        >
+                          Anterior
+                        </button>
+                        <span aria-live="polite">
+                          {galleryIndex + 1} / {productImages.length}
+                        </span>
+                        <button
+                          className="product-gallery-button"
+                          type="button"
+                          aria-label={`Ver siguiente foto de ${product.name}`}
+                          onClick={() => moveGallery(product.id, 1, productImages.length)}
+                        >
+                          Siguiente
+                        </button>
                       </div>
                     )}
                   </div>
@@ -481,7 +560,17 @@ export function CatalogShell({ products, unavailable }: CatalogShellProps) {
                     )}
 
                     <div className="product-footer">
-                      <strong>{formatPrice(product.priceCop)}</strong>
+                      <div className="product-price-block">
+                        {product.promotion && product.priceBeforeDiscountCop !== undefined && (
+                          <>
+                            <span className="discount-tag">
+                              {product.promotion.discountPercent}% menos
+                            </span>
+                            <del>{formatPrice(product.priceBeforeDiscountCop)}</del>
+                          </>
+                        )}
+                        <strong>{formatPrice(product.priceCop)}</strong>
+                      </div>
                       <button
                         className="add-button"
                         type="button"
@@ -494,8 +583,9 @@ export function CatalogShell({ products, unavailable }: CatalogShellProps) {
                       </button>
                     </div>
                   </div>
-                </li>
-              ))}
+                  </li>
+                );
+              })}
             </ul>
           )}
         </section>

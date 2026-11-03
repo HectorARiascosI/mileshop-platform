@@ -8,7 +8,7 @@ import {
 
 import type { PrismaClient } from "../generated/orders-client/index.js";
 import { CatalogReader } from "./catalog.reader.js";
-import { OrderDomain } from "./orders.domain.js";
+import { ORDER_RESERVATION_TTL_MS, OrderDomain } from "./orders.domain.js";
 import type { OrderRecord } from "./orders.domain.js";
 import { type OrdersRepository, type ReservationIntent } from "./orders.repository.js";
 import type { CreateOrderInput, Order, OrderCreatedEvent } from "./orders.types.js";
@@ -304,6 +304,10 @@ export class OrdersService implements OnModuleInit, OnModuleDestroy {
     }
   }
 
+  public async checkReadiness(): Promise<void> {
+    await this.repository.checkConnectivity();
+  }
+
   public async createOrder(input: CreateOrderInput): Promise<Order> {
     const parsed = createOrderSchema.safeParse(input);
     if (!parsed.success) {
@@ -338,11 +342,11 @@ export class OrdersService implements OnModuleInit, OnModuleDestroy {
       return this.returnExistingOrder(existing, parsed.data.customerId, validatedLines);
     }
 
-    const record = OrderDomain.createOrder({
+    let record = OrderDomain.createOrder({
       ...parsed.data,
       lines: validatedLines,
     });
-    const event = this.buildOrderCreatedEvent(record);
+    let event = this.buildOrderCreatedEvent(record);
 
     if (
       this.catalog.reserveProducts &&
@@ -350,6 +354,13 @@ export class OrdersService implements OnModuleInit, OnModuleDestroy {
       this.repository.completeReservationIntent &&
       this.repository.listPendingReservationIntents
     ) {
+      record = {
+        ...record,
+        reservationExpiresAt: new Date(
+          record.createdAt.getTime() + ORDER_RESERVATION_TTL_MS,
+        ),
+      };
+      event = this.buildOrderCreatedEvent(record);
       const intent: ReservationIntent = {
         intentId: `${record.orderId}-reservation`,
         orderId: record.orderId,
@@ -364,7 +375,9 @@ export class OrdersService implements OnModuleInit, OnModuleDestroy {
         nextAttemptAt: record.createdAt,
       };
       await this.repository.createReservationIntent(intent, record, event);
-      await this.catalog.reserveProducts(record.orderId, intent.lines);
+      const reservation = await this.catalog.reserveProducts(record.orderId, intent.lines);
+      record = OrderDomain.applyReservedPrices(record, reservation.lines);
+      event = this.buildOrderCreatedEvent(record);
       await this.repository.completeReservationIntent(intent, record, event);
     }
 
@@ -406,10 +419,20 @@ export class OrdersService implements OnModuleInit, OnModuleDestroy {
     }
     const intents = await this.repository.listPendingReservationIntents(now);
     for (const intent of intents) {
-      await this.catalog.reserveProducts?.(intent.orderId, intent.lines);
+      const reservation = await this.catalog.reserveProducts?.(intent.orderId, intent.lines);
       const payload = await this.repository.getReservationIntentPayload?.(intent.intentId);
       if (payload) {
-        await this.repository.completeReservationIntent?.(intent, payload.record, payload.event);
+        const recordWithExpiration = {
+          ...payload.record,
+          reservationExpiresAt:
+            payload.record.reservationExpiresAt ??
+            new Date(intent.createdAt.getTime() + ORDER_RESERVATION_TTL_MS),
+        };
+        const record = reservation
+          ? OrderDomain.applyReservedPrices(recordWithExpiration, reservation.lines)
+          : recordWithExpiration;
+        const event = this.buildOrderCreatedEvent(record);
+        await this.repository.completeReservationIntent?.(intent, record, event);
       }
     }
   }
@@ -422,6 +445,18 @@ export class OrdersService implements OnModuleInit, OnModuleDestroy {
   public async listPendingAdminOrders(): Promise<Order[]> {
     const records = await this.repository.listPendingAdminOrders();
     return records.map((record) => OrderDomain.toOrderView(record));
+  }
+
+  public async markPaymentReported(
+    orderId: string,
+    adminCustomerId: string,
+  ): Promise<{ result: string; order?: Order | null }> {
+    const result = await this.repository.markPaymentReported(
+      orderId,
+      adminCustomerId,
+      new Date(),
+    );
+    return { result, order: await this.getOrderById(orderId) };
   }
 
   public async approvePayment(orderId: string, adminCustomerId: string): Promise<{ result: string; order?: Order | null }> {

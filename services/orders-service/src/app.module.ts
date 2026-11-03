@@ -2,6 +2,7 @@ import { Module } from "@nestjs/common";
 
 import { HttpCatalogReader } from "./catalog.reader.js";
 import { OrdersController } from "./orders.controller.js";
+import { OrderExpiryWorker } from "./order-expiry.worker.js";
 import {
   HttpInventoryCommandDispatcher,
   InventoryCommandWorker,
@@ -80,6 +81,7 @@ const notificationFetch = createPreviewProtectedFetch(
       ),
     },
     InventoryCommandWorker,
+    OrderExpiryWorker,
     {
       provide: "INVENTORY_COMMAND_WORKER",
       useExisting: InventoryCommandWorker,

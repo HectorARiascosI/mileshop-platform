@@ -27,6 +27,120 @@ test("catalog starts with the seeded active product catalog", async () => {
   });
 });
 
+test("promotions show the effective price and reserve that exact price for orders", async () => {
+  const service = new CatalogService(new InMemoryCatalogStore([{
+    id: "promo-product",
+    sku: "PROMO-01",
+    name: "Artículo promocional",
+    description: "",
+    priceCop: 50001,
+    stock: 5,
+    isActive: true,
+  }]));
+  const startsAt = new Date(Date.now() - 60_000).toISOString();
+  const endsAt = new Date(Date.now() + 60 * 60_000).toISOString();
+  const promotion = await service.createPromotion({
+    title: "Lanzamiento",
+    description: "Descuento de prueba",
+    startsAt,
+    endsAt,
+    isActive: true,
+    products: [{ productId: "promo-product", discountPercent: 20 }],
+  });
+
+  assert.equal(promotion.products[0]?.name, "Artículo promocional");
+  assert.deepEqual((await service.listProducts())[0], {
+    id: "promo-product",
+    sku: "PROMO-01",
+    name: "Artículo promocional",
+    description: "",
+    priceCop: 40001,
+    priceBeforeDiscountCop: 50001,
+    promotion: {
+      id: promotion.id,
+      title: "Lanzamiento",
+      discountPercent: 20,
+      startsAt,
+      endsAt,
+    },
+    stock: 5,
+  });
+  const reservation = await service.reserveInventory(
+    "order-promo",
+    [{ productId: "promo-product", quantity: 2 }],
+    new Date(Date.now() + 60_000),
+  );
+  assert.equal(reservation.lines[0]?.unitPriceCop, 40001);
+  const manualSale = await service.recordManualSale("admin-1", "promo-sale", [
+    { productId: "promo-product", quantity: 1 },
+  ]);
+  assert.equal(manualSale.lines[0]?.unitPriceCop, 40001);
+
+  await assert.rejects(
+    () => service.createPromotion({
+      title: "Conflicto",
+      description: "",
+      startsAt,
+      endsAt,
+      isActive: true,
+      products: [{ productId: "promo-product", discountPercent: 10 }],
+    }),
+    { code: "CONFLICT" },
+  );
+  await assert.rejects(
+    () => service.createPromotion({
+      title: "Descuento inválido",
+      description: "",
+      startsAt,
+      endsAt,
+      isActive: true,
+      products: [{ productId: "promo-product", discountPercent: 100 }],
+    }),
+    { code: "INVALID_COMMAND" },
+  );
+});
+
+test("announcements are separate, scheduled, and require safe HTTPS links", async () => {
+  const service = new CatalogService(new InMemoryCatalogStore([]));
+  const startsAt = new Date(Date.now() - 60_000).toISOString();
+  const endsAt = new Date(Date.now() + 60 * 60_000).toISOString();
+  const announcement = await service.createAnnouncement({
+    title: "Horario especial",
+    message: "Hoy atendemos hasta las cinco.",
+    linkUrl: "https://example.com/horarios",
+    linkLabel: "Ver horario",
+    startsAt,
+    endsAt,
+    isActive: true,
+  });
+  assert.deepEqual(await service.listAnnouncements(), [announcement]);
+  assert.deepEqual(await service.listPromotions(), []);
+  await service.updateAnnouncement(announcement.id, {
+    title: announcement.title,
+    message: announcement.message,
+    linkUrl: null,
+    linkLabel: null,
+    startsAt,
+    endsAt,
+    isActive: false,
+  });
+  assert.deepEqual(await service.listAnnouncements(), []);
+  assert.equal((await service.listAnnouncements(true))[0]?.isActive, false);
+
+  await assert.rejects(
+    () => service.createAnnouncement({
+      title: "Enlace no seguro",
+      message: "Este enlace debe rechazarse.",
+      linkUrl: "http://example.com",
+      linkLabel: "Abrir",
+      startsAt,
+      endsAt,
+      isActive: true,
+    }),
+    { code: "INVALID_COMMAND" },
+  );
+});
+
 test("admin can manage products and receive stock with an auditable idempotent receipt", async () => {
   const service = new CatalogService(new InMemoryCatalogStore([]));
   const product = await service.createProduct({
@@ -108,6 +222,102 @@ test("managed image references require a URL and a safe file id", async () => {
       ...baseInput,
       imageUrl: "https://images.example.com/item.jpg",
       imageFileId: "file-1",
+    }),
+    { code: "INVALID_COMMAND" },
+  );
+});
+
+test("admin manages an ordered product gallery and the storefront receives public image URLs", async () => {
+  const service = new CatalogService(new InMemoryCatalogStore([]));
+  const mainImage = {
+    imageUrl: "https://ik.imagekit.io/store/products/front.jpg",
+    imageFileId: "front-file",
+  };
+  const sideImage = {
+    imageUrl: "https://images.example.com/products/side.jpg",
+    imageFileId: null,
+  };
+  const product = await service.createProduct({
+    sku: "GALLERY-01",
+    name: "Producto con galería",
+    description: "",
+    priceCop: 5000,
+    imageUrl: mainImage.imageUrl,
+    imageFileId: mainImage.imageFileId,
+    images: [mainImage, sideImage],
+    isActive: true,
+  });
+
+  assert.deepEqual(product.images, [
+    { ...mainImage, position: 0 },
+    { ...sideImage, position: 1 },
+  ]);
+  assert.deepEqual(await service.listProducts(), [{
+    id: product.id,
+    sku: product.sku,
+    name: product.name,
+    description: product.description,
+    priceCop: product.priceCop,
+    stock: 0,
+    imageUrl: mainImage.imageUrl,
+    images: [
+      { imageUrl: mainImage.imageUrl, position: 0 },
+      { imageUrl: sideImage.imageUrl, position: 1 },
+    ],
+  }]);
+
+  const updated = await service.updateProduct(product.id, {
+    sku: product.sku,
+    name: product.name,
+    description: product.description,
+    priceCop: product.priceCop,
+    imageUrl: sideImage.imageUrl,
+    imageFileId: null,
+    images: [sideImage],
+    isActive: true,
+  });
+  assert.equal(updated.imageUrl, sideImage.imageUrl);
+  assert.equal(updated.imageFileId, null);
+  assert.deepEqual(updated.images, [{ ...sideImage, position: 0 }]);
+  assert.deepEqual((await service.listAdminProducts())[0]?.images, [
+    { ...sideImage, position: 0 },
+  ]);
+});
+
+test("product galleries reject unsupported URLs, invalid managed references, and excess images", async () => {
+  const service = new CatalogService(new InMemoryCatalogStore([]));
+  const baseInput = {
+    sku: "GALLERY-02",
+    name: "Galería inválida",
+    description: "",
+    priceCop: 100,
+    imageUrl: null,
+    isActive: true,
+  };
+
+  await assert.rejects(
+    () => service.createProduct({
+      ...baseInput,
+      images: [{ imageUrl: "http://images.example.com/product.jpg" }],
+    }),
+    { code: "INVALID_COMMAND" },
+  );
+  await assert.rejects(
+    () => service.createProduct({
+      ...baseInput,
+      images: [{
+        imageUrl: "https://images.example.com/product.jpg",
+        imageFileId: "managed-file",
+      }],
+    }),
+    { code: "INVALID_COMMAND" },
+  );
+  await assert.rejects(
+    () => service.createProduct({
+      ...baseInput,
+      images: Array.from({ length: 9 }, (_, index) => ({
+        imageUrl: `https://images.example.com/${index}.jpg`,
+      })),
     }),
     { code: "INVALID_COMMAND" },
   );

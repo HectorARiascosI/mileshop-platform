@@ -7,9 +7,15 @@ import {
   ServiceUnavailableException,
 } from "@nestjs/common";
 import type {
+  CatalogAnnouncement,
+  CatalogAnnouncementInput,
   CatalogCategory,
   CatalogCategoryInput,
   CatalogCategorySummary,
+  CatalogProductImage,
+  CatalogProductImageInput,
+  CatalogPromotion,
+  CatalogPromotionInput,
 } from "@mileshop/contracts";
 
 export const CATALOG_FETCH = "CATALOG_FETCH";
@@ -23,6 +29,15 @@ export type GatewayProduct = {
   stock: number;
   imageUrl?: string | null;
   imageFileId?: string | null;
+  images?: CatalogProductImage[];
+  priceBeforeDiscountCop?: number;
+  promotion?: {
+    id: string;
+    title: string;
+    discountPercent: number;
+    startsAt: string;
+    endsAt: string;
+  } | null;
   categoryId?: string | null;
   category?: CatalogCategorySummary | null;
   isActive?: boolean;
@@ -36,6 +51,7 @@ export type CatalogProductInput = {
   priceCop: number;
   imageUrl: string | null;
   imageFileId?: string | null;
+  images?: CatalogProductImageInput[];
   categoryId?: string | null;
   isActive: boolean;
 };
@@ -59,6 +75,7 @@ export type ManualSaleResult = {
 };
 
 type CatalogResponse = { data: GatewayProduct[] };
+type AnnouncementResponse = { data: CatalogAnnouncement[] };
 type FetchLike = (input: string, init?: RequestInit) => Promise<Response>;
 
 @Injectable()
@@ -82,6 +99,20 @@ export class CatalogClient {
       }
 
       const payload = (await response.json()) as CatalogResponse;
+      return payload.data;
+    } catch {
+      throw new ServiceUnavailableException("Catalog service is unavailable");
+    }
+  }
+
+  public async listAnnouncements(): Promise<CatalogAnnouncement[]> {
+    try {
+      const response = await this.fetcher(`${this.baseUrl}/announcements`, {
+        signal: AbortSignal.timeout(3_000),
+        headers: { accept: "application/json" },
+      });
+      if (!response.ok) throw new Error(`catalog-service returned ${response.status}`);
+      const payload = (await response.json()) as AnnouncementResponse;
       return payload.data;
     } catch {
       throw new ServiceUnavailableException("Catalog service is unavailable");
@@ -154,6 +185,64 @@ export class CatalogClient {
     return this.adminRequest<{ deleted: true }>(
       "DELETE",
       `/internal/admin/categories/${encodeURIComponent(categoryId)}`,
+    );
+  }
+
+  public async listPromotions(): Promise<CatalogPromotion[]> {
+    return this.adminRequest<CatalogPromotion[]>("GET", "/internal/admin/promotions");
+  }
+
+  public async createPromotion(input: CatalogPromotionInput): Promise<CatalogPromotion> {
+    return this.adminRequest<CatalogPromotion>("POST", "/internal/admin/promotions", input);
+  }
+
+  public async updatePromotion(
+    promotionId: string,
+    input: CatalogPromotionInput,
+  ): Promise<CatalogPromotion> {
+    return this.adminRequest<CatalogPromotion>(
+      "PATCH",
+      `/internal/admin/promotions/${encodeURIComponent(promotionId)}`,
+      input,
+    );
+  }
+
+  public async deletePromotion(promotionId: string): Promise<{ deleted: true }> {
+    return this.adminRequest<{ deleted: true }>(
+      "DELETE",
+      `/internal/admin/promotions/${encodeURIComponent(promotionId)}`,
+    );
+  }
+
+  public async listAdminAnnouncements(): Promise<CatalogAnnouncement[]> {
+    return this.adminRequest<CatalogAnnouncement[]>("GET", "/internal/admin/announcements");
+  }
+
+  public async createAnnouncement(
+    input: CatalogAnnouncementInput,
+  ): Promise<CatalogAnnouncement> {
+    return this.adminRequest<CatalogAnnouncement>(
+      "POST",
+      "/internal/admin/announcements",
+      input,
+    );
+  }
+
+  public async updateAnnouncement(
+    announcementId: string,
+    input: CatalogAnnouncementInput,
+  ): Promise<CatalogAnnouncement> {
+    return this.adminRequest<CatalogAnnouncement>(
+      "PATCH",
+      `/internal/admin/announcements/${encodeURIComponent(announcementId)}`,
+      input,
+    );
+  }
+
+  public async deleteAnnouncement(announcementId: string): Promise<{ deleted: true }> {
+    return this.adminRequest<{ deleted: true }>(
+      "DELETE",
+      `/internal/admin/announcements/${encodeURIComponent(announcementId)}`,
     );
   }
 

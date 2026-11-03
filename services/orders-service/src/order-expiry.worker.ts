@@ -60,12 +60,7 @@ export class OrderExpiryWorker implements OnModuleInit, OnModuleDestroy {
       if (expiredCount > 0) {
         this.logger.log(`Expired ${expiredCount} unpaid reservation(s)`);
         if (this.inventoryCommandWorker) {
-          void this.inventoryCommandWorker.processPendingCommands().catch((error: unknown) => {
-            this.logger.error(
-              "Immediate reservation-release attempt failed; durable inventory retries remain scheduled",
-              error instanceof Error ? error.stack : undefined,
-            );
-          });
+          await this.inventoryCommandWorker.processPendingCommands();
         } else {
           this.logger.error(
             "No inventory command worker is configured; durable reservation-release commands await polling recovery",

@@ -21,6 +21,9 @@ type AdminOrder = {
   totalCop: number;
   status: string;
   createdAt: string;
+  reservationExpiresAt?: string | null;
+  paymentReportedAt?: string | null;
+  paymentReviewOverdue?: boolean;
   lines: OrderLine[];
 };
 
@@ -53,6 +56,14 @@ function isOrder(value: unknown): value is AdminOrder {
     typeof value.status === "string" &&
     typeof value.createdAt === "string" &&
     Number.isFinite(Date.parse(value.createdAt)) &&
+    (value.reservationExpiresAt === undefined ||
+      value.reservationExpiresAt === null ||
+      (typeof value.reservationExpiresAt === "string" &&
+        Number.isFinite(Date.parse(value.reservationExpiresAt)))) &&
+    (value.paymentReportedAt === undefined ||
+      value.paymentReportedAt === null ||
+      (typeof value.paymentReportedAt === "string" &&
+        Number.isFinite(Date.parse(value.paymentReportedAt)))) &&
     Array.isArray(value.lines) &&
     value.lines.every(
       (line) =>
@@ -167,8 +178,17 @@ export default function AdminOrdersPage() {
       ) {
         throw new Error("El servicio devolvió datos de administración inválidos.");
       }
+      const now = Date.now();
       setAuthorized(true);
-      setOrders(validOrders);
+      setOrders(
+        validOrders.map((order) => ({
+          ...order,
+          paymentReviewOverdue:
+            order.paymentReportedAt !== undefined &&
+            order.paymentReportedAt !== null &&
+            now - Date.parse(order.paymentReportedAt) > 24 * 60 * 60 * 1000,
+        })),
+      );
       setProducts(validProducts);
       setSelectedProductId((current) =>
         validProducts.some((product) => product.id === current)
@@ -278,6 +298,43 @@ export default function AdminOrdersPage() {
   const cancelOrder = (orderId: string) => {
     const reason = window.prompt("Motivo de cancelación (por ejemplo, pago no recibido):")?.trim();
     if (reason) void decideOrder(orderId, "cancel", reason);
+  };
+
+  const markPaymentReported = async (orderId: string) => {
+    if (
+      !window.confirm(
+        "Registra solo que el cliente informó el pago por WhatsApp. Esto no confirma que la transferencia ya fue verificada; la reserva quedará protegida hasta confirmar o cancelar el pedido.",
+      )
+    ) {
+      return;
+    }
+
+    setWorkingOrderId(orderId);
+    setError(null);
+    setNotice(null);
+    try {
+      const response = await fetch(
+        `/api/admin/orders/${encodeURIComponent(orderId)}/payment-reported`,
+        { method: "POST" },
+      );
+      if (!response.ok) {
+        throw new Error(await responseError(response, "No se pudo registrar el pago informado."));
+      }
+      const payload: unknown = await response.json();
+      if (
+        !isRecord(payload) ||
+        !isRecord(payload.data) ||
+        !["marked", "already-reported"].includes(String(payload.data.result))
+      ) {
+        throw new Error("El pedido ya no admite registrar un pago informado.");
+      }
+      setNotice("Pago informado registrado. La reserva se mantiene mientras verificas la transferencia.");
+      await refresh();
+    } catch (requestError) {
+      setError(requestError instanceof Error ? requestError.message : "Error inesperado.");
+    } finally {
+      setWorkingOrderId(null);
+    }
   };
 
   const submitManualSale = async () => {
@@ -430,6 +487,20 @@ export default function AdminOrdersPage() {
                           Cliente {order.customerId} · {formatDate(order.createdAt)}
                         </p>
                         <p className="mt-1 text-sm">Estado: {formatOrderStatus(order.status)}</p>
+                        {order.paymentReportedAt ? (
+                          <p className="mt-1 text-sm font-medium text-amber-800">
+                            Pago informado {formatDate(order.paymentReportedAt)} · reserva protegida.
+                            {order.paymentReviewOverdue
+                              ? " Revisión pendiente hace más de 24 horas."
+                              : " Verifica la transferencia y confirma o cancela el pedido."}
+                          </p>
+                        ) : (
+                          <p className="mt-1 text-sm text-slate-600">
+                            {order.reservationExpiresAt
+                              ? `La reserva vence ${formatDate(order.reservationExpiresAt)} salvo que registres un pago informado.`
+                              : "Pedido heredado sin vencimiento automático; verifica su estado antes de liberar la reserva."}
+                          </p>
+                        )}
                       </div>
                       <p className="text-lg font-bold">{formatPrice(order.totalCop)}</p>
                     </div>
@@ -441,6 +512,16 @@ export default function AdminOrdersPage() {
                       ))}
                     </ul>
                     <div className="flex flex-wrap gap-3">
+                      {!order.paymentReportedAt && order.status === "AWAITING_PAYMENT_PROOF" && (
+                        <button
+                          className="rounded border border-amber-400 px-4 py-2 font-semibold text-amber-900 disabled:opacity-50"
+                          disabled={workingOrderId === order.orderId}
+                          onClick={() => void markPaymentReported(order.orderId)}
+                          type="button"
+                        >
+                          Marcar pago informado
+                        </button>
+                      )}
                       <button
                         className="rounded bg-emerald-700 px-4 py-2 font-semibold text-white disabled:opacity-50"
                         disabled={workingOrderId === order.orderId || order.status === "PAYMENT_APPROVED_FINALIZING"}

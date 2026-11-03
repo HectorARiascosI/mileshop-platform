@@ -51,7 +51,7 @@ El frontend, `api-gateway`, `notification-worker`, `catalog-service` y `orders-s
 
 La primera version estable de la plataforma no se etiqueta ni se considera cerrada hasta cumplir el plan contenido en [docs/PLAN-V1-2026.md](docs/PLAN-V1-2026.md), que incluye alcance, milestones, calidad, preproduccion, pruebas unitarias e integracion, versionado semantico y evidencia de release.
 
-Para el despliegue serverless acordado, la guía vigente es [docs/DEPLOYMENT-VERCEL-NEON.md](docs/DEPLOYMENT-VERCEL-NEON.md). La interfaz administrativa todavía no incluye creación/edición de productos ni recepción de nuevo inventario; el catálogo real debe cargarse antes de abrir la tienda. El Compose de producción sigue disponible como alternativa operativa, pero no es la arquitectura Vercel elegida.
+Para el despliegue serverless acordado, la guía vigente es [docs/DEPLOYMENT-VERCEL-NEON.md](docs/DEPLOYMENT-VERCEL-NEON.md). El catálogo real debe cargarse desde la interfaz administrativa antes de abrir la tienda. El Compose de producción sigue disponible como alternativa operativa, pero no es la arquitectura Vercel elegida.
 
 ## Version 1.0.0
 

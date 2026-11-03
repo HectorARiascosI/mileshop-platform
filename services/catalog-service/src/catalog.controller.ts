@@ -5,6 +5,7 @@ import {
   Controller,
   Delete,
   Get,
+  Header,
   Headers,
   HttpCode,
   Inject,
@@ -17,6 +18,8 @@ import {
   UseGuards,
 } from "@nestjs/common";
 
+import { CATALOG_PRODUCT_IMAGE_LIMIT } from "@mileshop/contracts";
+import type { CatalogProductImageInput } from "@mileshop/contracts";
 import {
   CatalogService,
   CatalogConflictError,
@@ -29,9 +32,11 @@ import {
   StockReceiptIdempotencyConflictError,
 } from "./catalog.service.js";
 import type {
+  AnnouncementInput,
   CategoryInput,
   InventoryReservation,
   ProductInput,
+  PromotionInput,
   ReservationRequestLine,
 } from "./catalog.service.js";
 import { InventoryCommandGuard } from "./inventory-command.guard.js";
@@ -92,6 +97,34 @@ function parseProductInput(input: unknown): ProductInput {
     throw new BadRequestException("Invalid product request");
   }
   const imageUrl = parseNullableString(input.imageUrl);
+  let images: CatalogProductImageInput[] | undefined;
+  if ("images" in input) {
+    if (!Array.isArray(input.images) || input.images.length > CATALOG_PRODUCT_IMAGE_LIMIT) {
+      throw new BadRequestException("Invalid product image gallery");
+    }
+    images = input.images.map((image: unknown) => {
+      if (
+        typeof image !== "object" ||
+        image === null ||
+        !("imageUrl" in image) ||
+        typeof image.imageUrl !== "string" ||
+        ("imageFileId" in image &&
+          image.imageFileId !== null &&
+          typeof image.imageFileId !== "string")
+      ) {
+        throw new BadRequestException("Invalid product image");
+      }
+      return {
+        imageUrl: image.imageUrl,
+        ...("imageFileId" in image
+          ? {
+              imageFileId:
+                typeof image.imageFileId === "string" ? image.imageFileId : null,
+            }
+          : {}),
+      };
+    });
+  }
   if (
     !("sku" in input) ||
     typeof input.sku !== "string" ||
@@ -118,6 +151,7 @@ function parseProductInput(input: unknown): ProductInput {
     ...("categoryId" in input
       ? { categoryId: parseNullableString(input.categoryId) }
       : {}),
+    ...(images !== undefined ? { images } : {}),
     isActive: input.isActive,
   };
 }
@@ -136,6 +170,80 @@ function parseCategoryInput(input: unknown): CategoryInput {
   const theme = CATEGORY_THEMES.find((candidate) => candidate === input.theme);
   if (!theme) throw new BadRequestException("Invalid category request");
   return { name: input.name, theme };
+}
+
+function parsePromotionInput(input: unknown): PromotionInput {
+  if (
+    typeof input !== "object" ||
+    input === null ||
+    !("title" in input) ||
+    typeof input.title !== "string" ||
+    !("description" in input) ||
+    typeof input.description !== "string" ||
+    !("startsAt" in input) ||
+    typeof input.startsAt !== "string" ||
+    !("endsAt" in input) ||
+    typeof input.endsAt !== "string" ||
+    !("isActive" in input) ||
+    typeof input.isActive !== "boolean" ||
+    !("products" in input) ||
+    !Array.isArray(input.products)
+  ) {
+    throw new BadRequestException("Invalid promotion request");
+  }
+  const products = input.products.map((product) => {
+    if (
+      typeof product !== "object" ||
+      product === null ||
+      !("productId" in product) ||
+      typeof product.productId !== "string" ||
+      !("discountPercent" in product) ||
+      typeof product.discountPercent !== "number"
+    ) {
+      throw new BadRequestException("Invalid promotion product");
+    }
+    return { productId: product.productId, discountPercent: product.discountPercent };
+  });
+  return {
+    title: input.title,
+    description: input.description,
+    startsAt: input.startsAt,
+    endsAt: input.endsAt,
+    isActive: input.isActive,
+    products,
+  };
+}
+
+function parseAnnouncementInput(input: unknown): AnnouncementInput {
+  if (
+    typeof input !== "object" ||
+    input === null ||
+    !("title" in input) ||
+    typeof input.title !== "string" ||
+    !("message" in input) ||
+    typeof input.message !== "string" ||
+    !("startsAt" in input) ||
+    typeof input.startsAt !== "string" ||
+    !("endsAt" in input) ||
+    typeof input.endsAt !== "string" ||
+    !("isActive" in input) ||
+    typeof input.isActive !== "boolean" ||
+    !("linkUrl" in input) ||
+    (input.linkUrl !== null && typeof input.linkUrl !== "string") ||
+    !("linkLabel" in input) ||
+    (input.linkLabel !== null && typeof input.linkLabel !== "string")
+  ) {
+    throw new BadRequestException("Invalid announcement request");
+  }
+  return {
+    title: input.title,
+    message: input.message,
+    linkUrl: input.linkUrl,
+    linkLabel: input.linkLabel,
+    startsAt: input.startsAt,
+    endsAt: input.endsAt,
+    isActive: input.isActive,
+  };
 }
 
 function parseNullableString(input: unknown): string | null {
@@ -205,6 +313,12 @@ export class CatalogController {
     return { data: await this.catalog.listProducts() };
   }
 
+  @Get("announcements")
+  @Header("Cache-Control", "no-store")
+  public async announcements(): Promise<{ data: Awaited<ReturnType<CatalogService["listAnnouncements"]>> }> {
+    return { data: await this.catalog.listAnnouncements() };
+  }
+
   @Get("internal/admin/products")
   @UseGuards(InventoryCommandGuard)
   public async adminProducts(): Promise<{ data: Awaited<ReturnType<CatalogService["listAdminProducts"]>> }> {
@@ -250,6 +364,103 @@ export class CatalogController {
   ): Promise<{ data: { deleted: true } }> {
     try {
       await this.catalog.deleteCategory(categoryId);
+      return { data: { deleted: true } };
+    } catch (error) {
+      return rethrowCatalogError(error);
+    }
+  }
+
+  @Get("internal/admin/promotions")
+  @UseGuards(InventoryCommandGuard)
+  public async adminPromotions(): Promise<{ data: Awaited<ReturnType<CatalogService["listPromotions"]>> }> {
+    return { data: await this.catalog.listPromotions(true) };
+  }
+
+  @Post("internal/admin/promotions")
+  @HttpCode(201)
+  @UseGuards(InventoryCommandGuard)
+  public async createPromotion(
+    @Body() input: unknown,
+  ): Promise<{ data: Awaited<ReturnType<CatalogService["createPromotion"]>> }> {
+    try {
+      return { data: await this.catalog.createPromotion(parsePromotionInput(input)) };
+    } catch (error) {
+      return rethrowCatalogError(error);
+    }
+  }
+
+  @Patch("internal/admin/promotions/:promotionId")
+  @UseGuards(InventoryCommandGuard)
+  public async updatePromotion(
+    @Param("promotionId") promotionId: string,
+    @Body() input: unknown,
+  ): Promise<{ data: Awaited<ReturnType<CatalogService["updatePromotion"]>> }> {
+    try {
+      return {
+        data: await this.catalog.updatePromotion(promotionId, parsePromotionInput(input)),
+      };
+    } catch (error) {
+      return rethrowCatalogError(error);
+    }
+  }
+
+  @Delete("internal/admin/promotions/:promotionId")
+  @UseGuards(InventoryCommandGuard)
+  public async deletePromotion(
+    @Param("promotionId") promotionId: string,
+  ): Promise<{ data: { deleted: true } }> {
+    try {
+      await this.catalog.deletePromotion(promotionId);
+      return { data: { deleted: true } };
+    } catch (error) {
+      return rethrowCatalogError(error);
+    }
+  }
+
+  @Get("internal/admin/announcements")
+  @UseGuards(InventoryCommandGuard)
+  public async adminAnnouncements(): Promise<{ data: Awaited<ReturnType<CatalogService["listAnnouncements"]>> }> {
+    return { data: await this.catalog.listAnnouncements(true) };
+  }
+
+  @Post("internal/admin/announcements")
+  @HttpCode(201)
+  @UseGuards(InventoryCommandGuard)
+  public async createAnnouncement(
+    @Body() input: unknown,
+  ): Promise<{ data: Awaited<ReturnType<CatalogService["createAnnouncement"]>> }> {
+    try {
+      return { data: await this.catalog.createAnnouncement(parseAnnouncementInput(input)) };
+    } catch (error) {
+      return rethrowCatalogError(error);
+    }
+  }
+
+  @Patch("internal/admin/announcements/:announcementId")
+  @UseGuards(InventoryCommandGuard)
+  public async updateAnnouncement(
+    @Param("announcementId") announcementId: string,
+    @Body() input: unknown,
+  ): Promise<{ data: Awaited<ReturnType<CatalogService["updateAnnouncement"]>> }> {
+    try {
+      return {
+        data: await this.catalog.updateAnnouncement(
+          announcementId,
+          parseAnnouncementInput(input),
+        ),
+      };
+    } catch (error) {
+      return rethrowCatalogError(error);
+    }
+  }
+
+  @Delete("internal/admin/announcements/:announcementId")
+  @UseGuards(InventoryCommandGuard)
+  public async deleteAnnouncement(
+    @Param("announcementId") announcementId: string,
+  ): Promise<{ data: { deleted: true } }> {
+    try {
+      await this.catalog.deleteAnnouncement(announcementId);
       return { data: { deleted: true } };
     } catch (error) {
       return rethrowCatalogError(error);

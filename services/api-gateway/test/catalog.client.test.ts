@@ -78,8 +78,12 @@ test("catalog client authenticates and forwards product and stock administration
       name: "Product",
       description: "",
       priceCop: 500,
-      imageUrl: null,
+      imageUrl: "https://images.example.com/product-front.jpg",
       imageFileId: null,
+      images: [
+        { imageUrl: "https://images.example.com/product-front.jpg", imageFileId: null },
+        { imageUrl: "https://images.example.com/product-side.jpg", imageFileId: null },
+      ],
       isActive: true,
     });
     await client.updateProduct("product-1", {
@@ -109,6 +113,7 @@ test("catalog client authenticates and forwards product and stock administration
       JSON.parse(String(requests[5]?.init?.body)).imageFileId,
       null,
     );
+    assert.equal(JSON.parse(String(requests[5]?.init?.body)).images.length, 2);
     assert.deepEqual(requests.map(({ init }) => init?.method), [
       "GET", "GET", "POST", "PATCH", "DELETE", "POST", "PATCH", "POST",
     ]);
@@ -124,6 +129,74 @@ test("catalog client authenticates and forwards product and stock administration
       reason: "Initial delivery",
       lines: [{ productId: "product-1", quantity: 3 }],
     });
+  } finally {
+    if (previousToken === undefined) delete process.env.CATALOG_INVENTORY_COMMAND_TOKEN;
+    else process.env.CATALOG_INVENTORY_COMMAND_TOKEN = previousToken;
+  }
+});
+
+test("catalog client forwards promotion and announcement administration through internal auth", async () => {
+  const previousToken = process.env.CATALOG_INVENTORY_COMMAND_TOKEN;
+  process.env.CATALOG_INVENTORY_COMMAND_TOKEN = "0123456789abcdef0123456789abcdef";
+  const requests: Array<{ url: string; init?: RequestInit }> = [];
+  try {
+    const client = new CatalogClient(async (input, init) => {
+      requests.push({ url: input, init });
+      return new Response(JSON.stringify({ data: [] }), {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      });
+    });
+    const promotion = {
+      title: "Campaña",
+      description: "",
+      startsAt: "2026-11-03T00:00:00.000Z",
+      endsAt: "2026-11-10T00:00:00.000Z",
+      isActive: true,
+      products: [{ productId: "product-1", discountPercent: 20 }],
+    };
+    const announcement = {
+      title: "Aviso",
+      message: "Horario especial",
+      linkUrl: null,
+      linkLabel: null,
+      startsAt: "2026-11-03T00:00:00.000Z",
+      endsAt: "2026-11-10T00:00:00.000Z",
+      isActive: true,
+    };
+
+    await client.listAnnouncements();
+    await client.listPromotions();
+    await client.createPromotion(promotion);
+    await client.updatePromotion("promotion-1", promotion);
+    await client.deletePromotion("promotion-1");
+    await client.listAdminAnnouncements();
+    await client.createAnnouncement(announcement);
+    await client.updateAnnouncement("announcement-1", announcement);
+    await client.deleteAnnouncement("announcement-1");
+
+    assert.deepEqual(requests.map(({ url }) => new URL(url).pathname), [
+      "/announcements",
+      "/internal/admin/promotions",
+      "/internal/admin/promotions",
+      "/internal/admin/promotions/promotion-1",
+      "/internal/admin/promotions/promotion-1",
+      "/internal/admin/announcements",
+      "/internal/admin/announcements",
+      "/internal/admin/announcements/announcement-1",
+      "/internal/admin/announcements/announcement-1",
+    ]);
+    assert.deepEqual(requests.map(({ init }) => init?.method), [
+      undefined, "GET", "POST", "PATCH", "DELETE", "GET", "POST", "PATCH", "DELETE",
+    ]);
+    for (const { init } of requests.slice(1)) {
+      assert.match(
+        new Headers(init?.headers).get("authorization") ?? "",
+        /^Bearer .{32,}$/,
+      );
+    }
+    assert.deepEqual(JSON.parse(String(requests[2]?.init?.body)), promotion);
+    assert.deepEqual(JSON.parse(String(requests[6]?.init?.body)), announcement);
   } finally {
     if (previousToken === undefined) delete process.env.CATALOG_INVENTORY_COMMAND_TOKEN;
     else process.env.CATALOG_INVENTORY_COMMAND_TOKEN = previousToken;

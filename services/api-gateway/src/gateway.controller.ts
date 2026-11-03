@@ -16,6 +16,12 @@ import {
   StreamableFile,
   UseGuards,
 } from "@nestjs/common";
+import { CATALOG_PRODUCT_IMAGE_LIMIT } from "@mileshop/contracts";
+import type {
+  CatalogAnnouncementInput,
+  CatalogProductImageInput,
+  CatalogPromotionInput,
+} from "@mileshop/contracts";
 import { CATALOG_CATEGORY_THEMES } from "@mileshop/contracts";
 import type { CatalogCategoryInput } from "@mileshop/contracts";
 
@@ -58,6 +64,11 @@ export class GatewayController {
   @Get("catalog/products")
   public async products(): Promise<{ data: Awaited<ReturnType<CatalogClient["listProducts"]>> }> {
     return { data: await this.catalog.listProducts() };
+  }
+
+  @Get("catalog/announcements")
+  public async announcements(): Promise<{ data: unknown }> {
+    return { data: await this.catalog.listAnnouncements() };
   }
 
   @Post("admin/catalog/manual-sales")
@@ -176,6 +187,90 @@ export class GatewayController {
     return { data: await this.catalog.deleteCategory(categoryId) };
   }
 
+  @Get("admin/catalog/promotions")
+  @UseGuards(StoreAdminGuard)
+  @Header("Cache-Control", "private, no-store")
+  public async adminCatalogPromotions(): Promise<{ data: unknown }> {
+    return { data: await this.catalog.listPromotions() };
+  }
+
+  @Post("admin/catalog/promotions")
+  @UseGuards(StoreAdminGuard)
+  @HttpCode(201)
+  @Header("Cache-Control", "private, no-store")
+  public async createCatalogPromotion(@Body() body: unknown): Promise<{ data: unknown }> {
+    return { data: await this.catalog.createPromotion(this.parseCatalogPromotion(body)) };
+  }
+
+  @Patch("admin/catalog/promotions/:promotionId")
+  @UseGuards(StoreAdminGuard)
+  @Header("Cache-Control", "private, no-store")
+  public async updateCatalogPromotion(
+    @Param("promotionId") promotionId: string,
+    @Body() body: unknown,
+  ): Promise<{ data: unknown }> {
+    if (!promotionId.trim()) throw new BadRequestException("Promotion id is required");
+    return {
+      data: await this.catalog.updatePromotion(
+        promotionId,
+        this.parseCatalogPromotion(body),
+      ),
+    };
+  }
+
+  @Delete("admin/catalog/promotions/:promotionId")
+  @UseGuards(StoreAdminGuard)
+  @Header("Cache-Control", "private, no-store")
+  public async deleteCatalogPromotion(
+    @Param("promotionId") promotionId: string,
+  ): Promise<{ data: { deleted: true } }> {
+    if (!promotionId.trim()) throw new BadRequestException("Promotion id is required");
+    return { data: await this.catalog.deletePromotion(promotionId) };
+  }
+
+  @Get("admin/catalog/announcements")
+  @UseGuards(StoreAdminGuard)
+  @Header("Cache-Control", "private, no-store")
+  public async adminCatalogAnnouncements(): Promise<{ data: unknown }> {
+    return { data: await this.catalog.listAdminAnnouncements() };
+  }
+
+  @Post("admin/catalog/announcements")
+  @UseGuards(StoreAdminGuard)
+  @HttpCode(201)
+  @Header("Cache-Control", "private, no-store")
+  public async createCatalogAnnouncement(@Body() body: unknown): Promise<{ data: unknown }> {
+    return {
+      data: await this.catalog.createAnnouncement(this.parseCatalogAnnouncement(body)),
+    };
+  }
+
+  @Patch("admin/catalog/announcements/:announcementId")
+  @UseGuards(StoreAdminGuard)
+  @Header("Cache-Control", "private, no-store")
+  public async updateCatalogAnnouncement(
+    @Param("announcementId") announcementId: string,
+    @Body() body: unknown,
+  ): Promise<{ data: unknown }> {
+    if (!announcementId.trim()) throw new BadRequestException("Announcement id is required");
+    return {
+      data: await this.catalog.updateAnnouncement(
+        announcementId,
+        this.parseCatalogAnnouncement(body),
+      ),
+    };
+  }
+
+  @Delete("admin/catalog/announcements/:announcementId")
+  @UseGuards(StoreAdminGuard)
+  @Header("Cache-Control", "private, no-store")
+  public async deleteCatalogAnnouncement(
+    @Param("announcementId") announcementId: string,
+  ): Promise<{ data: { deleted: true } }> {
+    if (!announcementId.trim()) throw new BadRequestException("Announcement id is required");
+    return { data: await this.catalog.deleteAnnouncement(announcementId) };
+  }
+
   @Post("admin/catalog/stock-receipts")
   @UseGuards(StoreAdminGuard)
   @HttpCode(201)
@@ -245,6 +340,34 @@ export class GatewayController {
     ) {
       throw new BadRequestException("Invalid product request");
     }
+    let images: CatalogProductImageInput[] | undefined;
+    if ("images" in body) {
+      if (!Array.isArray(body.images) || body.images.length > CATALOG_PRODUCT_IMAGE_LIMIT) {
+        throw new BadRequestException("Invalid product image gallery");
+      }
+      images = body.images.map((image: unknown) => {
+        if (
+          typeof image !== "object" ||
+          image === null ||
+          !("imageUrl" in image) ||
+          typeof image.imageUrl !== "string" ||
+          ("imageFileId" in image &&
+            image.imageFileId !== null &&
+            typeof image.imageFileId !== "string")
+        ) {
+          throw new BadRequestException("Invalid product image");
+        }
+        return {
+          imageUrl: image.imageUrl,
+          ...("imageFileId" in image
+            ? {
+                imageFileId:
+                  typeof image.imageFileId === "string" ? image.imageFileId : null,
+              }
+            : {}),
+        };
+      });
+    }
     return {
       sku: body.sku,
       name: body.name,
@@ -263,6 +386,7 @@ export class GatewayController {
               typeof body.categoryId === "string" ? body.categoryId : null,
           }
         : {}),
+      ...(images !== undefined ? { images } : {}),
       isActive: body.isActive,
     };
   }
@@ -281,6 +405,79 @@ export class GatewayController {
     const theme = CATALOG_CATEGORY_THEMES.find((candidate) => candidate === body.theme);
     if (!theme) throw new BadRequestException("Invalid category request");
     return { name: body.name, theme };
+  }
+
+  private parseCatalogPromotion(body: unknown): CatalogPromotionInput {
+    if (
+      typeof body !== "object" ||
+      body === null ||
+      !("title" in body) ||
+      typeof body.title !== "string" ||
+      !("description" in body) ||
+      typeof body.description !== "string" ||
+      !("startsAt" in body) ||
+      typeof body.startsAt !== "string" ||
+      !("endsAt" in body) ||
+      typeof body.endsAt !== "string" ||
+      !("isActive" in body) ||
+      typeof body.isActive !== "boolean" ||
+      !("products" in body) ||
+      !Array.isArray(body.products)
+    ) {
+      throw new BadRequestException("Invalid promotion request");
+    }
+    return {
+      title: body.title,
+      description: body.description,
+      startsAt: body.startsAt,
+      endsAt: body.endsAt,
+      isActive: body.isActive,
+      products: body.products.map((product) => {
+        if (
+          typeof product !== "object" ||
+          product === null ||
+          !("productId" in product) ||
+          typeof product.productId !== "string" ||
+          !("discountPercent" in product) ||
+          typeof product.discountPercent !== "number"
+        ) {
+          throw new BadRequestException("Invalid promotion product");
+        }
+        return { productId: product.productId, discountPercent: product.discountPercent };
+      }),
+    };
+  }
+
+  private parseCatalogAnnouncement(body: unknown): CatalogAnnouncementInput {
+    if (
+      typeof body !== "object" ||
+      body === null ||
+      !("title" in body) ||
+      typeof body.title !== "string" ||
+      !("message" in body) ||
+      typeof body.message !== "string" ||
+      !("linkUrl" in body) ||
+      (body.linkUrl !== null && typeof body.linkUrl !== "string") ||
+      !("linkLabel" in body) ||
+      (body.linkLabel !== null && typeof body.linkLabel !== "string") ||
+      !("startsAt" in body) ||
+      typeof body.startsAt !== "string" ||
+      !("endsAt" in body) ||
+      typeof body.endsAt !== "string" ||
+      !("isActive" in body) ||
+      typeof body.isActive !== "boolean"
+    ) {
+      throw new BadRequestException("Invalid announcement request");
+    }
+    return {
+      title: body.title,
+      message: body.message,
+      linkUrl: body.linkUrl,
+      linkLabel: body.linkLabel,
+      startsAt: body.startsAt,
+      endsAt: body.endsAt,
+      isActive: body.isActive,
+    };
   }
 
   // ─── Identity ────────────────────────────────────────────────────────────
@@ -384,6 +581,18 @@ export class GatewayController {
   ): Promise<{ data: unknown }> {
     const actor = this.actor(req);
     return { data: await this.orders.confirmAdminOrder(actor.customerId, orderId) };
+  }
+
+  @Post("admin/orders/:orderId/payment-reported")
+  @UseGuards(StoreAdminGuard)
+  @HttpCode(200)
+  @Header("Cache-Control", "private, no-store")
+  public async markAdminOrderPaymentReported(
+    @Param("orderId") orderId: string,
+    @Req() req: any,
+  ): Promise<{ data: unknown }> {
+    const actor = this.actor(req);
+    return { data: await this.orders.markPaymentReported(actor.customerId, orderId) };
   }
 
   @Post("admin/orders/:orderId/cancel")

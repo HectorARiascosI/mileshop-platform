@@ -8,6 +8,7 @@ import { FastifyAdapter, type NestFastifyApplication } from "@nestjs/platform-fa
 
 import type { CatalogProduct } from "../src/catalog.reader.js";
 import { OrdersController } from "../src/orders.controller.js";
+import { OrderExpiryWorker } from "../src/order-expiry.worker.js";
 import { InMemoryOrdersRepository } from "../src/orders.repository.js";
 import { InvalidPaymentDecisionError, OrdersService } from "../src/orders.service.js";
 import {
@@ -1071,6 +1072,171 @@ test("legal-hold routes require a trusted admin and retain an audit reason", asy
       { orderId: "order-1", actor: "admin-1", reason: "Active dispute" },
       { orderId: "order-1", actor: "admin-1", reason: "Dispute resolved" },
     ]);
+  } finally {
+    await app.close();
+  }
+});
+
+test("POST /internal/maintenance requires its secret and expires reservations", async () => {
+  const previousCronSecret = process.env.CRON_SECRET;
+  const cronSecret = "maintenance-test-secret-with-at-least-32-characters";
+  process.env.CRON_SECRET = cronSecret;
+  const calls: string[] = [];
+  class MaintenanceHttpTestModule {}
+  Module({
+    controllers: [OrdersController],
+    providers: [
+      {
+        provide: "ORDERS_SERVICE",
+        useValue: {
+          recoverPendingReservationIntents: async () => calls.push("reservation-intents"),
+          recoverPendingEvents: async () => calls.push("events"),
+        },
+      },
+      {
+        provide: "INVENTORY_COMMAND_WORKER",
+        useValue: {
+          processPendingCommands: async () => calls.push("inventory-commands"),
+        },
+      },
+      {
+        provide: OrderExpiryWorker,
+        useValue: {
+          processDueOrders: async () => calls.push("expire-reservations"),
+        },
+      },
+      { provide: ORDERS_INTERNAL_TOKEN, useValue: gatewayToken },
+    ],
+  })(MaintenanceHttpTestModule);
+
+  const app = await NestFactory.create<NestFastifyApplication>(
+    MaintenanceHttpTestModule,
+    new FastifyAdapter(),
+    { logger: false },
+  );
+  await app.listen(0, "127.0.0.1");
+  try {
+    const url = `${await app.getUrl()}/internal/maintenance`;
+    const unauthorized = await fetch(url, { method: "POST" });
+    assert.equal(unauthorized.status, 401);
+    assert.deepEqual(calls, []);
+
+    const response = await fetch(url, {
+      method: "POST",
+      headers: { authorization: `Bearer ${cronSecret}` },
+    });
+    assert.equal(response.status, 200);
+    assert.equal(response.headers.get("cache-control"), "no-store");
+    assert.deepEqual(await response.json(), { status: "ok" });
+    assert.deepEqual(calls, [
+      "expire-reservations",
+      "reservation-intents",
+      "events",
+      "inventory-commands",
+    ]);
+  } finally {
+    await app.close();
+    if (previousCronSecret === undefined) {
+      delete process.env.CRON_SECRET;
+    } else {
+      process.env.CRON_SECRET = previousCronSecret;
+    }
+  }
+});
+
+test("GET /readyz returns unavailable when the Orders database check fails", async () => {
+  let databaseAvailable = true;
+  class ReadinessHttpTestModule {}
+  Module({
+    controllers: [OrdersController],
+    providers: [
+      {
+        provide: "ORDERS_SERVICE",
+        useValue: {
+          checkReadiness: async () => {
+            if (!databaseAvailable) throw new Error("database unavailable");
+          },
+        },
+      },
+      { provide: "INVENTORY_COMMAND_WORKER", useValue: inventoryCommandWorker },
+      { provide: ORDERS_INTERNAL_TOKEN, useValue: gatewayToken },
+    ],
+  })(ReadinessHttpTestModule);
+
+  const app = await NestFactory.create<NestFastifyApplication>(
+    ReadinessHttpTestModule,
+    new FastifyAdapter(),
+    { logger: false },
+  );
+  await app.listen(0, "127.0.0.1");
+  try {
+    const url = `${await app.getUrl()}/readyz`;
+    const ready = await fetch(url);
+    assert.equal(ready.status, 200);
+    assert.deepEqual(await ready.json(), { status: "ready" });
+
+    databaseAvailable = false;
+    const unavailable = await fetch(url);
+    assert.equal(unavailable.status, 503);
+  } finally {
+    await app.close();
+  }
+});
+
+test("POST /admin/orders/:orderId/payment-reported is restricted to store admins", async () => {
+  const actors: string[] = [];
+  class PaymentReportedHttpTestModule {}
+  Module({
+    controllers: [OrdersController],
+    providers: [
+      {
+        provide: "ORDERS_SERVICE",
+        useValue: {
+          markPaymentReported: async (orderId: string, adminCustomerId: string) => {
+            actors.push(adminCustomerId);
+            return { result: "marked", order: { orderId } };
+          },
+        },
+      },
+      { provide: "INVENTORY_COMMAND_WORKER", useValue: inventoryCommandWorker },
+      { provide: ORDERS_INTERNAL_TOKEN, useValue: gatewayToken },
+      GatewayInternalGuard,
+    ],
+  })(PaymentReportedHttpTestModule);
+
+  const app = await NestFactory.create<NestFastifyApplication>(
+    PaymentReportedHttpTestModule,
+    new FastifyAdapter(),
+    { logger: false },
+  );
+  await app.listen(0, "127.0.0.1");
+  try {
+    const url = `${await app.getUrl()}/admin/orders/order-123/payment-reported`;
+    const customer = await fetch(url, {
+      method: "POST",
+      headers: {
+        "x-orders-internal-token": gatewayToken,
+        "x-authenticated-customer-id": "customer-1",
+        "x-authenticated-role": "CUSTOMER",
+      },
+    });
+    assert.equal(customer.status, 403);
+    assert.deepEqual(actors, []);
+
+    const admin = await fetch(url, {
+      method: "POST",
+      headers: {
+        "x-orders-internal-token": gatewayToken,
+        "x-authenticated-customer-id": "store-admin-1",
+        "x-authenticated-role": "STORE_ADMIN",
+      },
+    });
+    assert.equal(admin.status, 200);
+    assert.equal(admin.headers.get("cache-control"), "private, no-store");
+    assert.deepEqual(await admin.json(), {
+      data: { result: "marked", order: { orderId: "order-123" } },
+    });
+    assert.deepEqual(actors, ["store-admin-1"]);
   } finally {
     await app.close();
   }

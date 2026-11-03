@@ -14,12 +14,14 @@ import {
   UnauthorizedException,
   ForbiddenException,
   Header,
+  HttpCode,
   Optional,
   Res,
 } from "@nestjs/common";
 import { timingSafeEqual } from "node:crypto";
 
 import { CatalogUnavailableError } from "./catalog.reader.js";
+import { OrderExpiryWorker } from "./order-expiry.worker.js";
 import { OrdersService } from "./orders.service.js";
 import type { CreateOrderInput } from "./orders.types.js";
 import type { InventoryCommandWorker } from "./inventory-command.worker.js";
@@ -34,6 +36,8 @@ export class OrdersController {
     private readonly inventoryCommands: Pick<InventoryCommandWorker, "processPendingCommands">,
     @Optional() @Inject("PAYMENT_EVIDENCE_SERVICE") private readonly evidence: any | undefined,
     @Inject(ORDERS_INTERNAL_TOKEN) private readonly configuredToken: string,
+    @Optional() @Inject(OrderExpiryWorker)
+    private readonly orderExpiryWorker?: Pick<OrderExpiryWorker, "processDueOrders">,
   ) {}
 
   private trusted(
@@ -63,22 +67,38 @@ export class OrdersController {
   }
 
   @Get("readyz")
-  public readiness(): { status: "ready" } {
-    return { status: "ready" };
+  public async readiness(): Promise<{ status: "ready" }> {
+    try {
+      await this.orders.checkReadiness();
+      return { status: "ready" };
+    } catch (error) {
+      throw new ServiceUnavailableException("Orders database is not ready", { cause: error });
+    }
   }
 
-  @Get("internal/maintenance")
+  @Post("internal/maintenance")
+  @HttpCode(200)
+  @Header("Cache-Control", "no-store")
   public async maintain(
     @Headers("authorization") authorization: string | undefined,
   ): Promise<{ status: "ok" }> {
-    const cronSecret = process.env.CRON_SECRET;
-    if (!cronSecret) {
+    const cronSecret = process.env.CRON_SECRET?.trim();
+    if (!cronSecret || Buffer.byteLength(cronSecret, "utf8") < 32) {
       throw new ServiceUnavailableException("Scheduled maintenance is not configured");
     }
-    if (authorization !== `Bearer ${cronSecret}`) {
+    const expectedAuthorization = Buffer.from(`Bearer ${cronSecret}`, "utf8");
+    const providedAuthorization = Buffer.from(authorization ?? "", "utf8");
+    if (
+      expectedAuthorization.byteLength !== providedAuthorization.byteLength ||
+      !timingSafeEqual(providedAuthorization, expectedAuthorization)
+    ) {
       throw new UnauthorizedException("Invalid maintenance credentials");
     }
 
+    if (!this.orderExpiryWorker) {
+      throw new ServiceUnavailableException("Order expiry worker is not configured");
+    }
+    await this.orderExpiryWorker.processDueOrders();
     await this.orders.recoverPendingReservationIntents();
     await this.orders.recoverPendingEvents();
     await this.inventoryCommands.processPendingCommands();
@@ -311,6 +331,20 @@ export class OrdersController {
     this.trusted(token, customerId, role);
     if (role !== "STORE_ADMIN") throw new ForbiddenException();
     return { data: await this.orders.listPendingAdminOrders() };
+  }
+
+  @Post("admin/orders/:orderId/payment-reported")
+  @HttpCode(200)
+  @Header("Cache-Control", "private, no-store")
+  public async markPaymentReported(
+    @Param("orderId") orderId: string,
+    @Headers("x-orders-internal-token") token: string | undefined,
+    @Headers("x-authenticated-customer-id") customerId: string | undefined,
+    @Headers("x-authenticated-role") role: string | undefined,
+  ): Promise<unknown> {
+    this.trusted(token, customerId, role);
+    if (role !== "STORE_ADMIN") throw new ForbiddenException();
+    return { data: await this.orders.markPaymentReported(orderId, customerId) };
   }
 
   @Post("admin/orders/:orderId/confirm")

@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import type { CatalogProduct } from "../src/catalog.reader.js";
-import { OrderDomain } from "../src/orders.domain.js";
+import { ORDER_RESERVATION_TTL_MS, OrderDomain } from "../src/orders.domain.js";
 import { InMemoryOrdersRepository } from "../src/orders.repository.js";
 import {
   InMemoryOrderEventOutbox,
@@ -143,6 +143,42 @@ test("creates a valid order and stores it by orderId", async () => {
   const persisted = await service.getOrderById(order.orderId);
   assert.equal(persisted?.customerId, "customer-1");
   assert.equal(persisted?.orderId, order.orderId);
+});
+
+test("checks repository connectivity for readiness", async () => {
+  let checks = 0;
+  const repository = new InMemoryOrdersRepository();
+  repository.checkConnectivity = async () => {
+    checks += 1;
+  };
+  const service = new OrdersService(
+    repository,
+    { listActiveProducts: async () => [catalogProduct] },
+    { publishCreated: async () => {} },
+  );
+
+  await service.checkReadiness();
+
+  assert.equal(checks, 1);
+});
+
+test("holds an order after an admin records a payment report", async () => {
+  const service = createService();
+  const created = await service.createOrder({
+    customerId: "customer-payment-reported",
+    idempotencyKey: "00000000-0000-4000-8000-000000000099",
+    lines: [createLine()],
+  });
+
+  const result = await service.markPaymentReported(created.orderId, "store-admin-1");
+  const persisted = await service.getOrderById(created.orderId);
+
+  assert.equal(result.result, "marked");
+  assert.ok(persisted?.paymentReportedAt);
+  assert.equal(
+    (await service.markPaymentReported(created.orderId, "store-admin-1")).result,
+    "already-reported",
+  );
 });
 
 test("writes the created event into the outbox before publishing", async () => {
@@ -378,6 +414,53 @@ test("uses catalog-owned price when the client submits a manipulated price", asy
 
   assert.equal(order.lines[0]?.unitPriceCop, catalogProduct.priceCop);
   assert.equal(order.subtotalCop, catalogProduct.priceCop);
+});
+
+test("persists the catalog reservation price and recalculates order totals and event", async () => {
+  const outbox = new InMemoryOrderEventOutbox();
+  const service = new OrdersService(
+    new InMemoryOrdersRepository(outbox),
+    {
+      listActiveProducts: async () => [catalogProduct],
+      reserveProducts: async (orderId, lines) => ({
+        orderId,
+        status: "RESERVED",
+        reservedAt: new Date().toISOString(),
+        lines: lines.map((line) => ({
+          productId: catalogProduct.id,
+          sku: "SKU-01-UPDATED",
+          name: "Botella térmica actualizada",
+          quantity: line.quantity,
+          unitPriceCop: 52000,
+        })),
+      }),
+    },
+    { publishCreated: async () => {} },
+    outbox,
+  );
+  const order = await service.createOrder({
+    customerId: "customer-promotion",
+    idempotencyKey: "00000000-0000-4000-8000-000000000088",
+    lines: [createLine({ quantity: 2, unitPriceCop: 1 })],
+  });
+
+  assert.equal(order.lines[0]?.sku, "SKU-01-UPDATED");
+  assert.equal(order.lines[0]?.name, "Botella térmica actualizada");
+  assert.equal(order.lines[0]?.unitPriceCop, 52000);
+  assert.equal(order.subtotalCop, 104000);
+  assert.equal(order.deliveryFeeCop, 12000);
+  assert.equal(order.totalCop, 116000);
+  assert.equal(order.event?.payload.lines[0]?.unitPriceCop, 52000);
+  assert.equal(order.event?.payload.totalCop, 116000);
+  assert.ok(order.reservationExpiresAt);
+  assert.equal(
+    order.reservationExpiresAt.getTime() - Date.parse(order.createdAt),
+    ORDER_RESERVATION_TTL_MS,
+  );
+  const persisted = await service.getOrderById(order.orderId);
+  assert.equal(persisted?.lines[0]?.unitPriceCop, 52000);
+  assert.equal(persisted?.reservationExpiresAt?.getTime(), order.reservationExpiresAt.getTime());
+  assert.equal(persisted?.totalCop, 116000);
 });
 
 test("uses the catalog name as the persisted line snapshot", async () => {

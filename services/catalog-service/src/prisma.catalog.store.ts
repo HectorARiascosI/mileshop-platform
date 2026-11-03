@@ -8,6 +8,8 @@ import {
   ReservationIdempotencyConflictError,
   StockReceiptIdempotencyConflictError,
   normalizeCategoryInput,
+  normalizeAnnouncementInput,
+  normalizePromotionInput,
   normalizeProductInput,
   normalizeReservationLines,
   normalizeStockReceipt,
@@ -16,10 +18,14 @@ import type {
   CatalogStore,
   Category,
   CategoryInput,
+  Announcement,
+  AnnouncementInput,
   InventoryReservation,
   ManualSale,
   ProductInput,
   Product,
+  Promotion,
+  PromotionInput,
   ReservationRequestLine,
   StockReceipt,
 } from "./catalog.service.js";
@@ -42,10 +48,20 @@ function isPrismaForeignKeyConstraintError(error: unknown): boolean {
   );
 }
 
+function isPrismaTransactionConflictError(error: unknown): boolean {
+  return (
+    typeof error === "object" &&
+    error !== null &&
+    "code" in error &&
+    error.code === "P2034"
+  );
+}
+
 export class PrismaCatalogStore implements CatalogStore {
   public constructor(private readonly prisma: PrismaClient) {}
 
   public async listActiveProducts(): Promise<Product[]> {
+    const now = new Date();
     const products = await this.prisma.product.findMany({
       where: { isActive: true },
       orderBy: { name: "asc" },
@@ -57,16 +73,55 @@ export class PrismaCatalogStore implements CatalogStore {
         priceCop: true,
         stock: true,
         imageUrl: true,
+        images: {
+          orderBy: { position: "asc" },
+          select: { imageUrl: true, position: true },
+        },
         category: {
           select: { id: true, name: true, slug: true, theme: true },
         },
+        promotions: {
+          where: {
+            promotion: { isActive: true, startsAt: { lte: now }, endsAt: { gt: now } },
+          },
+          orderBy: { discountPercent: "desc" },
+          take: 1,
+          select: {
+            discountPercent: true,
+            promotion: {
+              select: { id: true, title: true, startsAt: true, endsAt: true },
+            },
+          },
+        },
       },
     });
-    return products.map(({ imageUrl, category, ...product }) => ({
-      ...product,
-      ...(imageUrl ? { imageUrl } : {}),
-      ...(category ? { category } : {}),
-    }));
+    return products.map(({ imageUrl, images, category, promotions, ...product }) => {
+      const activePromotion = promotions[0];
+      const promotion = activePromotion
+        ? {
+            id: activePromotion.promotion.id,
+            title: activePromotion.promotion.title,
+            discountPercent: activePromotion.discountPercent,
+            startsAt: activePromotion.promotion.startsAt.toISOString(),
+            endsAt: activePromotion.promotion.endsAt.toISOString(),
+          }
+        : null;
+      return {
+        ...product,
+        ...(promotion
+          ? {
+              priceBeforeDiscountCop: product.priceCop,
+              priceCop: Math.round(
+                (product.priceCop * (100 - promotion.discountPercent)) / 100,
+              ),
+              promotion,
+            }
+          : {}),
+        ...(imageUrl ? { imageUrl } : {}),
+        ...(images.length ? { images } : {}),
+        ...(category ? { category } : {}),
+      };
+    });
   }
 
   public async listAdminProducts(): Promise<Product[]> {
@@ -81,6 +136,10 @@ export class PrismaCatalogStore implements CatalogStore {
         stock: true,
         imageUrl: true,
         imageFileId: true,
+        images: {
+          orderBy: { position: "asc" },
+          select: { imageUrl: true, imageFileId: true, position: true },
+        },
         isActive: true,
         categoryId: true,
         category: {
@@ -160,11 +219,320 @@ export class PrismaCatalogStore implements CatalogStore {
     }
   }
 
+  public async listPromotions(includeInactive = false): Promise<Promotion[]> {
+    const now = new Date();
+    const records = await this.prisma.promotion.findMany({
+      where: includeInactive
+        ? {}
+        : { isActive: true, startsAt: { lte: now }, endsAt: { gt: now } },
+      orderBy: { startsAt: "asc" },
+      include: {
+        products: {
+          orderBy: { productId: "asc" },
+          include: { product: { select: { name: true, sku: true } } },
+        },
+      },
+    });
+    return records.map((promotion) => ({
+      id: promotion.id,
+      title: promotion.title,
+      description: promotion.description,
+      startsAt: promotion.startsAt.toISOString(),
+      endsAt: promotion.endsAt.toISOString(),
+      isActive: promotion.isActive,
+      products: promotion.products.map(({ productId, discountPercent, product }) => ({
+        productId,
+        discountPercent,
+        name: product.name,
+        sku: product.sku,
+      })),
+      createdAt: promotion.createdAt.toISOString(),
+      updatedAt: promotion.updatedAt.toISOString(),
+    }));
+  }
+
+  public async createPromotion(input: PromotionInput): Promise<Promotion> {
+    const normalized = normalizePromotionInput(input);
+    try {
+      const promotion = await this.prisma.$transaction(async (transaction) => {
+        await this.assertNoOverlappingPromotion(transaction, normalized);
+        return transaction.promotion.create({
+          data: {
+            title: normalized.title,
+            description: normalized.description,
+            startsAt: new Date(normalized.startsAt),
+            endsAt: new Date(normalized.endsAt),
+            isActive: normalized.isActive,
+            products: {
+              create: normalized.products.map((product) => ({
+                productId: product.productId,
+                discountPercent: product.discountPercent,
+              })),
+            },
+          },
+          include: {
+            products: {
+              orderBy: { productId: "asc" },
+              include: { product: { select: { name: true, sku: true } } },
+            },
+          },
+        });
+      }, { isolationLevel: "Serializable" });
+      return this.mapPromotion(promotion);
+    } catch (error) {
+      if (isPrismaTransactionConflictError(error)) {
+        throw new CatalogConflictError("Promotion products conflict with another campaign change");
+      }
+      if (isPrismaForeignKeyConstraintError(error)) {
+        throw new CatalogNotFoundError("One or more promotion products were not found");
+      }
+      if (isPrismaUniqueConstraintError(error)) {
+        throw new CatalogConflictError("Promotion products conflict with existing data");
+      }
+      throw error;
+    }
+  }
+
+  public async updatePromotion(promotionId: string, input: PromotionInput): Promise<Promotion> {
+    const normalized = normalizePromotionInput(input);
+    try {
+      const promotion = await this.prisma.$transaction(async (transaction) => {
+        const existing = await transaction.promotion.findUnique({
+          where: { id: promotionId },
+          select: { id: true },
+        });
+        if (!existing) throw new CatalogNotFoundError("Promotion not found");
+        await this.assertNoOverlappingPromotion(transaction, normalized, promotionId);
+        return transaction.promotion.update({
+          where: { id: promotionId },
+          data: {
+            title: normalized.title,
+            description: normalized.description,
+            startsAt: new Date(normalized.startsAt),
+            endsAt: new Date(normalized.endsAt),
+            isActive: normalized.isActive,
+            products: {
+              deleteMany: {},
+              create: normalized.products.map((product) => ({
+                productId: product.productId,
+                discountPercent: product.discountPercent,
+              })),
+            },
+          },
+          include: {
+            products: {
+              orderBy: { productId: "asc" },
+              include: { product: { select: { name: true, sku: true } } },
+            },
+          },
+        });
+      }, { isolationLevel: "Serializable" });
+      return this.mapPromotion(promotion);
+    } catch (error) {
+      if (isPrismaTransactionConflictError(error)) {
+        throw new CatalogConflictError("Promotion products conflict with another campaign change");
+      }
+      if (isPrismaForeignKeyConstraintError(error)) {
+        throw new CatalogNotFoundError("One or more promotion products were not found");
+      }
+      if (
+        typeof error === "object" &&
+        error !== null &&
+        "code" in error &&
+        error.code === "P2025"
+      ) {
+        throw new CatalogNotFoundError("Promotion not found");
+      }
+      throw error;
+    }
+  }
+
+  public async deletePromotion(promotionId: string): Promise<void> {
+    try {
+      await this.prisma.promotion.delete({ where: { id: promotionId } });
+    } catch (error) {
+      if (
+        typeof error === "object" &&
+        error !== null &&
+        "code" in error &&
+        error.code === "P2025"
+      ) {
+        throw new CatalogNotFoundError("Promotion not found");
+      }
+      throw error;
+    }
+  }
+
+  public async listAnnouncements(includeInactive = false): Promise<Announcement[]> {
+    const now = new Date();
+    const records = await this.prisma.announcement.findMany({
+      where: includeInactive
+        ? {}
+        : { isActive: true, startsAt: { lte: now }, endsAt: { gt: now } },
+      orderBy: { startsAt: "asc" },
+    });
+    return records.map((announcement) => ({
+      ...announcement,
+      linkUrl: announcement.linkUrl,
+      linkLabel: announcement.linkLabel,
+      startsAt: announcement.startsAt.toISOString(),
+      endsAt: announcement.endsAt.toISOString(),
+      createdAt: announcement.createdAt.toISOString(),
+      updatedAt: announcement.updatedAt.toISOString(),
+    }));
+  }
+
+  public async createAnnouncement(input: AnnouncementInput): Promise<Announcement> {
+    const normalized = normalizeAnnouncementInput(input);
+    const record = await this.prisma.announcement.create({
+      data: {
+        ...normalized,
+        startsAt: new Date(normalized.startsAt),
+        endsAt: new Date(normalized.endsAt),
+      },
+    });
+    return {
+      ...record,
+      linkUrl: record.linkUrl,
+      linkLabel: record.linkLabel,
+      startsAt: record.startsAt.toISOString(),
+      endsAt: record.endsAt.toISOString(),
+      createdAt: record.createdAt.toISOString(),
+      updatedAt: record.updatedAt.toISOString(),
+    };
+  }
+
+  public async updateAnnouncement(
+    announcementId: string,
+    input: AnnouncementInput,
+  ): Promise<Announcement> {
+    const normalized = normalizeAnnouncementInput(input);
+    try {
+      const record = await this.prisma.announcement.update({
+        where: { id: announcementId },
+        data: {
+          ...normalized,
+          startsAt: new Date(normalized.startsAt),
+          endsAt: new Date(normalized.endsAt),
+        },
+      });
+      return {
+        ...record,
+        linkUrl: record.linkUrl,
+        linkLabel: record.linkLabel,
+        startsAt: record.startsAt.toISOString(),
+        endsAt: record.endsAt.toISOString(),
+        createdAt: record.createdAt.toISOString(),
+        updatedAt: record.updatedAt.toISOString(),
+      };
+    } catch (error) {
+      if (
+        typeof error === "object" &&
+        error !== null &&
+        "code" in error &&
+        error.code === "P2025"
+      ) {
+        throw new CatalogNotFoundError("Announcement not found");
+      }
+      throw error;
+    }
+  }
+
+  public async deleteAnnouncement(announcementId: string): Promise<void> {
+    try {
+      await this.prisma.announcement.delete({ where: { id: announcementId } });
+    } catch (error) {
+      if (
+        typeof error === "object" &&
+        error !== null &&
+        "code" in error &&
+        error.code === "P2025"
+      ) {
+        throw new CatalogNotFoundError("Announcement not found");
+      }
+      throw error;
+    }
+  }
+
+  private mapPromotion(promotion: {
+    id: string;
+    title: string;
+    description: string;
+    startsAt: Date;
+    endsAt: Date;
+    isActive: boolean;
+    createdAt: Date;
+    updatedAt: Date;
+    products: Array<{
+      productId: string;
+      discountPercent: number;
+      product: { name: string; sku: string };
+    }>;
+  }): Promotion {
+    return {
+      id: promotion.id,
+      title: promotion.title,
+      description: promotion.description,
+      startsAt: promotion.startsAt.toISOString(),
+      endsAt: promotion.endsAt.toISOString(),
+      isActive: promotion.isActive,
+      products: promotion.products.map(({ productId, discountPercent, product }) => ({
+        productId,
+        discountPercent,
+        name: product.name,
+        sku: product.sku,
+      })),
+      createdAt: promotion.createdAt.toISOString(),
+      updatedAt: promotion.updatedAt.toISOString(),
+    };
+  }
+
+  private async assertNoOverlappingPromotion(
+    transaction: Pick<PrismaClient, "promotionProduct">,
+    input: PromotionInput,
+    excludedPromotionId?: string,
+  ): Promise<void> {
+    if (!input.isActive) return;
+    const conflict = await transaction.promotionProduct.findFirst({
+      where: {
+        productId: { in: input.products.map((product) => product.productId) },
+        promotion: {
+          isActive: true,
+          startsAt: { lt: new Date(input.endsAt) },
+          endsAt: { gt: new Date(input.startsAt) },
+          ...(excludedPromotionId ? { id: { not: excludedPromotionId } } : {}),
+        },
+      },
+      select: { productId: true },
+    });
+    if (conflict) {
+      throw new CatalogConflictError("An active promotion already overlaps for one or more products");
+    }
+  }
+
   public async createProduct(input: ProductInput): Promise<Product> {
     const normalized = normalizeProductInput(input);
+    const { images: requestedImages, ...productFields } = normalized;
+    const images = requestedImages.map((image, position) => ({
+      imageUrl: image.imageUrl,
+      imageFileId: image.imageFileId ?? null,
+      position,
+    }));
     try {
       return await this.prisma.product.create({
-        data: { ...normalized, stock: 0 },
+        data: {
+          ...productFields,
+          imageUrl: images[0]?.imageUrl ?? null,
+          imageFileId: images[0]?.imageFileId ?? null,
+          stock: 0,
+          ...(images.length
+            ? {
+                images: {
+                  create: images,
+                },
+              }
+            : {}),
+        },
         select: {
           id: true,
           sku: true,
@@ -174,6 +542,10 @@ export class PrismaCatalogStore implements CatalogStore {
           stock: true,
           imageUrl: true,
           imageFileId: true,
+          images: {
+            orderBy: { position: "asc" },
+            select: { imageUrl: true, imageFileId: true, position: true },
+          },
           isActive: true,
           categoryId: true,
           category: {
@@ -192,24 +564,62 @@ export class PrismaCatalogStore implements CatalogStore {
   public async updateProduct(productId: string, input: ProductInput): Promise<Product> {
     const normalized = normalizeProductInput(input);
     try {
-      return await this.prisma.product.update({
-        where: { id: productId },
-        data: normalized,
-        select: {
-          id: true,
-          sku: true,
-          name: true,
-          description: true,
-          priceCop: true,
-          stock: true,
-          imageUrl: true,
-          imageFileId: true,
-          isActive: true,
-          categoryId: true,
-          category: {
-            select: { id: true, name: true, slug: true, theme: true },
+      return await this.prisma.$transaction(async (transaction) => {
+        const existing = await transaction.product.findUnique({
+          where: { id: productId },
+          select: {
+            images: {
+              select: { imageUrl: true, imageFileId: true },
+            },
           },
-        },
+        });
+        if (!existing) throw new CatalogNotFoundError("Product not found");
+
+        const { images: requestedImages, ...productFields } = normalized;
+        const images = requestedImages.map((image, position) => {
+          const previousImage = existing.images.find(
+            (candidate) => candidate.imageUrl === image.imageUrl,
+          );
+          return {
+            imageUrl: image.imageUrl,
+            imageFileId:
+              image.imageFileId === undefined
+                ? previousImage?.imageFileId ?? null
+                : image.imageFileId,
+            position,
+          };
+        });
+        return transaction.product.update({
+          where: { id: productId },
+          data: {
+            ...productFields,
+            imageUrl: images[0]?.imageUrl ?? null,
+            imageFileId: images[0]?.imageFileId ?? null,
+            images: {
+              deleteMany: {},
+              ...(images.length ? { create: images } : {}),
+            },
+          },
+          select: {
+            id: true,
+            sku: true,
+            name: true,
+            description: true,
+            priceCop: true,
+            stock: true,
+            imageUrl: true,
+            imageFileId: true,
+            images: {
+              orderBy: { position: "asc" },
+              select: { imageUrl: true, imageFileId: true, position: true },
+            },
+            isActive: true,
+            categoryId: true,
+            category: {
+              select: { id: true, name: true, slug: true, theme: true },
+            },
+          },
+        });
       });
     } catch (error) {
       if (isPrismaUniqueConstraintError(error)) {
@@ -302,6 +712,7 @@ export class PrismaCatalogStore implements CatalogStore {
     lines: ReservationRequestLine[],
   ): Promise<ManualSale> {
     const requestLines = normalizeReservationLines(lines);
+    const now = new Date();
     try {
       return await this.prisma.$transaction(async (transaction) => {
         const existing = await transaction.manualSale.findUnique({
@@ -314,7 +725,24 @@ export class PrismaCatalogStore implements CatalogStore {
         for (const line of requestLines) {
           const product = await transaction.product.findFirst({
             where: { id: line.productId, isActive: true },
-            select: { id: true, sku: true, name: true, priceCop: true },
+            select: {
+              id: true,
+              sku: true,
+              name: true,
+              priceCop: true,
+              promotions: {
+                where: {
+                  promotion: {
+                    isActive: true,
+                    startsAt: { lte: now },
+                    endsAt: { gt: now },
+                  },
+                },
+                orderBy: { discountPercent: "desc" },
+                take: 1,
+                select: { discountPercent: true },
+              },
+            },
           });
           if (!product) {
             throw new InventoryConflictError(`Product is not available: ${line.productId}`);
@@ -338,7 +766,9 @@ export class PrismaCatalogStore implements CatalogStore {
             sku: product.sku,
             name: product.name,
             quantity: line.quantity,
-            unitPriceCop: product.priceCop,
+            unitPriceCop: Math.round(
+              (product.priceCop * (100 - (product.promotions[0]?.discountPercent ?? 0))) / 100,
+            ),
           });
         }
 
@@ -369,6 +799,7 @@ export class PrismaCatalogStore implements CatalogStore {
     lines: ReservationRequestLine[],
   ): Promise<InventoryReservation> {
     const requestLines = normalizeReservationLines(lines);
+    const now = new Date();
     try {
       return await this.prisma.$transaction(async (transaction) => {
         const existing = await transaction.inventoryReservation.findUnique({
@@ -383,7 +814,24 @@ export class PrismaCatalogStore implements CatalogStore {
         for (const line of requestLines) {
           const product = await transaction.product.findFirst({
             where: { id: line.productId, isActive: true },
-            select: { id: true, sku: true, name: true, priceCop: true },
+            select: {
+              id: true,
+              sku: true,
+              name: true,
+              priceCop: true,
+              promotions: {
+                where: {
+                  promotion: {
+                    isActive: true,
+                    startsAt: { lte: now },
+                    endsAt: { gt: now },
+                  },
+                },
+                orderBy: { discountPercent: "desc" },
+                take: 1,
+                select: { discountPercent: true },
+              },
+            },
           });
           if (!product) {
             throw new InventoryConflictError(`Product is not available: ${line.productId}`);
@@ -411,7 +859,9 @@ export class PrismaCatalogStore implements CatalogStore {
             sku: product.sku,
             name: product.name,
             quantity: line.quantity,
-            unitPriceCop: product.priceCop,
+            unitPriceCop: Math.round(
+              (product.priceCop * (100 - (product.promotions[0]?.discountPercent ?? 0))) / 100,
+            ),
           });
         }
 

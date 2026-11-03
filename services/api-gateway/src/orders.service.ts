@@ -187,6 +187,15 @@ export class OrderService {
     return (await response.json() as { data: unknown }).data;
   }
 
+  public async markPaymentReported(customerId: string, orderId: string): Promise<unknown> {
+    const response = await this.requestAdmin(
+      `/admin/orders/${encodeURIComponent(orderId)}/payment-reported`,
+      "POST",
+      customerId,
+    );
+    return (await response.json() as { data: unknown }).data;
+  }
+
   public async cancelAdminOrder(
     customerId: string,
     orderId: string,
