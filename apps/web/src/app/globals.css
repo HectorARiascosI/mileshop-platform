@@ -1,18 +1,18 @@
 @import "tailwindcss";
 
 :root {
-  --background: #090b10;
-  --foreground: #edf0f7;
-  --ink-muted: #a0a8b7;
-  --line: rgba(195, 205, 225, 0.14);
-  --accent: #aeb8cb;
-  --accent-dark: #edf0f7;
-  --cream: #151922;
-  --surface-raised: #1b202b;
-  --surface-glass: rgba(17, 20, 29, 0.76);
-  --surface-border: rgba(220, 228, 245, 0.13);
-  --status-success: #86d8b8;
-  --status-error: #ff9a9a;
+  --background: #f7f7f5;
+  --foreground: #171717;
+  --ink-muted: #686868;
+  --line: rgba(23, 23, 23, 0.12);
+  --accent: #171717;
+  --accent-dark: #171717;
+  --cream: #ffffff;
+  --surface-raised: #ffffff;
+  --surface-glass: rgba(255, 255, 255, 0.88);
+  --surface-border: rgba(23, 23, 23, 0.1);
+  --status-success: #218c62;
+  --status-error: #b4232d;
 }
 
 @theme inline {
@@ -26,7 +26,7 @@
 
 html {
   background: var(--background);
-  color-scheme: dark;
+  color-scheme: light;
   scroll-behavior: smooth;
 }
 
@@ -2262,4 +2262,265 @@ main.mx-auto article.rounded-xl .border-y {
 .auth-subtitle {
   color: var(--ink-muted);
   margin-bottom: 24px;
+}
+
+/* MileShop 2026 global visual system */
+body {
+  background:
+    radial-gradient(circle at 82% 8%, rgba(0, 0, 0, 0.035), transparent 24rem),
+    var(--background);
+  color: var(--foreground);
+}
+
+.topbar {
+  background: rgba(255, 255, 255, 0.92);
+  border-color: rgba(23, 23, 23, 0.11);
+  box-shadow: 0 12px 36px rgba(23, 23, 23, 0.08);
+  min-height: 76px;
+}
+
+.brand {
+  font-size: 1.48rem;
+  letter-spacing: -0.055em;
+}
+
+.brand-mark {
+  background: #171717;
+  border-color: #171717;
+  border-radius: 50%;
+  box-shadow: none;
+  color: #fff;
+  font-size: 1.05rem;
+  height: 42px;
+  width: 42px;
+}
+
+.topbar-link {
+  font-size: 0.88rem;
+  font-weight: 650;
+}
+
+.cart-button {
+  background: #171717;
+  border-color: #171717;
+  color: #fff;
+}
+
+.cart-button:hover {
+  background: #303030;
+  border-color: #303030;
+}
+
+.cart-count {
+  background: #fff;
+  color: #171717;
+}
+
+.storefront-hero {
+  background:
+    radial-gradient(circle at 88% 12%, rgba(23, 23, 23, 0.07), transparent 28rem),
+    #fff;
+  border-color: rgba(23, 23, 23, 0.1);
+  box-shadow: 0 24px 70px rgba(23, 23, 23, 0.07);
+}
+
+.storefront-hero::before,
+.hero-visual {
+  background: linear-gradient(145deg, #f3f3f1, #e8e8e5);
+}
+
+.storefront-hero::before {
+  opacity: 0.55;
+}
+
+.hero-visual {
+  border-color: rgba(23, 23, 23, 0.08);
+}
+
+.hero-visual-label {
+  color: #707070;
+}
+
+.hero-monogram {
+  color: rgba(23, 23, 23, 0.14);
+  text-shadow: none;
+}
+
+.hero-copy h1 {
+  font-weight: 600;
+}
+
+.hero-copy h1 span,
+.eyebrow,
+.hero-description {
+  color: #686868;
+}
+
+.hero-cta {
+  background: #171717;
+  border-color: #171717;
+  box-shadow: 0 10px 28px rgba(23, 23, 23, 0.18);
+  color: #fff;
+}
+
+.hero-cta:hover {
+  box-shadow: 0 14px 34px rgba(23, 23, 23, 0.24);
+}
+
+.catalog-heading h2 {
+  font-weight: 650;
+}
+
+.product-card {
+  background: #fff;
+  border-color: rgba(23, 23, 23, 0.1);
+  box-shadow: 0 12px 32px rgba(23, 23, 23, 0.055);
+  border-radius: 18px;
+}
+
+.product-card:hover {
+  border-color: rgba(23, 23, 23, 0.22);
+  box-shadow: 0 22px 46px rgba(23, 23, 23, 0.1);
+}
+
+.product-art {
+  background:
+    radial-gradient(ellipse at 50% 45%, rgba(23, 23, 23, 0.035), transparent 62%),
+    #f4f4f2;
+}
+
+.product-art::after {
+  border-color: rgba(23, 23, 23, 0.06);
+}
+
+.product-gallery-controls {
+  background: rgba(255, 255, 255, 0.92);
+  border-color: rgba(23, 23, 23, 0.12);
+  color: #171717;
+}
+
+.product-gallery-button {
+  color: #171717;
+}
+
+.add-button {
+  background: #171717;
+  border-color: #171717;
+  color: #fff;
+}
+
+.add-button span {
+  color: #fff;
+}
+
+.add-button:hover:not(:disabled) {
+  background: #303030;
+  border-color: #303030;
+}
+
+.catalog-search {
+  background: #fff;
+  border-color: rgba(23, 23, 23, 0.12);
+}
+
+.announcement-banner {
+  background: #fff;
+  border-color: rgba(23, 23, 23, 0.1);
+  color: #171717;
+}
+
+.announcement-eyebrow,
+.announcement-link {
+  color: #686868;
+}
+
+.announcement-link:hover {
+  color: #171717;
+}
+
+.footer {
+  border-top-color: rgba(23, 23, 23, 0.1);
+}
+
+/* Administrative console shares the same light material system. */
+main.mx-auto {
+  background: var(--background);
+}
+
+main.mx-auto > header,
+main.mx-auto .rounded-xl.border,
+main.mx-auto .rounded-lg.border {
+  background: #fff !important;
+  border-color: rgba(23, 23, 23, 0.1) !important;
+  box-shadow: 0 16px 46px rgba(23, 23, 23, 0.06) !important;
+  color: #171717 !important;
+}
+
+main.mx-auto > header a,
+main.mx-auto nav a {
+  color: #454545 !important;
+}
+
+main.mx-auto > header a:hover,
+main.mx-auto > header nav a:hover {
+  background: #f0f0ed !important;
+  border-color: rgba(23, 23, 23, 0.16) !important;
+}
+
+main.mx-auto select,
+main.mx-auto input,
+main.mx-auto textarea {
+  background: #fff !important;
+  border-color: rgba(23, 23, 23, 0.14) !important;
+  color: #171717 !important;
+}
+
+main.mx-auto select option {
+  background: #fff;
+  color: #171717;
+}
+
+main.mx-auto button.bg-emerald-700,
+main.mx-auto button.bg-slate-900,
+main.mx-auto button[type="submit"] {
+  background: #171717 !important;
+  color: #fff !important;
+}
+
+main.mx-auto .bg-emerald-50,
+main.mx-auto .bg-amber-50,
+main.mx-auto .bg-rose-50,
+main.mx-auto .bg-slate-50 {
+  background: #f5f5f2 !important;
+  border-color: rgba(23, 23, 23, 0.1) !important;
+  color: #171717 !important;
+}
+
+.auth-hint a,
+.auth-card {
+  color: var(--foreground);
+}
+
+@media (max-width: 760px) {
+  .topbar {
+    min-height: 68px;
+    width: calc(100% - 24px);
+  }
+
+  .brand {
+    font-size: 1.22rem;
+  }
+
+  .brand-mark {
+    height: 38px;
+    width: 38px;
+  }
+
+  .topbar-nav {
+    gap: 14px;
+  }
+
+  .storefront-hero {
+    border-radius: 22px;
+  }
 }
