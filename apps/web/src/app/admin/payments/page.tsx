@@ -238,6 +238,9 @@ function errorMessage(status: number): string {
   if (status === 404) {
     return "Este pago ya no está pendiente. Actualiza la cola para ver los cambios.";
   }
+  if (status === 503) {
+    return "La revisión de comprobantes en línea no está disponible. En producción, verifica el pago en WhatsApp Business y registra el pago informado desde Pedidos; la revisión web requiere almacenamiento privado persistente.";
+  }
   return "No pudimos consultar los pagos pendientes. Inténtalo de nuevo.";
 }
 
@@ -859,6 +862,9 @@ export default function AdminPaymentsPage() {
           )}
           {isForbidden && (
             <Link href="/">Volver al catálogo</Link>
+          )}
+          {error.status === 503 && (
+            <Link href="/admin/orders">Ir a Pedidos</Link>
           )}
         </section>
       )}

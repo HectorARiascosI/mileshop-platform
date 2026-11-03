@@ -13,6 +13,7 @@ import type { ReadableStream as NodeReadableStream } from "node:stream/web";
 export const ORDER_FETCH = "ORDER_FETCH";
 export const ORDERS_SERVICE_URL = "ORDERS_SERVICE_URL";
 export const ORDERS_INTERNAL_TOKEN = "ORDERS_INTERNAL_TOKEN";
+const ORDER_CREATE_TIMEOUT_MS = 25_000;
 
 export type OrderLineInput = {
   productId: string;
@@ -101,7 +102,7 @@ export class OrderService {
           ...this.internalHeaders(customerId),
         },
         body: JSON.stringify({ customerId, lines: normalizedLines }),
-        signal: AbortSignal.timeout(3_000),
+        signal: AbortSignal.timeout(ORDER_CREATE_TIMEOUT_MS),
       });
     } catch {
       throw new ServiceUnavailableException("Orders service is unavailable");

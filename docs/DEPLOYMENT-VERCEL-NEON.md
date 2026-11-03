@@ -66,7 +66,7 @@ Configúralas por proyecto y por entorno (`Production`, `Preview` y `Development
 
 | Proyecto | Variables |
 |---|---|
-| Storefront | `API_GATEWAY_URL` (URL HTTPS del Gateway terminada en `/api`), `VERCEL_GATEWAY_BYPASS_SECRET` (solo Preview; bypass del proyecto Gateway), `IMAGEKIT_PRIVATE_KEY` (clave privada de ImageKit para administrar fotos), `NEXT_PUBLIC_WHATSAPP_BUSINESS_PHONE` (número Business internacional, sin `+`, espacios ni guiones). |
+| Storefront | `API_GATEWAY_URL` (URL HTTPS del Gateway terminada en `/api`), `VERCEL_GATEWAY_BYPASS_SECRET` (solo Preview; bypass del proyecto Gateway), `IMAGEKIT_PRIVATE_KEY` (clave privada de ImageKit para administrar fotos), `NEXT_PUBLIC_WHATSAPP_BUSINESS_PHONE` (número Business en formato E.164, con `+` inicial y sin espacios ni guiones). |
 | API Gateway | `CATALOG_SERVICE_URL`, `IDENTITY_SERVICE_URL`, `ORDERS_SERVICE_URL` (cada una HTTPS y terminada en `/api`), `VERCEL_CATALOG_BYPASS_SECRET`, `VERCEL_IDENTITY_BYPASS_SECRET`, `VERCEL_ORDERS_BYPASS_SECRET` (solo Preview; bypass del proyecto de destino), `ORDERS_INTERNAL_TOKEN`, `CATALOG_INVENTORY_COMMAND_TOKEN`, `ALLOWED_ORIGINS` (origen HTTPS del storefront). |
 | Catálogo | `DATABASE_URL` (URL pooled de la base `catalog`), `CATALOG_RESERVATION_TOKEN`, `CATALOG_INVENTORY_COMMAND_TOKEN`. |
 | Identidad | `DATABASE_URL` (URL pooled de `identity`), `JWT_SECRET`, `ALLOWED_ORIGINS` (origen HTTPS del storefront). |
