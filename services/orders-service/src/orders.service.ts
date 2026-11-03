@@ -260,7 +260,12 @@ export class OrdersService implements OnModuleInit, OnModuleDestroy {
 
   public async onModuleInit(): Promise<void> {
     await this.recoverPendingEvents();
-    await this.recoverPendingReservationIntents();
+    await this.recoverPendingReservationIntents().catch((error: unknown) => {
+      this.logger.error(
+        "Failed to recover pending reservation intents during startup",
+        error instanceof Error ? error.stack : undefined,
+      );
+    });
     if (process.env.VERCEL) {
       return;
     }
@@ -268,6 +273,12 @@ export class OrdersService implements OnModuleInit, OnModuleDestroy {
       void this.recoverPendingEvents().catch((error: unknown) => {
         this.logger.error(
           "Failed to recover pending order events",
+          error instanceof Error ? error.stack : undefined,
+        );
+      });
+      void this.recoverPendingReservationIntents().catch((error: unknown) => {
+        this.logger.error(
+          "Failed to recover pending reservation intents",
           error instanceof Error ? error.stack : undefined,
         );
       });
@@ -419,20 +430,27 @@ export class OrdersService implements OnModuleInit, OnModuleDestroy {
     }
     const intents = await this.repository.listPendingReservationIntents(now);
     for (const intent of intents) {
-      const reservation = await this.catalog.reserveProducts?.(intent.orderId, intent.lines);
-      const payload = await this.repository.getReservationIntentPayload?.(intent.intentId);
-      if (payload) {
-        const recordWithExpiration = {
-          ...payload.record,
-          reservationExpiresAt:
-            payload.record.reservationExpiresAt ??
-            new Date(intent.createdAt.getTime() + ORDER_RESERVATION_TTL_MS),
-        };
-        const record = reservation
-          ? OrderDomain.applyReservedPrices(recordWithExpiration, reservation.lines)
-          : recordWithExpiration;
-        const event = this.buildOrderCreatedEvent(record);
-        await this.repository.completeReservationIntent?.(intent, record, event);
+      try {
+        const reservation = await this.catalog.reserveProducts?.(intent.orderId, intent.lines);
+        const payload = await this.repository.getReservationIntentPayload?.(intent.intentId);
+        if (payload) {
+          const recordWithExpiration = {
+            ...payload.record,
+            reservationExpiresAt:
+              payload.record.reservationExpiresAt ??
+              new Date(intent.createdAt.getTime() + ORDER_RESERVATION_TTL_MS),
+          };
+          const record = reservation
+            ? OrderDomain.applyReservedPrices(recordWithExpiration, reservation.lines)
+            : recordWithExpiration;
+          const event = this.buildOrderCreatedEvent(record);
+          await this.repository.completeReservationIntent?.(intent, record, event);
+        }
+      } catch (error) {
+        this.logger.error(
+          `Failed to recover reservation intent ${intent.intentId}`,
+          error instanceof Error ? error.stack : undefined,
+        );
       }
     }
   }
@@ -509,22 +527,19 @@ export class OrdersService implements OnModuleInit, OnModuleDestroy {
     return { result: mapped, order: await this.getOrderById(orderId) };
   }
 
-  public async cancelOrder(orderId: string, customerId: string): Promise<{ result: string }> {
+  public async cancelOrder(
+    orderId: string,
+    customerId: string,
+  ): Promise<{ result: string; order: Order | null }> {
     const result = await this.repository.cancelOrder(
       orderId, customerId, new Date(),
       { commandId: `${orderId}-release-inventory`, idempotencyKey: `${orderId}:RELEASE`, orderId, commandType: "RELEASE", payload: {} },
     );
-    return { result };
+    return { result, order: await this.getOrderById(orderId) };
   }
 
   public async listPendingCancellationRequests(): Promise<Order[]> {
-    const repository = this.repository as OrdersRepository & {
-      records?: Map<string, OrderRecord>;
-      getPendingCancellationRequests?: () => Promise<OrderRecord[]>;
-    };
-    const records = repository.records
-      ? [...repository.records.values()].filter((record) => (record as any).cancelRequestedAt && !(record as any).cancelResolvedAt)
-      : [];
+    const records = await this.repository.listPendingCancellationRequests();
     return records.map((record) => OrderDomain.toOrderView(record));
   }
 

@@ -16,13 +16,15 @@ type VerifiedRequest = FastifyRequest["raw"] & {
 
 type RequestWithRaw = {
   raw?: VerifiedRequest;
+  customerId?: string;
+  role?: CustomerRole;
 };
 
 @Injectable()
 export class StoreAdminGuard implements CanActivate {
   public canActivate(context: ExecutionContext): boolean {
     const request = context.switchToHttp().getRequest<RequestWithRaw>();
-    const verifiedRequest = request.raw;
+    const verifiedRequest = request.raw ?? request;
 
     if (!verifiedRequest?.customerId || !verifiedRequest.role) {
       throw new UnauthorizedException("Authenticated customer is required");

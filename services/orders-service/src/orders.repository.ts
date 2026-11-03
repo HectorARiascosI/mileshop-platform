@@ -8,6 +8,7 @@ export interface OrdersRepository {
   findByOrderId(orderId: string): Promise<OrderRecord | null>;
   findByIdempotencyKey(idempotencyKey: string): Promise<OrderRecord | null>;
   listPendingAdminOrders(): Promise<OrderRecord[]>;
+  listPendingCancellationRequests(): Promise<OrderRecord[]>;
   createReservationIntent?(intent: ReservationIntent, record: OrderRecord, event: OrderCreatedEvent): Promise<void>;
   completeReservationIntent?(intent: ReservationIntent, record: OrderRecord, event: OrderCreatedEvent): Promise<void>;
   listPendingReservationIntents?(now: Date): Promise<ReservationIntent[]>;
@@ -140,6 +141,21 @@ export class InMemoryOrdersRepository implements OrdersRepository {
       )
       .filter((record) => !record.cancelRequestedAt || record.cancelResolvedAt)
       .sort((left, right) => left.createdAt.getTime() - right.createdAt.getTime())
+      .map((record) => structuredClone(record));
+  }
+
+  public async listPendingCancellationRequests(): Promise<OrderRecord[]> {
+    return [...this.records.values()]
+      .filter((record): record is OrderRecord & { cancelRequestedAt: Date } =>
+          record.status === "PAYMENT_REVIEW_PENDING" &&
+          record.cancelRequestedAt instanceof Date &&
+          (record.cancelResolvedAt === null || record.cancelResolvedAt === undefined),
+      )
+      .sort((left, right) => {
+        const requestedAtDifference =
+          left.cancelRequestedAt.getTime() - right.cancelRequestedAt.getTime();
+        return requestedAtDifference || left.orderId.localeCompare(right.orderId);
+      })
       .map((record) => structuredClone(record));
   }
 

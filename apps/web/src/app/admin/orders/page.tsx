@@ -41,6 +41,11 @@ type SaleRequest = {
   quantity: number;
 };
 
+type PendingOrderAction = {
+  orderId: string;
+  action: "confirm" | "cancel" | "reported";
+};
+
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
@@ -123,7 +128,7 @@ async function responseError(response: Response, fallback: string): Promise<stri
 }
 
 export default function AdminOrdersPage() {
-  const [authorized, setAuthorized] = useState<boolean | null>(null);
+  const [authorized, setAuthorized] = useState<boolean>(true);
   const [orders, setOrders] = useState<AdminOrder[]>([]);
   const [products, setProducts] = useState<Product[]>([]);
   const [accessError, setAccessError] = useState<string | null>(null);
@@ -133,16 +138,16 @@ export default function AdminOrdersPage() {
   const [isLoading, setIsLoading] = useState(true);
   const [isSavingSale, setIsSavingSale] = useState(false);
   const [workingOrderId, setWorkingOrderId] = useState<string | null>(null);
+  const [pendingOrderAction, setPendingOrderAction] = useState<PendingOrderAction | null>(null);
+  const [cancellationReason, setCancellationReason] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
 
   const refresh = useCallback(async () => {
-    setIsLoading(true);
-    setError(null);
     try {
       const [ordersResponse, productsResponse] = await Promise.all([
         fetch("/api/admin/orders", { cache: "no-store" }),
-        fetch("/api/catalog/products", { cache: "no-store" }),
+        fetch("/api/admin/catalog/products", { cache: "no-store" }),
       ]);
       if (ordersResponse.status === 401 || ordersResponse.status === 403) {
         setAuthorized(false);
@@ -155,7 +160,12 @@ export default function AdminOrdersPage() {
         return;
       }
       if (!ordersResponse.ok) {
-        throw new Error(await responseError(ordersResponse, "No se pudieron cargar los pedidos."));
+        const upstreamMessage = await responseError(ordersResponse, "No se pudieron cargar los pedidos.");
+        throw new Error(
+          upstreamMessage === "Orders service is unavailable"
+            ? "El módulo de pedidos está iniciando o no está disponible en este momento. Inténtalo de nuevo."
+            : upstreamMessage,
+        );
       }
       if (!productsResponse.ok) {
         throw new Error(await responseError(productsResponse, "No se pudo cargar el inventario."));
@@ -179,7 +189,6 @@ export default function AdminOrdersPage() {
         throw new Error("El servicio devolvió datos de administración inválidos.");
       }
       const now = Date.now();
-      setAuthorized(true);
       setOrders(
         validOrders.map((order) => ({
           ...order,
@@ -203,45 +212,8 @@ export default function AdminOrdersPage() {
   }, []);
 
   useEffect(() => {
-    let active = true;
-    const initialize = async () => {
-      let canLoadAdminData = false;
-      try {
-        const response = await fetch("/api/auth/me", { cache: "no-store" });
-        if (response.status === 401) {
-          if (active) {
-            setAuthorized(false);
-            setAccessError("Inicia sesión con la cuenta de administradora de tienda.");
-          }
-        } else if (!response.ok) {
-          if (active) {
-            setAuthorized(false);
-            setAccessError("No pudimos verificar tu cuenta. Inténtalo de nuevo.");
-          }
-        } else {
-          const profile: unknown = await response.json();
-          if (active) {
-            const isAdmin = isRecord(profile) && profile.role === "STORE_ADMIN";
-            setAuthorized(isAdmin);
-            canLoadAdminData = isAdmin;
-            setAccessError(
-              isAdmin ? null : "Tu cuenta no tiene permisos de administración de tienda.",
-            );
-          }
-        }
-      } catch {
-        if (active) {
-          setAuthorized(false);
-          setAccessError("No pudimos verificar tu cuenta. Inténtalo de nuevo.");
-        }
-      }
-      if (active && canLoadAdminData) await refresh();
-      else if (active) setIsLoading(false);
-    };
-    void initialize();
-    return () => {
-      active = false;
-    };
+    const timer = window.setTimeout(() => void refresh(), 0);
+    return () => window.clearTimeout(timer);
   }, [refresh]);
 
   const decideOrder = async (
@@ -286,29 +258,15 @@ export default function AdminOrdersPage() {
   };
 
   const confirmOrder = (orderId: string) => {
-    if (
-      window.confirm(
-        "Confirma que verificaste el pago en WhatsApp Business. Esta acción confirma el pedido.",
-      )
-    ) {
-      void decideOrder(orderId, "confirm");
-    }
+    setPendingOrderAction({ orderId, action: "confirm" });
   };
 
   const cancelOrder = (orderId: string) => {
-    const reason = window.prompt("Motivo de cancelación (por ejemplo, pago no recibido):")?.trim();
-    if (reason) void decideOrder(orderId, "cancel", reason);
+    setCancellationReason("");
+    setPendingOrderAction({ orderId, action: "cancel" });
   };
 
   const markPaymentReported = async (orderId: string) => {
-    if (
-      !window.confirm(
-        "Registra solo que el cliente informó el pago por WhatsApp. Esto no confirma que la transferencia ya fue verificada; la reserva quedará protegida hasta confirmar o cancelar el pedido.",
-      )
-    ) {
-      return;
-    }
-
     setWorkingOrderId(orderId);
     setError(null);
     setNotice(null);
@@ -335,6 +293,24 @@ export default function AdminOrdersPage() {
     } finally {
       setWorkingOrderId(null);
     }
+  };
+
+  const submitPendingOrderAction = async () => {
+    if (!pendingOrderAction) return;
+    if (pendingOrderAction.action === "cancel") {
+      const reason = cancellationReason.trim();
+      if (reason.length < 3) {
+        setError("Escribe un motivo de cancelación de al menos 3 caracteres.");
+        return;
+      }
+      await decideOrder(pendingOrderAction.orderId, "cancel", reason);
+    } else if (pendingOrderAction.action === "confirm") {
+      await decideOrder(pendingOrderAction.orderId, "confirm");
+    } else {
+      await markPaymentReported(pendingOrderAction.orderId);
+    }
+    setPendingOrderAction(null);
+    setCancellationReason("");
   };
 
   const submitManualSale = async () => {
@@ -390,12 +366,6 @@ export default function AdminOrdersPage() {
           <h1 className="text-3xl font-bold">Operaciones de tienda</h1>
           <p className="mt-1 text-slate-600">Pedidos de WhatsApp e inventario de ventas presenciales.</p>
         </div>
-        <Link className="admin-console-link rounded border px-4 py-2 font-medium hover:bg-slate-50" href="/">
-          Volver a la tienda
-        </Link>
-        <Link className="admin-console-link rounded border px-4 py-2 font-medium hover:bg-slate-50" href="/admin/catalog">
-          Catálogo e inventario
-        </Link>
       </header>
 
       {authorized === false && (
@@ -412,7 +382,12 @@ export default function AdminOrdersPage() {
                 <span>Acción rápida</span>
                 <h2 className="text-xl font-semibold">Registrar venta manual</h2>
               </div>
-              {selectedProduct && <strong>{selectedProduct.stock} disponibles</strong>}
+              {selectedProduct && (
+                <strong className="admin-stock-pill">
+                  <span aria-hidden="true" />
+                  Inventario: {selectedProduct.stock} unidades
+                </strong>
+              )}
             </div>
             <p className="mt-1 text-sm text-slate-600">
               Se descuenta del inventario disponible y queda un registro auditable de la operación.
@@ -428,7 +403,7 @@ export default function AdminOrdersPage() {
                 >
                   {products.map((product) => (
                     <option key={product.id} value={product.id}>
-                      {product.name} — {product.stock} disponibles
+                      {product.name} — {product.stock} unidades disponibles
                     </option>
                   ))}
                 </select>
@@ -466,7 +441,7 @@ export default function AdminOrdersPage() {
             </div>
             {selectedProduct && (
               <p className="mt-3 text-sm text-slate-600">
-                Precio actual: {formatPrice(selectedProduct.priceCop)} · Disponible: {selectedProduct.stock}
+                Precio actual: {formatPrice(selectedProduct.priceCop)} · Inventario: {selectedProduct.stock} unidades
               </p>
             )}
           </section>
@@ -477,7 +452,7 @@ export default function AdminOrdersPage() {
                 <p className="admin-console-kicker text-sm font-semibold uppercase tracking-wide text-emerald-700">Cola operativa</p>
                 <h2 className="text-xl font-semibold">Pedidos por revisar <span className="admin-order-count">{orders.length}</span></h2>
               </div>
-              <button className="rounded border px-4 py-2 hover:bg-white" onClick={() => void refresh()}>
+              <button className="rounded border px-4 py-2 hover:bg-white" onClick={() => { setIsLoading(true); setError(null); void refresh(); }}>
                 Actualizar
               </button>
             </div>
@@ -525,7 +500,7 @@ export default function AdminOrdersPage() {
                         <button
                           className="rounded border border-amber-400 px-4 py-2 font-semibold text-amber-900 disabled:opacity-50"
                           disabled={workingOrderId === order.orderId}
-                          onClick={() => void markPaymentReported(order.orderId)}
+                          onClick={() => setPendingOrderAction({ orderId: order.orderId, action: "reported" })}
                           type="button"
                         >
                           Marcar pago informado
@@ -555,7 +530,91 @@ export default function AdminOrdersPage() {
           </section>
         </>
       )}
-      {error && <p className="mt-5 rounded border border-rose-300 bg-rose-50 p-3 text-rose-800" role="alert">{error}</p>}
+      {error && (
+        <section className="admin-inline-alert" role="alert">
+          <div>
+            <strong>No pudimos cargar los pedidos</strong>
+            <p>{error}</p>
+          </div>
+          <button type="button" onClick={() => { setIsLoading(true); setError(null); void refresh(); }} disabled={isLoading}>
+            Reintentar
+          </button>
+        </section>
+      )}
+      {pendingOrderAction && (
+        <div className="fixed inset-0 z-50 grid place-items-center bg-slate-950/50 p-4">
+          <section
+            aria-labelledby="order-action-title"
+            aria-modal="true"
+            className="w-full max-w-lg rounded-2xl bg-white p-6 shadow-2xl"
+            role="dialog"
+          >
+            <p className="text-sm font-semibold uppercase tracking-wide text-emerald-800">Pedido</p>
+            <h2 className="mt-2 text-xl font-bold" id="order-action-title">
+              {pendingOrderAction.action === "cancel"
+                ? "Cancelar pedido y liberar reserva"
+                : pendingOrderAction.action === "confirm"
+                  ? "Confirmar pago verificado"
+                  : "Registrar pago informado"}
+            </h2>
+            <p className="mt-2 text-sm text-slate-600">
+              {pendingOrderAction.action === "cancel"
+                ? "La reserva se liberará. Deja el motivo para que quede registrado en el historial."
+                : pendingOrderAction.action === "confirm"
+                  ? "Confirma solo después de verificar el pago recibido por la tienda."
+                  : "Esto registra que el cliente reportó el pago; no confirma que la transferencia haya sido verificada."}
+            </p>
+            {pendingOrderAction.action === "cancel" && (
+              <label className="mt-5 grid gap-2 text-sm font-medium">
+                Motivo de cancelación
+                <textarea
+                  autoFocus
+                  className="min-h-24 rounded-lg border border-slate-300 px-3 py-2"
+                  maxLength={500}
+                  minLength={3}
+                  onChange={(event) => setCancellationReason(event.target.value)}
+                  placeholder="Ej.: pago no recibido"
+                  required
+                  value={cancellationReason}
+                />
+              </label>
+            )}
+            <div className="mt-6 flex flex-wrap justify-end gap-3">
+              <button
+                className="rounded-lg border border-slate-300 px-4 py-2 font-semibold"
+                disabled={workingOrderId === pendingOrderAction.orderId}
+                onClick={() => {
+                  setPendingOrderAction(null);
+                  setCancellationReason("");
+                  setError(null);
+                }}
+                type="button"
+              >
+                Volver
+              </button>
+              <button
+                className={`rounded-lg px-4 py-2 font-semibold text-white disabled:opacity-50 ${
+                  pendingOrderAction.action === "cancel" ? "bg-rose-700" : "bg-emerald-700"
+                }`}
+                disabled={
+                  workingOrderId === pendingOrderAction.orderId ||
+                  (pendingOrderAction.action === "cancel" && cancellationReason.trim().length < 3)
+                }
+                onClick={() => void submitPendingOrderAction()}
+                type="button"
+              >
+                {workingOrderId === pendingOrderAction.orderId
+                  ? "Procesando..."
+                  : pendingOrderAction.action === "cancel"
+                    ? "Cancelar pedido"
+                    : pendingOrderAction.action === "confirm"
+                      ? "Confirmar pago"
+                      : "Registrar pago informado"}
+              </button>
+            </div>
+          </section>
+        </div>
+      )}
       {notice && <p className="mt-5 rounded border border-emerald-300 bg-emerald-50 p-3 text-emerald-800" role="status">{notice}</p>}
     </main>
   );
