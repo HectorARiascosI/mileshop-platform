@@ -28,4 +28,5 @@ jobs:
             --request POST \
             --header "Authorization: Bearer $CRON_SECRET" \
             --header "Content-Type: application/json" \
+            --data '{}' \
             "$MAINTENANCE_URL"
