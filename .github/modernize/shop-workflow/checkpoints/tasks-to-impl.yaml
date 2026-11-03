@@ -1,0 +1,214 @@
+metadata:
+  generated: "2026-10-31"
+  source_tasks: ".github/modernize/shop-workflow/tasks.json"
+  last_updated: "2026-10-31"
+summary:
+  total_tasks: 5
+  completed_tasks: 5
+  in_progress_tasks: 0
+  pending_tasks: 0
+  completion_percentage: 100.0
+tasks:
+  - task_id: "SHOP-001"
+    description: "Record current architecture, superseded proof-upload/expiry decisions, reservation policy, and phased acceptance criteria."
+    status: "completed"
+    implementation:
+      files_changed:
+        - file: ".github/modernize/shop-workflow/plan.md"
+          changes:
+            - change_type: "added"
+              description: "Records requirements, decisions, phased delivery, and the Vercel/API gateway boundary."
+        - file: ".github/modernize/shop-workflow/tasks.json"
+          changes:
+            - change_type: "added"
+              description: "Tracks first-batch tasks and acceptance criteria."
+    verification:
+      build_passed: true
+      test_results:
+        command: "Planning artifacts reviewed against current repository state."
+        passed: 0
+        failed: 0
+        skipped: 0
+        failures: []
+      notes: "Prior inventory artifacts remain preserved and are explicitly marked as superseded where requirements changed."
+    upstream_trace:
+      plan_item: "Batch 1"
+      requirements: ["REQ-001", "REQ-002", "REQ-003"]
+      full_trace: "REQ-001..REQ-003 → Batch 1 → SHOP-001 → shop-workflow plan and tasks"
+  - task_id: "SHOP-002"
+    description: "Implement a pure WhatsApp URL builder with international phone validation and the persisted order's complete summary."
+    status: "completed"
+    implementation:
+      files_changed:
+        - file: "apps/web/src/lib/whatsapp-order.ts"
+          changes:
+            - change_type: "added"
+              description: "Validates the international phone and the persisted order before building the WhatsApp message."
+        - file: "apps/web/src/lib/whatsapp-order.test.ts"
+          changes:
+            - change_type: "added"
+              description: "Tests normalization, complete summary, and invalid inputs."
+    verification:
+      build_passed: true
+      test_results:
+        command: "npm test --workspace apps/web"
+        passed: 8
+        failed: 0
+        skipped: 0
+        failures: []
+      notes: "Three tests specifically cover the new helper."
+    upstream_trace:
+      plan_item: "Batch 1"
+      requirements: ["REQ-002", "REQ-003"]
+      full_trace: "REQ-002..REQ-003 → Batch 1 → SHOP-002 → whatsapp-order.ts and tests"
+  - task_id: "SHOP-003"
+    description: "Navigate to WhatsApp only after order persistence, preserving a fallback for popup/configuration failures."
+    status: "completed"
+    implementation:
+      files_changed:
+        - file: "apps/web/src/components/catalog-shell.tsx"
+          changes:
+            - change_type: "modified"
+              description: "Opens WhatsApp only after a successful order POST and validated persisted response."
+        - file: "apps/web/src/app/checkout/checkout-order.tsx"
+          changes:
+            - change_type: "added"
+              description: "Shows the saved order and a fallback WhatsApp CTA with manual attachment guidance."
+        - file: "apps/web/.env.example"
+          changes:
+            - change_type: "added"
+              description: "Documents the configurable public Business phone."
+    verification:
+      build_passed: true
+      test_results:
+        command: "npm run build --workspace apps/web"
+        passed: 1
+        failed: 0
+        skipped: 0
+        failures: []
+      notes: "Storefront typecheck, lint, test, and production build all passed."
+    upstream_trace:
+      plan_item: "Batch 1"
+      requirements: ["REQ-001", "REQ-003"]
+      full_trace: "REQ-001..REQ-003 → Batch 1 → SHOP-003 → checkout and handoff"
+  - task_id: "SHOP-004"
+    description: "Verify first-batch behavior using focused storefront tests, typecheck, and lint."
+    status: "completed"
+    implementation:
+      files_changed:
+        - file: ".github/modernize/shop-workflow/batch-report-B01.yaml"
+          changes:
+            - change_type: "added"
+              description: "Records the exact test, typecheck, lint, and build results."
+        - file: ".github/modernize/shop-workflow/checkpoints/tasks-to-impl.yaml"
+          changes:
+            - change_type: "added"
+              description: "Records implementation traceability and pending phases."
+    verification:
+      build_passed: true
+      test_results:
+        command: "npm test --workspace apps/web"
+        passed: 8
+        failed: 0
+        skipped: 0
+        failures: []
+      notes: "npm run typecheck, lint, build and git diff --check also passed."
+    upstream_trace:
+      plan_item: "Batch 1"
+      requirements: ["REQ-001", "REQ-002", "REQ-003"]
+      full_trace: "REQ-001..REQ-003 → Batch 1 → SHOP-004 → storefront validation"
+  - task_id: "SHOP-005"
+    description: "Harden the Next.js-to-gateway boundary for Vercel and document the separate backend requirement."
+    status: "completed"
+    implementation:
+      files_changed:
+        - file: "apps/web/src/lib/api-gateway-url.ts"
+          changes:
+            - change_type: "added"
+              description: "Validates the server-side gateway URL; production requires HTTPS and no localhost fallback is applied."
+        - file: "apps/web/src/lib/api-gateway-url.test.ts"
+          changes:
+            - change_type: "added"
+              description: "Covers missing, local, HTTPS, invalid, and path-prefix URL cases."
+        - file: "apps/web/src/app/api"
+          changes:
+            - change_type: "modified"
+              description: "Routes auth and orders calls through the validated gateway endpoint and distinguish outages from expired sessions."
+        - file: "apps/web/src/app/page.tsx"
+          changes:
+            - change_type: "modified"
+              description: "Uses the same validated gateway endpoint for server-rendered catalog requests."
+        - file: "apps/web/.tsupgrader/runtime-validation/eval-plan.json"
+          changes:
+            - change_type: "modified"
+              description: "Uses an isolated production-server probe on port 3200 to avoid the existing Next development server lock."
+        - file: "apps/web/README.md"
+          changes:
+            - change_type: "modified"
+              description: "Documents server-only API_GATEWAY_URL and the separate backend deployment requirement."
+        - file: "apps/web/.env.example"
+          changes:
+            - change_type: "modified"
+              description: "Documents the local API_GATEWAY_URL placeholder."
+    verification:
+      build_passed: true
+      test_results:
+        command: "npm test --workspace apps/web"
+        passed: 13
+        failed: 0
+        skipped: 0
+        failures: []
+      notes: "Web typecheck, lint, production build and standalone runtime validation (5/5 assertions) passed."
+    upstream_trace:
+      plan_item: "Follow-up — Vercel proxy readiness"
+      requirements: ["REQ-006"]
+      full_trace: "REQ-006 → Vercel proxy readiness → SHOP-005 → validated Next.js gateway boundary"
+pending_tasks:
+  - task_id: "SHOP-INV"
+    description: "Implement atomic inventory reservation, idempotent saga recovery, expiry, and release."
+    blocked_by: []
+    priority: "P1"
+  - task_id: "SHOP-ADMIN"
+    description: "Implement owner-only product/order administration, fulfillment, payment ledger, and amendments."
+    blocked_by: ["SHOP-INV"]
+    priority: "P1"
+  - task_id: "SHOP-DEPLOY"
+    description: "Implement and validate a complete portable serverless backend/deployment path."
+    blocked_by: ["SHOP-INV", "SHOP-ADMIN"]
+    priority: "P1"
+untracked_changes: []
+traceability_chain:
+  - chain_id: "SHOP-TRACE-001"
+    requirement: "REQ-001"
+    plan_phase: "Batch 1"
+    plan_item: "Persisted order → WhatsApp handoff"
+    tasks: ["SHOP-003"]
+    files:
+      - "apps/web/src/components/catalog-shell.tsx"
+      - "apps/web/src/app/checkout/checkout-order.tsx"
+    status: "complete"
+  - chain_id: "SHOP-TRACE-002"
+    requirement: "REQ-002"
+    plan_phase: "Batch 1"
+    plan_item: "Persisted order summary"
+    tasks: ["SHOP-002"]
+    files:
+      - "apps/web/src/lib/whatsapp-order.ts"
+      - "apps/web/src/lib/whatsapp-order.test.ts"
+    status: "complete"
+  - chain_id: "SHOP-TRACE-003"
+    requirement: "REQ-006"
+    plan_phase: "Vercel proxy readiness"
+    plan_item: "Fail-closed, HTTPS-only production gateway configuration"
+    tasks: ["SHOP-005"]
+    files:
+      - "apps/web/src/lib/api-gateway-url.ts"
+      - "apps/web/src/lib/api-gateway-url.test.ts"
+      - "apps/web/README.md"
+    status: "complete"
+validation:
+  passed: true
+  errors: []
+  warnings:
+    - "Inventory, admin/payment ledger, and complete Vercel backend remain pending; this batch only hardens the frontend gateway boundary."
+  blocking_issues: []

@@ -1,6 +1,7 @@
 generator client {
-  provider = "prisma-client-js"
-  output   = "../generated/catalog-client"
+  provider        = "prisma-client-js"
+  output          = "../generated/catalog-client"
+  previewFeatures = ["driverAdapters"]
 }
 
 datasource db {
@@ -8,16 +9,184 @@ datasource db {
   url      = env("DATABASE_URL")
 }
 
+enum CategoryTheme {
+  neutral
+  gold
+  blue
+  fuchsia
+  wood
+}
+
 model Product {
-  id          String   @id @default(cuid())
-  sku         String   @unique
-  name        String
-  description String
-  priceCop    Int
-  stock       Int
-  isActive    Boolean  @default(true)
-  createdAt   DateTime @default(now())
-  updatedAt   DateTime @updatedAt
+  id            String             @id @default(cuid())
+  sku           String             @unique
+  name          String
+  description   String
+  priceCop      Int
+  stock         Int
+  imageUrl      String?
+  imageFileId   String?
+  categoryId    String?
+  isActive      Boolean            @default(true)
+  createdAt     DateTime           @default(now())
+  updatedAt     DateTime           @updatedAt
+  category      Category?          @relation(fields: [categoryId], references: [id], onDelete: Restrict)
+  images        ProductImage[]
+  promotions    PromotionProduct[]
+  manualSales   ManualSaleLine[]
+  stockReceipts StockReceiptLine[]
 
   @@index([isActive, name])
+  @@index([categoryId])
+}
+
+model ProductImage {
+  id          String  @id @default(cuid())
+  productId   String
+  imageUrl    String
+  imageFileId String?
+  position    Int
+  product     Product @relation(fields: [productId], references: [id], onDelete: Cascade)
+
+  @@unique([productId, position])
+  @@index([productId])
+}
+
+model Category {
+  id        String        @id @default(cuid())
+  name      String        @unique
+  slug      String        @unique
+  theme     CategoryTheme @default(neutral)
+  createdAt DateTime      @default(now())
+  updatedAt DateTime      @updatedAt
+  products  Product[]
+}
+
+model Promotion {
+  id          String             @id @default(cuid())
+  title       String
+  description String
+  startsAt    DateTime
+  endsAt      DateTime
+  isActive    Boolean            @default(true)
+  createdAt   DateTime           @default(now())
+  updatedAt   DateTime           @updatedAt
+  products    PromotionProduct[]
+
+  @@index([isActive, startsAt, endsAt])
+}
+
+model PromotionProduct {
+  promotionId     String
+  productId       String
+  discountPercent Int
+  promotion       Promotion @relation(fields: [promotionId], references: [id], onDelete: Cascade)
+  product         Product   @relation(fields: [productId], references: [id], onDelete: Cascade)
+
+  @@id([promotionId, productId])
+  @@index([productId])
+}
+
+model Announcement {
+  id        String   @id @default(cuid())
+  title     String
+  message   String
+  linkUrl   String?
+  linkLabel String?
+  startsAt  DateTime
+  endsAt    DateTime
+  isActive  Boolean  @default(true)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([isActive, startsAt, endsAt])
+}
+
+model StockReceipt {
+  id                 String             @id @default(cuid())
+  idempotencyKey     String             @unique
+  adminCustomerId    String
+  reason             String
+  requestFingerprint String
+  createdAt          DateTime           @default(now())
+  lines              StockReceiptLine[]
+
+  @@index([createdAt])
+  @@index([adminCustomerId, createdAt])
+}
+
+model StockReceiptLine {
+  id        String       @id @default(cuid())
+  receiptId String
+  productId String
+  sku       String
+  name      String
+  quantity  Int
+  receipt   StockReceipt @relation(fields: [receiptId], references: [id], onDelete: Cascade)
+  product   Product      @relation(fields: [productId], references: [id], onDelete: Restrict)
+
+  @@unique([receiptId, productId])
+}
+
+model ManualSale {
+  id              String           @id @default(cuid())
+  idempotencyKey  String           @unique
+  adminCustomerId String
+  requestLines    Json
+  createdAt       DateTime         @default(now())
+  lines           ManualSaleLine[]
+
+  @@index([createdAt])
+}
+
+model ManualSaleLine {
+  id           String     @id @default(cuid())
+  saleId       String
+  productId    String
+  sku          String
+  name         String
+  quantity     Int
+  unitPriceCop Int
+  sale         ManualSale @relation(fields: [saleId], references: [id], onDelete: Cascade)
+  product      Product    @relation(fields: [productId], references: [id], onDelete: Restrict)
+
+  @@unique([saleId, productId])
+}
+
+model InventoryReservation {
+  id           String                     @id @default(cuid())
+  orderId      String                     @unique
+  requestLines Json
+  status       String                     @default("RESERVED")
+  createdAt    DateTime                   @default(now())
+  items        InventoryReservationLine[]
+  movements    InventoryMovement[]
+
+  @@index([status, createdAt])
+}
+
+model InventoryReservationLine {
+  id            String               @id @default(cuid())
+  reservationId String
+  productId     String
+  sku           String
+  name          String
+  quantity      Int
+  unitPriceCop  Int
+  reservation   InventoryReservation @relation(fields: [reservationId], references: [id], onDelete: Cascade)
+
+  @@unique([reservationId, productId])
+}
+
+model InventoryMovement {
+  id            String               @id @default(cuid())
+  reservationId String
+  productId     String
+  movementType  String
+  quantityDelta Int
+  createdAt     DateTime             @default(now())
+  reservation   InventoryReservation @relation(fields: [reservationId], references: [id], onDelete: Restrict)
+
+  @@unique([reservationId, productId, movementType])
+  @@index([productId, createdAt])
 }

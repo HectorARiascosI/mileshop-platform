@@ -1,17 +1,27 @@
-# Infraestructura local
+# Infraestructura de MileShop
 
-El compose local levanta la base PostgreSQL exclusiva de `notification-worker` en el puerto `5433`.
+## Desarrollo local
 
-```powershell
-docker compose -f infra/docker-compose.yml up -d notification-postgres
-```
-
-Despues, desde `services/notification-worker`:
+El Compose local provisiona cuatro bases PostgreSQL aisladas por dominio:
 
 ```powershell
-$env:DATABASE_URL = "postgresql://notifications:notifications@localhost:5433/notifications"
-npm run db:generate
-npx prisma migrate dev --schema prisma/schema.prisma --name initial
+docker compose -f infra/docker-compose.yml up -d --wait
+npm run db:deploy
 ```
 
-Cada servicio nuevo tendra su propia base y compose o recurso administrado; no se compartiran tablas entre dominios.
+Consulta [`docs/LOCAL_STACK_RUNBOOK.md`](../docs/LOCAL_STACK_RUNBOOK.md) para arrancar los servicios, sembrar el catálogo y ejecutar el smoke de compra.
+
+## Despliegue serverless: Vercel + Neon
+
+La arquitectura elegida para esta etapa despliega la web y los cinco servicios como seis proyectos Vercel independientes, con cuatro bases PostgreSQL de Neon. La guía de proyectos, variables, migraciones y límites está en [`docs/DEPLOYMENT-VERCEL-NEON.md`](../docs/DEPLOYMENT-VERCEL-NEON.md).
+
+El Compose de producción queda como alternativa para una futura VM; no es necesario para desplegar en Vercel. La configuración de esa alternativa está en `docker-compose.production.yml`.
+
+Para el desarrollo local, el Compose de bases de datos:
+
+```bash
+cp infra/production.env.example infra/.env.production
+docker compose --env-file infra/.env.production -f infra/docker-compose.production.yml config --quiet
+```
+
+No uses las credenciales de `infra/docker-compose.yml` en producción y nunca guardes secretos en Git.

@@ -15,6 +15,8 @@ const event: OrderCreatedEvent = {
   aggregateId: "order-1",
   payload: {
     customerId: "customer-1",
+    subtotalCop: 25000,
+    deliveryFeeCop: 0,
     totalCop: 25000,
     currency: "COP",
     lines: [

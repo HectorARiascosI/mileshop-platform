@@ -3,16 +3,22 @@ import { PrismaClient } from "../generated/catalog-client/index.js";
 
 import {
   CatalogService,
+  type CatalogStore,
   InMemoryCatalogStore,
 } from "./catalog.service.js";
 import { CatalogController } from "./catalog.controller.js";
+import { InventoryCommandGuard } from "./inventory-command.guard.js";
 import { PrismaCatalogStore } from "./prisma.catalog.store.js";
 import { PrismaService } from "./prisma.service.js";
 
 @Module({
   controllers: [CatalogController],
   providers: [
-    InMemoryCatalogStore,
+    {
+      provide: InMemoryCatalogStore,
+      useFactory: () => new InMemoryCatalogStore(),
+    },
+    InventoryCommandGuard,
     PrismaService,
     {
       provide: "PRISMA_CLIENT",
@@ -29,7 +35,7 @@ import { PrismaService } from "./prisma.service.js";
     {
       provide: "CATALOG_SERVICE",
       inject: ["CATALOG_STORE"],
-      useFactory: (store: InMemoryCatalogStore) => new CatalogService(store),
+      useFactory: (store: CatalogStore) => new CatalogService(store),
     },
   ],
 })

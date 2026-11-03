@@ -17,7 +17,7 @@ La portada del storefront usa el App Router de Next.js y consulta `API_GATEWAY_U
 - El contrato esperado es `{ data: Product[] }`.
 - Hay estados explicitos de productos, catalogo vacio y servicio indisponible.
 - La interfaz es responsive y no inventa productos cuando la API falla.
-- El carrito visible es una entrada de interfaz; su comportamiento se implementara en un slice separado.
+- El carrito y el checkout existen en `catalog-shell.tsx`; la persistencia del pedido se delega al gateway y `orders-service`.
 
 ## Verificacion
 

@@ -10,6 +10,7 @@ export const orderLineSchema = z.object({
 
 export const createOrderSchema = z.object({
   customerId: z.string().min(1),
+  idempotencyKey: z.string().uuid(),
   lines: z.array(orderLineSchema).min(1),
 });
 

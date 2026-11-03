@@ -5,9 +5,10 @@ Servicio propietario de pedidos y líneas de compra. Esta capa centraliza valida
 ## Responsabilidad
 
 - Crear pedidos con validación de negocio y trazabilidad.
-- Calcular subtotal, total y líneas del pedido con reglas de dominio explícitas.
+- Calcular subtotal, envío y total con reglas de dominio explícitas.
 - Persistir el estado del pedido en su propia base de datos PostgreSQL.
-- Exponer endpoints HTTP seguros para consulta y creación.
+- Mantener una outbox persistente de `OrderCreated.v1` y reintentar publicaciones fallidas.
+- Exponer endpoints HTTP internos para consulta y creación; autenticación y autorización de clientes son responsabilidad del API Gateway.
 - Mantener la base de datos fuera del alcance del catálogo, notificaciones y gateway.
 
 ## Base de datos
@@ -31,22 +32,48 @@ npm run db:deploy --workspace @mileshop/orders-service
 
 - `DATABASE_URL`: conexión exclusiva para PostgreSQL del servicio de pedidos.
 - `PORT`: puerto HTTP del servicio. Por defecto `3030`.
+- `CATALOG_SERVICE_URL`: URL interna de `catalog-service`, por defecto `http://localhost:3020`.
+- `NOTIFICATION_WORKER_URL`: URL interna de `notification-worker`, por defecto `http://localhost:3010`.
+- `CATALOG_RESERVATION_TOKEN` y `CATALOG_INVENTORY_COMMAND_TOKEN`: secretos compartidos con Catálogo.
+- `ORDERS_INTERNAL_TOKEN`: secreto compartido con API Gateway; en producción debe tener al menos 32 caracteres.
+- `CRON_SECRET`: secreto para el mantenimiento programado.
 - `ALLOWED_ORIGINS`: orígenes web permitidos para CORS.
 - `RATE_LIMIT_MAX`: máximo de requests por ventana de tiempo. Por defecto `120`.
+
+En Vercel, configura URLs HTTPS terminadas en `/api` para los servicios remotos y una URL pooled de Neon para `DATABASE_URL`. La guía de los seis proyectos, variables y migraciones está en [`docs/DEPLOYMENT-VERCEL-NEON.md`](../../docs/DEPLOYMENT-VERCEL-NEON.md).
 
 ## Endpoints
 
 - `GET /healthz`
+- `GET /readyz`
+- `POST /internal/maintenance` (interno; requiere `Authorization: Bearer <CRON_SECRET>`)
 - `POST /orders`
 - `GET /orders/:orderId`
+- `POST /orders/:orderId/cancel`
+- `GET /admin/orders`
+- `POST /admin/orders/:orderId/confirm`
+- `POST /admin/orders/:orderId/cancel`
+
+Las rutas de negocio deben recibirse desde API Gateway, que verifica el JWT y transmite la identidad autenticada junto con `ORDERS_INTERNAL_TOKEN`. Orders valida ese token; no debe exponerse directamente a clientes sin esa frontera.
 
 ## Reglas de negocio
 
 - Un pedido debe tener al menos una línea activa.
 - Cada línea debe tener cantidad positiva.
-- El total se calcula como suma de `unitPriceCop * quantity`.
+- El subtotal se calcula como suma de `unitPriceCop * quantity`; el envío es gratis desde COP 150.000 y, por debajo, corresponde al mayor entre COP 12.000 y 8 % del subtotal, redondeado al peso.
+- El total persistido es subtotal más envío; el cliente no decide estos importes.
+- El pedido reserva inventario durante su creación y mantiene la reserva por dos horas para el pago manual. Si no se confirma a tiempo, Orders expira el pedido y libera el stock mediante el mantenimiento programado.
+- Si el cliente informa por WhatsApp que ya pagó, la administradora debe usar **Marcar pago informado** antes del vencimiento. Esto crea una marca auditable y suspende la expiración automática hasta confirmar o cancelar el pedido; no sustituye la verificación de la transferencia.
+- El pago se coordina manualmente por WhatsApp Business; no existe pasarela de pago.
 - La identidad de pedido es estable por `orderId`.
+- Los reintentos con la misma clave UUID y el mismo cliente recuperan el pedido original; otra identidad que reutilice la clave recibe conflicto.
 - Los datos de entrada se validan con Zod y el servicio no acepta payloads vacíos ni inválidos.
+- Cada línea se contrasta contra el catálogo activo por `productId`, SKU, precio y stock; el nombre persistido se canonicaliza desde catálogo.
+- Si el catálogo no está disponible, la creación responde como dependencia no disponible y no persiste el pedido.
+
+La publicación de `OrderCreated.v1` se intenta después de persistir el pedido. Si falla, la outbox conserva el evento para reintento. En Vercel no hay timers residentes: un scheduler externo gratuito llama cada minuto a `POST /internal/maintenance`, que recupera intents, outbox y comandos pendientes y expira hasta 25 reservas vencidas por ejecución. Los lotes restantes se procesan en las siguientes ejecuciones. Los pedidos existentes sin `reservationExpiresAt` no se modifican automáticamente; requieren revisión operativa antes de activar la expiración.
+
+El proveedor de almacenamiento de comprobantes no está registrado en `AppModule`; sus rutas responden con error explícito y no deben usarse en Vercel. El flujo actual comparte el pedido por WhatsApp, y la administradora valida el pago fuera de la plataforma.
 
 ## Seguridad
 

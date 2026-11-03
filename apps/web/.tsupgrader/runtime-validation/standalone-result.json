@@ -1,0 +1,157 @@
+{
+  "planHash": "5fd629db90bb70201a63bdf88e39c415458cd2c78dc606fc60af53f415bbac4d",
+  "phase": "standalone",
+  "recordedAtUtc": "2026-10-31T08:38:36.5378829Z",
+  "retryCount": 3,
+  "resetBaseline": false,
+  "complete": true,
+  "result": {
+    "setupSucceeded": true,
+    "setupDurationMs": 0,
+    "setupFailureOutput": null,
+    "assertions": [
+      {
+        "name": "tests-pass",
+        "kind": "process",
+        "verificationMethod": "test-results",
+        "passed": true,
+        "timedOut": false,
+        "skipped": false,
+        "skippedReason": null,
+        "exitCode": 0,
+        "outputSample": "\r\n\u003E web@0.1.0 test\r\n\u003E node --import tsx --test src/**/*.test.ts\r\n\r\n\u2714 rejects a missing gateway URL (1.0095ms)\r\n\u2714 allows a local HTTP gateway outside production (0.2518ms)\r\n\u2714 preserves a configured gateway base path (0.1497ms)\r\n\u2714 requires HTTPS in production (0.1043ms)\r\n\u2714 rejects unsafe or malformed gateway URLs and paths (0.2245ms)\r\n\u2714 agrega un producto al carrito y acumula cantidad (0.91ms)\r\n\u2714 actualiza la cantidad y elimina un producto (1.0168ms)\r\n\u2714 calcula subtotal, env\u00EDo y total del pedido (0.7862ms)\r\n\u2714 construye el evento de pedido con datos del cliente y l\u00EDneas de compra (1.2363ms)\r\n\u2714 rechaza la creaci\u00F3n del evento si no hay cliente identificado (0.4766ms)\r\n\u2714 normaliza solo n\u00FAmeros de tel\u00E9fono en formato internacional E.164 (1.1606ms)\r\n\u2714 construye enlace con la referencia, todas las l\u00EDneas y totales persistidos (11.9166ms)\r\n\u2714 no crea enlace si falta el tel\u00E9fono o el resumen no es v\u00E1lido (0.1532ms)\r\n\u2139 tests 13\r\n\u2139 suites 0\r\n\u2139 pass 13\r\n\u2139 fail 0\r\n\u2139 cancelled 0\r\n\u2139 skipped 0\r\n\u2139 todo 0\r\n\u2139 duration_ms 222.4585\r\n",
+        "durationMs": 905,
+        "testResults": {
+          "testFramework": "unknown",
+          "runnerDetectedFrom": "none",
+          "testsTotal": 0,
+          "testsPassed": 0,
+          "testsFailed": 0,
+          "testsSkipped": 0,
+          "parseFailed": true
+        }
+      },
+      {
+        "name": "web-typecheck",
+        "kind": "process",
+        "verificationMethod": "exit-code",
+        "passed": true,
+        "timedOut": false,
+        "skipped": false,
+        "skippedReason": null,
+        "exitCode": 0,
+        "outputSample": "\r\n\u003E web@0.1.0 typecheck\r\n\u003E tsc --noEmit\r\n\r\n",
+        "durationMs": 1539
+      },
+      {
+        "name": "web-lint",
+        "kind": "process",
+        "verificationMethod": "exit-code",
+        "passed": true,
+        "timedOut": false,
+        "skipped": false,
+        "skippedReason": null,
+        "exitCode": 0,
+        "outputSample": "\r\n\u003E web@0.1.0 lint\r\n\u003E eslint\r\n\r\n",
+        "durationMs": 4903
+      },
+      {
+        "name": "web-production-build",
+        "kind": "process",
+        "verificationMethod": "exit-code",
+        "passed": true,
+        "timedOut": false,
+        "skipped": false,
+        "skippedReason": null,
+        "exitCode": 0,
+        "outputSample": "\r\n\u003E web@0.1.0 build\r\n\u003E next build\r\n\r\n\u25B2 Next.js 16.3.5 (Turbopack)\r\n- Environments: .env.local\r\n\u2713 Running next.config.ts took 41ms\r\n\r\n  Creating an optimized production build ...\r\n\u2713 Compiled successfully in 861ms\r\n  Running TypeScript ...\r\n  Finished TypeScript in 1255ms ...\r\n  Collecting page data using 13 workers ...\r\n  Generating static pages using 13 workers (0/13) ...\r\n  Generating static pages using 13 workers (3/13) \r\n  Generating static pages using 13 workers (6/13) \r\n  Generating static pages using 13 workers (9/13) \r\n\u2713 Generating static pages using 13 workers (13/13) in 292ms\r\n  Finalizing page optimization ...\r\n\r\nRoute (app)\r\n\u250C \u25CB /\r\n\u251C \u25CB /_not-found\r\n\u251C \u0192 /api/auth/login\r\n\u251C \u0192 /api/auth/logout\r\n\u251C \u0192 /api/auth/me\r\n\u251C \u0192 /api/auth/refresh\r\n\u251C \u0192 /api/auth/register\r\n\u251C \u0192 /api/orders\r\n\u251C \u0192 /api/orders/[orderId]\r\n\u251C \u0192 /checkout\r\n\u251C \u25CB /login\r\n\u2514 \u25CB /register\r\n\r\n\r\n\u25CB  (Static)   prerendered as static content\r\n\u0192  (Dynamic)  server-rendered on demand\r\n\r\n",
+        "durationMs": 6793
+      },
+      {
+        "name": "web-home-responds",
+        "kind": "http-probe",
+        "verificationMethod": "http-status",
+        "passed": true,
+        "timedOut": false,
+        "skipped": false,
+        "skippedReason": null,
+        "exitCode": null,
+        "outputSample": "HTTP 200\n\u003C!DOCTYPE html\u003E\u003Chtml lang=\u0022es\u0022 class=\u0022h-full antialiased\u0022\u003E\u003Chead\u003E\u003Cmeta charSet=\u0022utf-8\u0022/\u003E\u003Cmeta name=\u0022viewport\u0022 content=\u0022width=device-width, initial-scale=1\u0022/\u003E\u003Clink rel=\u0022stylesheet\u0022 href=\u0022/_next/static/chunks/0p5gr8gui7lbh.css\u0022 data-precedence=\u0022next\u0022/\u003E\u003Clink rel=\u0022preload\u0022 as=\u0022script\u0022 fetchPriority=\u0022low\u0022 href=\u0022/_next/static/chunks/25xw8413zq12b.js\u0022/\u003E\u003Cscript src=\u0022/_next/static/chunks/416o0n_m-sb8h.js\u0022 async=\u0022\u0022\u003E\u003C/script\u003E\u003Cscript src=\u0022/_next/static/chunks/14_mv3952oobp.js\u0022 async=\u0022\u0022\u003E\u003C/script\u003E\u003Cscript src=\u0022/_next/static/chunks/turbopack-3ph9meipcencr.js\u0022 async=\u0022\u0022\u003E\u003C/script\u003E\u003Cscript src=\u0022/_next/static/chunks/3tx3-k52xo05h.js\u0022 async=\u0022\u0022\u003E\u003C/script\u003E\u003Cscript src=\u0022/_next/static/chunks/2-38xq5u5kun3.js\u0022 async=\u0022\u0022\u003E\u003C/script\u003E\u003Ctitle\u003EMileShop | Catalogo\u003C/title\u003E\u003Cmeta name=\u0022description\u0022 content=\u0022Cat\u00E1logo de productos de MileShop\u0022/\u003E\u003Clink rel=\u0022shortcut icon\u0022 href=\u0022/favicon.svg\u0022/\u003E\u003Clink rel=\u0022icon\u0022 href=\u0022/favicon.ico?favicon.2vob68tjqpejf.ico\u0022 sizes=\u0022256x256\u0022 type=\u0022image/x-icon\u0022/\u003E\u003Clink rel=\u0022icon\u0022 href=\u0022/favicon.svg\u0022/\u003E\u003Clink rel=\u0022apple-touch-icon\u0022 href=\u0022/favicon.svg\u0022/\u003E\u003Cscript src=\u0022/_next/static/chunks/0cz1d0mv5g_q7.js\u0022 noModule=\u0022\u0022\u003E\u003C/script\u003E\u003C/head\u003E\u003Cbody class=\u0022min-h-full flex flex-col\u0022\u003E\u003Cdiv hidden=\u0022\u0022\u003E\u003C!--$--\u003E\u003C!--/$--\u003E\u003C/div\u003E\u003Cdiv class=\u0022site-shell\u0022\u003E\u003Cheader class=\u0022topbar\u0022\u003E\u003Ca class=\u0022brand\u0022 aria-label=\u0022MileShop inicio\u0022 href=\u0022/\u0022\u003E\u003Cspan class=\u0022brand-mark\u0022\u003EM\u003C/span\u003E\u003Cspan\u003EMileShop\u003C/span\u003E\u003C/a\u003E\u003Cdiv class=\u0022topbar-meta\u0022\u003E\u003Cspan\u003ECompra local, elige con calma\u003C/span\u003E\u003Cbutton class=\u0022cart-button\u0022 type=\u0022button\u0022 aria-label=\u0022Ver carrito\u0022\u003ECarrito \u003Cspan class=\u0022cart-count\u0022\u003E0\u003C/span\u003E\u003C/button\u003E\u003C/div\u003E\u003C/header\u003E\u003Cmain class=\u0022catalog-page\u0022\u003E\u003Csection class=\u0022intro\u0022 aria-labelledby=\u0022catalog-title\u0022\u003E\u003Cdiv\u003E\u003Cp class=\u0022eyebrow\u0022\u003ESelecci\u00F3n MileShop\u003C/p\u003E\u003Ch1 id=\u0022catalog-title\u0022\u003ELo que necesitas,\u003Cbr/\u003Esin complicaciones.\u003C/h1\u003E\u003C/div\u003E\u003Cp class=\u0022intro-copy\u0022\u003EProductos elegidos para resolver lo cotidiano. Explora el cat\u00E1logo y encuentra tu pr\u00F3ximo favorito.\u003C/p\u003E\u003C/section\u003E\u003Csection class=\u0022product-grid\u0022 aria-label=\u0022Productos disponibles\u0022\u003E\u003Carticle class=\u0022product-card\u0022\u003E\u003Cdiv class=\u0022product-art product-art-0\u0022 aria-hidden=\u0022true\u0022\u003E\u003Cspan\u003EB\u003C/span\u003E\u003C/div\u003E\u003Cdiv class=\u0022product-info\u0022\u003E\u003Cdiv class=\u0022product-heading\u0022\u003E\u003Cp class=\u0022product-sku\u0022\u003EMILE-BAG-001\u003C/p\u003E\u003Cspan class=\u0022stock-label\u0022\u003E12\u003C!-- --\u003E disponibles\u003C/span\u003E\u003C/div\u003E\u003Ch2\u003EBolso de lona\u003C/h2\u003E\u003Cp class=\u0022product-description\u0022\u003ELigero, resistente y listo para acompa\u00F1arte.\u003C/p\u003E\u003Cdiv class=\u0022product-footer\u0022\u003E\u003Cstrong\u003E$\u00A076.000\u003C/strong\u003E\u003Cbutton class=\u0022add-button\u0022 type=\u0022button\u0022\u003EA\u00F1adir \u003Cspan aria-hidden=\u0022true\u0022\u003E\u002B\u003C/span\u003E\u003C/button\u003E\u003C/div\u003E\u003C/div\u003E\u003C/article\u003E\u003Carticle class=\u0022product-card\u0022\u003E\u003Cdiv class=\u0022product-art product-art-1\u0022 aria-hidden=\u0022true\u0022\u003E\u003Cspan\u003EB\u003C/span\u003E\u003C/div\u003E\u003Cdiv class=\u0022product-info\u0022\u003E\u003Cdiv class=\u0022product-heading\u0022\u003E\u003Cp class=\u0022product-sku\u0022\u003EMILE-BTL-001\u003C/p\u003E\u003Cspan class=\u0022stock-label\u0022\u003E20\u003C!-- --\u003E disponibles\u003C/span\u003E\u003C/div\u003E\u003Ch2\u003EBotella t\u00E9rmica\u003C/h2\u003E\u003Cp class=\u0022product-description\u0022\u003EMant\u00E9n tus bebidas a la temperatura perfecta.\u003C/p\u003E\u003Cdiv class=\u0022product-footer\u0022\u003E\u003Cstrong\u003E$\u00A065.000\u003C/strong\u003E\u003Cbutton class=\u0022add-button\u0022 type=\u0022button\u0022\u003EA\u00F1adir \u003Cspan aria-hidden=\u0022true\u0022\u003E\u002B\u003C/span\u003E\u003C/button\u003E\u003C/div\u003E\u003C/div\u003E\u003C/article\u003E\u003Carticle class=\u0022product-card\u0022\u003E\u003Cdiv class=\u0022product-art product-art-2\u0022 aria-hidden=\u0022true\u0022\u003E\u003Cspan\u003EC\u003C/span\u003E\u003C/div\u003E\u003Cdiv class=\u0022product-info\u0022\u003E\u003Cdiv class=\u0022product-heading\u0022\u003E\u003Cp class=\u0022product-sku\u0022\u003EMILE-NOTE-001\u003C/p\u003E\u003Cspan class=\u0022stock-label\u0022\u003E38\u003C!-- --\u003E disponibles\u003C/span\u003E\u003C/div\u003E\u003Ch2\u003ECuaderno de notas\u003C/h2\u003E\u003Cp class=\u0022product-description\u0022\u003EPapel de calidad para tus ideas y planes.\u003C/p\u003E\u003Cdiv class=\u0022product-footer\u0022\u003E\u003Cstrong\u003E$\u00A019.000\u003C/strong\u003E\u003Cbutton class=\u0022add-button\u0022 type=\u0022button\u0022\u003EA\u00F1adir \u003Cspan aria-hidden=\u0022true\u0022\u003E\u002B\u003C/span\u003E\u003C/button\u003E\u003C/div\u003E\u003C/div\u003E\u003C/article\u003E\u003Carticle class=\u0022product-card\u0022\u003E\u003Cdiv class=\u0022product-art product-art-3\u0022 aria-hidden=\u0022true\u0022\u003E\u003Cspan\u003ET\u003C/span\u003E\u003C/div\u003E\u003Cdiv class=\u0022product-info\u0022\u003E\u003Cdiv class=\u0022product-heading\u0022\u003E\u003Cp class=\u0022product-sku\u0022\u003EMILE-MUG-001\u003C/p\u003E\u003Cspan class=\u0022stock-label\u0022\u003E24\u003C!-- --\u003E disponibles\u003C/span\u003E\u003C/div\u003E\u003Ch2\u003ETaza de cer\u00E1mica\u003C/h2\u003E\u003Cp class=\u0022product-description\u0022\u003EUna taza sencilla para empezar bien el d\u00EDa.\u003C/p\u003E\u003Cdiv class=\u0022product-footer\u0022\u003E\u003Cstrong\u003E$\u00A028.000\u003C/strong\u003E\u003Cbutton class=\u0022add-button\u0022 type=\u0022button\u0022\u003EA\u00F1adir \u003Cspan aria-hidden=\u0022true\u0022\u003E\u002B\u003C/span\u003E\u003C/button\u003E\u003C/div\u003E\u003C/div\u003E\u003C/article\n\u2026[truncated]",
+        "durationMs": 28
+      }
+    ],
+    "executions": [
+      {
+        "source": "tests-pass",
+        "resolvedExecutable": "C:\\Program Files\\nodejs\\npm.CMD",
+        "args": [
+          "test",
+          "--workspace",
+          "apps/web"
+        ],
+        "cwd": "C:\\Users\\hecto\\OneDrive\\Desktop\\ProyectosEnProceso\\MileShop\\mileshop-platform",
+        "env": {},
+        "prependPath": [],
+        "platform": "win32"
+      },
+      {
+        "source": "web-typecheck",
+        "resolvedExecutable": "C:\\Program Files\\nodejs\\npm.CMD",
+        "args": [
+          "run",
+          "typecheck",
+          "--workspace",
+          "apps/web"
+        ],
+        "cwd": "C:\\Users\\hecto\\OneDrive\\Desktop\\ProyectosEnProceso\\MileShop\\mileshop-platform",
+        "env": {},
+        "prependPath": [],
+        "platform": "win32"
+      },
+      {
+        "source": "web-lint",
+        "resolvedExecutable": "C:\\Program Files\\nodejs\\npm.CMD",
+        "args": [
+          "run",
+          "lint",
+          "--workspace",
+          "apps/web"
+        ],
+        "cwd": "C:\\Users\\hecto\\OneDrive\\Desktop\\ProyectosEnProceso\\MileShop\\mileshop-platform",
+        "env": {},
+        "prependPath": [],
+        "platform": "win32"
+      },
+      {
+        "source": "web-production-build",
+        "resolvedExecutable": "C:\\Program Files\\nodejs\\npm.CMD",
+        "args": [
+          "run",
+          "build",
+          "--workspace",
+          "apps/web"
+        ],
+        "cwd": "C:\\Users\\hecto\\OneDrive\\Desktop\\ProyectosEnProceso\\MileShop\\mileshop-platform",
+        "env": {},
+        "prependPath": [],
+        "platform": "win32"
+      },
+      {
+        "source": "web-home-responds",
+        "resolvedExecutable": "C:\\Program Files\\nodejs\\npm.CMD",
+        "args": [
+          "run",
+          "start",
+          "--workspace",
+          "apps/web"
+        ],
+        "cwd": "C:\\Users\\hecto\\OneDrive\\Desktop\\ProyectosEnProceso\\MileShop\\mileshop-platform",
+        "env": {
+          "PORT": "3200"
+        },
+        "prependPath": [],
+        "platform": "win32"
+      }
+    ]
+  }
+}

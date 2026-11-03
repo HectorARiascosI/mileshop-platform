@@ -17,10 +17,11 @@ El catalogo necesita ownership claro de sus datos y una forma reproducible de po
 - Los datos de demostracion se cargan con `db:seed`.
 - `sku` es la identidad natural del seed.
 - El seed usa `upsert`, por lo que es idempotente.
+- El seed desactiva productos que ya no forman parte del conjunto de desarrollo y reactiva los SKUs declarados.
 - Los productos inactivos no se exponen en `/products`.
 - Ningun servicio externo consulta las tablas del catalogo directamente.
 
-El seed actual contiene tres productos de desarrollo y no representa datos de produccion.
+El seed actual contiene tres productos de desarrollo y no representa datos de producción.
 
 ## Operacion local
 

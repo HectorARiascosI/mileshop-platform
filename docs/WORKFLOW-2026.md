@@ -92,7 +92,18 @@ El repositorio debe permitir:
 - diagnosticar fallos con trazabilidad;
 - revertir un cambio sin riesgo oculto.
 
-## 9. Recomendación para este repositorio
+## 9. Regla de prioridad documental
+
+Antes de tocar funcionalidad nueva, el equipo debe tener el plan del cambio consolidado en la documentación canónica del repositorio. Si el documento no está redactado, filtrado y alineado con el negocio real, la implementación no entra en prioridad.
+
+Esto evita:
+
+- duplicación de soluciones;
+- trabajo fuera de alcance;
+- decisiones genericas, inventadas o no alineadas con MileShop;
+- cambios de código que se basan en memoria del autor en lugar de planos del proyecto.
+
+## 10. Recomendación para este repositorio
 
 Para este proyecto, el flujo correcto es:
 
@@ -102,7 +113,7 @@ Para este proyecto, el flujo correcto es:
 - `release/*` para promoción de `develop` a `main`;
 - `develop` como integración y `main` como estabilidad final.
 
-## 10. Enfoque de 2026
+## 11. Enfoque de 2026
 
 El estándar de 2026 exige más que “funciona en local”. Exige que el código sea:
 
@@ -114,3 +125,13 @@ El estándar de 2026 exige más que “funciona en local”. Exige que el códig
 - mantenible para años.
 
 Esta es la diferencia entre un proyecto improvisado y un sistema preparado para crecer.
+
+## 12. Criterio final de cierre
+
+La fase no se cierra por “tener algo funcionando”. Se cierra cuando:
+
+- el alcance está definido con claridad;
+- la documentación soporta la decisión;
+- el código está alineado con el plan y no con improvisaciones;
+- la evidencia de validación es consistente;
+- el repositorio no contiene ruido, duplicidad ni contenido genérico.

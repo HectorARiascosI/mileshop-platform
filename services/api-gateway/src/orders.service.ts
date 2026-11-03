@@ -1,7 +1,15 @@
-import { Inject, Injectable, Optional } from "@nestjs/common";
+import {
+  BadRequestException,
+  ConflictException,
+  Inject,
+  Injectable,
+  NotFoundException,
+  ServiceUnavailableException,
+} from "@nestjs/common";
 
 export const ORDER_FETCH = "ORDER_FETCH";
-export const NOTIFICATION_WORKER_URL = "NOTIFICATION_WORKER_URL";
+export const ORDERS_SERVICE_URL = "ORDERS_SERVICE_URL";
+export const ORDERS_INTERNAL_TOKEN = "ORDERS_INTERNAL_TOKEN";
 
 export type OrderLineInput = {
   productId: string;
@@ -12,8 +20,20 @@ export type OrderLineInput = {
 };
 
 export type CreateOrderInput = {
-  customerId: string;
   lines: OrderLineInput[];
+};
+
+export type OrderResult = {
+  orderId: string;
+  customerId: string;
+  subtotalCop: number;
+  deliveryFeeCop: number;
+  totalCop: number;
+  status: string;
+  createdAt: string;
+  updatedAt: string;
+  lines: OrderLineInput[];
+  event?: OrderEvent;
 };
 
 export type OrderEvent = {
@@ -23,6 +43,8 @@ export type OrderEvent = {
   aggregateId: string;
   payload: {
     customerId: string;
+    subtotalCop?: number;
+    deliveryFeeCop?: number;
     totalCop: number;
     currency: "COP";
     lines: Array<{
@@ -35,62 +57,184 @@ export type OrderEvent = {
   };
 };
 
-export type CreatedOrderResult = {
-  orderId: string;
-  totalCop: number;
-  event: OrderEvent;
-};
+export type CreatedOrderResult = OrderResult & { event: OrderEvent };
 
 @Injectable()
 export class OrderService {
   public constructor(
     @Inject(ORDER_FETCH) private readonly fetcher: typeof fetch,
-    @Optional()
-    @Inject(NOTIFICATION_WORKER_URL)
-    private readonly notificationWorkerUrl: string = process.env.NOTIFICATION_WORKER_URL ?? "http://localhost:3010",
+    @Inject(ORDERS_SERVICE_URL) private readonly ordersServiceUrl: string,
+    @Inject(ORDERS_INTERNAL_TOKEN) private readonly ordersInternalToken: string,
   ) {}
 
-  public async createOrder(input: CreateOrderInput): Promise<CreatedOrderResult> {
+  private internalHeaders(customerId?: string, role = "CUSTOMER"): Record<string, string> {
+    return {
+      "x-orders-internal-token": this.ordersInternalToken,
+      "x-authenticated-customer-id": customerId ?? "",
+      "x-authenticated-role": role,
+    };
+  }
+
+  public async createOrder(
+    input: CreateOrderInput,
+    customerId: string,
+    idempotencyKey: string,
+  ): Promise<CreatedOrderResult> {
     const normalizedLines = input.lines.filter((line) => line.quantity > 0);
-    const totalCop = normalizedLines.reduce(
-      (total, line) => total + line.unitPriceCop * line.quantity,
-      0,
-    );
-    const orderId = `order-${Date.now()}`;
-    const event: OrderEvent = {
-      eventType: "OrderCreated.v1",
-      eventId: `${orderId}-event`,
-      occurredAt: new Date().toISOString(),
-      aggregateId: orderId,
-      payload: {
-        customerId: input.customerId,
-        totalCop,
-        currency: "COP",
-        lines: normalizedLines.map((line) => ({
-          productId: line.productId,
-          sku: line.sku,
-          name: line.name,
-          quantity: line.quantity,
-          unitPriceCop: line.unitPriceCop,
-        })),
-      },
+    let orderResponse: Response;
+    try {
+      orderResponse = await this.fetcher(`${this.ordersServiceUrl}/orders`, {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          "idempotency-key": idempotencyKey,
+          ...this.internalHeaders(customerId),
+        },
+        body: JSON.stringify({ customerId, lines: normalizedLines }),
+        signal: AbortSignal.timeout(3_000),
+      });
+    } catch {
+      throw new ServiceUnavailableException("Orders service is unavailable");
+    }
+
+    if (!orderResponse.ok) {
+      const responseBody = await orderResponse.text();
+      console.error(
+        `Orders service createOrder failed: status=${orderResponse.status} body=${responseBody}`,
+      );
+      if (orderResponse.status === 400) {
+        throw new BadRequestException("Order payload rejected by orders service");
+      }
+      if (orderResponse.status === 409) {
+        throw new ConflictException("Idempotency key has already been used");
+      }
+
+      throw new ServiceUnavailableException("Orders service is unavailable");
+    }
+
+    const orderResult = (await orderResponse.json()) as {
+      data: {
+        orderId: string;
+        customerId: string;
+        subtotalCop: number;
+        deliveryFeeCop: number;
+        totalCop: number;
+        status: string;
+        createdAt: string;
+        updatedAt: string;
+        lines: OrderLineInput[];
+        event?: OrderEvent;
+      };
     };
 
-    const response = await this.fetcher(`${this.notificationWorkerUrl}/events/order-created`, {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify(event),
-      signal: AbortSignal.timeout(3_000),
-    });
-
-    if (!response.ok) {
-      throw new Error(`notification worker rejected order creation: ${response.status}`);
+    const persistedOrder = orderResult.data;
+    if (!persistedOrder.event) {
+      throw new ServiceUnavailableException("Orders service did not return an OrderCreated event");
     }
 
     return {
-      orderId,
-      totalCop,
-      event,
+      orderId: persistedOrder.orderId,
+      subtotalCop: persistedOrder.subtotalCop,
+      deliveryFeeCop: persistedOrder.deliveryFeeCop,
+      totalCop: persistedOrder.totalCop,
+      customerId: persistedOrder.customerId,
+      status: persistedOrder.status,
+      createdAt: persistedOrder.createdAt,
+      updatedAt: persistedOrder.updatedAt,
+      lines: persistedOrder.lines,
+      event: persistedOrder.event,
     };
+  }
+
+  public async getOrder(
+    orderId: string,
+    customerId?: string,
+    role = "CUSTOMER",
+  ): Promise<OrderResult> {
+    let response: Response;
+    try {
+      response = await this.fetcher(
+        `${this.ordersServiceUrl}/orders/${encodeURIComponent(orderId)}`,
+        { headers: this.internalHeaders(customerId, role), signal: AbortSignal.timeout(3_000) },
+      );
+    } catch {
+      throw new ServiceUnavailableException("Orders service is unavailable");
+    }
+
+    if (response.status === 404) {
+      throw new NotFoundException("Order not found");
+    }
+    if (!response.ok) {
+      throw new ServiceUnavailableException("Orders service is unavailable");
+    }
+
+    const result = (await response.json()) as { data: OrderResult };
+    return result.data;
+  }
+
+  public async listAdminOrders(customerId: string): Promise<OrderResult[]> {
+    const response = await this.requestAdmin("/admin/orders", "GET", customerId);
+    const result = (await response.json()) as { data: OrderResult[] };
+    return result.data;
+  }
+
+  public async confirmAdminOrder(customerId: string, orderId: string): Promise<unknown> {
+    const response = await this.requestAdmin(
+      `/admin/orders/${encodeURIComponent(orderId)}/confirm`,
+      "POST",
+      customerId,
+    );
+    return (await response.json() as { data: unknown }).data;
+  }
+
+  public async markPaymentReported(customerId: string, orderId: string): Promise<unknown> {
+    const response = await this.requestAdmin(
+      `/admin/orders/${encodeURIComponent(orderId)}/payment-reported`,
+      "POST",
+      customerId,
+    );
+    return (await response.json() as { data: unknown }).data;
+  }
+
+  public async cancelAdminOrder(
+    customerId: string,
+    orderId: string,
+    reason: string,
+  ): Promise<unknown> {
+    const response = await this.requestAdmin(
+      `/admin/orders/${encodeURIComponent(orderId)}/cancel`,
+      "POST",
+      customerId,
+      { reason },
+    );
+    return (await response.json() as { data: unknown }).data;
+  }
+
+  private async requestAdmin(
+    path: string,
+    method: "GET" | "POST",
+    customerId: string,
+    body?: unknown,
+  ): Promise<Response> {
+    let response: Response;
+    try {
+      response = await this.fetcher(`${this.ordersServiceUrl}${path}`, {
+        method,
+        headers: {
+          ...(body !== undefined ? { "content-type": "application/json" } : {}),
+          ...this.internalHeaders(customerId, "STORE_ADMIN"),
+        },
+        ...(body !== undefined ? { body: JSON.stringify(body) } : {}),
+        signal: AbortSignal.timeout(3_000),
+      });
+    } catch {
+      throw new ServiceUnavailableException("Orders service is unavailable");
+    }
+
+    if (response.status === 404) throw new NotFoundException("Order not found");
+    if (response.status === 400) throw new BadRequestException("Order decision was rejected");
+    if (response.status === 409) throw new ConflictException("Order is no longer pending");
+    if (!response.ok) throw new ServiceUnavailableException("Orders service is unavailable");
+    return response;
   }
 }

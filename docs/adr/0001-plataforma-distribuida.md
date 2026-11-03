@@ -29,6 +29,10 @@ Un nuevo servicio requiere responsabilidad de negocio aislada, ownership de dato
 
 Se acepta el coste de operar varios procesos a cambio de reducir el acoplamiento y permitir despliegues por dominio. Las fronteras deben mantenerse mediante HTTP y eventos versionados; no se permiten lecturas directas entre bases.
 
+## Estado de migración
+
+La plataforma nueva está implementada como monorepo separado del legacy. La migración efectiva de datos y tráfico desde `Proyecto_ventas` todavía no está ejecutada; el strangler pattern, la reconciliación y los feature flags son requisitos para una fase futura de migración.
+
 ## Rollback
 
-La migracion desde legacy sigue un strangler pattern. Cada corte debe tener feature flag, reconciliacion, rollback a la ruta anterior y evidencia de datos afectados.
+Cuando se ejecute un corte desde legacy, debe usar strangler pattern, feature flag, reconciliación, rollback a la ruta anterior y evidencia de datos afectados.

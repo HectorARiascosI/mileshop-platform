@@ -1,3 +1,6 @@
+# This Compose stack provisions databases only. orders-service runs from its
+# workspace on the host; configure its private local evidence directory in
+# services/orders-service/.env.example. Never mount evidence files into a DB.
 services:
   notification-postgres:
     image: postgres:17-alpine
@@ -46,6 +49,23 @@ services:
       - ./.data/orders-postgres:/var/lib/postgresql/data
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U orders -d orders"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  identity-postgres:
+    image: postgres:17-alpine
+    container_name: mileshop-identity-postgres
+    environment:
+      POSTGRES_DB: identity
+      POSTGRES_USER: identity
+      POSTGRES_PASSWORD: identity
+    ports:
+      - "5436:5432"
+    volumes:
+      - ./.data/identity-postgres:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U identity -d identity"]
       interval: 5s
       timeout: 5s
       retries: 10
