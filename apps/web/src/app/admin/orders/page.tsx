@@ -383,31 +383,37 @@ export default function AdminOrdersPage() {
   const selectedProduct = products.find((product) => product.id === selectedProductId);
 
   return (
-    <main className="mx-auto min-h-screen max-w-5xl px-4 py-8 text-slate-900">
-      <header className="mb-8 flex flex-wrap items-center justify-between gap-4">
+    <main className="admin-console mx-auto min-h-screen max-w-5xl px-4 py-8 text-slate-900">
+      <header className="admin-console-header mb-8 flex flex-wrap items-center justify-between gap-4">
         <div>
-          <p className="text-sm font-semibold uppercase tracking-wide text-emerald-700">MileShop</p>
-          <h1 className="text-3xl font-bold">Administración de tienda</h1>
+          <p className="admin-console-kicker text-sm font-semibold uppercase tracking-wide text-emerald-700">MileShop</p>
+          <h1 className="text-3xl font-bold">Operaciones de tienda</h1>
           <p className="mt-1 text-slate-600">Pedidos de WhatsApp e inventario de ventas presenciales.</p>
         </div>
-        <Link className="rounded border px-4 py-2 font-medium hover:bg-slate-50" href="/">
+        <Link className="admin-console-link rounded border px-4 py-2 font-medium hover:bg-slate-50" href="/">
           Volver a la tienda
         </Link>
-        <Link className="rounded border px-4 py-2 font-medium hover:bg-slate-50" href="/admin/catalog">
+        <Link className="admin-console-link rounded border px-4 py-2 font-medium hover:bg-slate-50" href="/admin/catalog">
           Catálogo e inventario
         </Link>
       </header>
 
       {authorized === false && (
-        <section className="rounded-lg border border-amber-300 bg-amber-50 p-5">
+        <section className="admin-access-card rounded-lg border border-amber-300 bg-amber-50 p-5">
           {accessError ?? "No se pudo autorizar la administración de la tienda."}
           <Link className="ml-2 font-semibold underline" href="/login">Iniciar sesión</Link>
         </section>
       )}
       {authorized && (
         <>
-          <section className="mb-8 rounded-xl border bg-white p-5 shadow-sm">
-            <h2 className="text-xl font-semibold">Registrar venta manual</h2>
+          <section className="admin-console-card mb-8 rounded-xl border bg-white p-5 shadow-sm">
+            <div className="admin-console-card-heading">
+              <div>
+                <span>Acción rápida</span>
+                <h2 className="text-xl font-semibold">Registrar venta manual</h2>
+              </div>
+              {selectedProduct && <strong>{selectedProduct.stock} disponibles</strong>}
+            </div>
             <p className="mt-1 text-sm text-slate-600">
               Se descuenta del inventario disponible y queda un registro auditable de la operación.
             </p>
@@ -465,9 +471,12 @@ export default function AdminOrdersPage() {
             )}
           </section>
 
-          <section>
+          <section className="admin-console-orders">
             <div className="mb-4 flex items-center justify-between gap-4">
-              <h2 className="text-xl font-semibold">Pedidos por revisar ({orders.length})</h2>
+              <div>
+                <p className="admin-console-kicker text-sm font-semibold uppercase tracking-wide text-emerald-700">Cola operativa</p>
+                <h2 className="text-xl font-semibold">Pedidos por revisar <span className="admin-order-count">{orders.length}</span></h2>
+              </div>
               <button className="rounded border px-4 py-2 hover:bg-white" onClick={() => void refresh()}>
                 Actualizar
               </button>

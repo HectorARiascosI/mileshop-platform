@@ -1827,6 +1827,170 @@ h3 {
 }
 
 /* Cohesive administration shell */
+.admin-console {
+  background:
+    linear-gradient(180deg, rgba(255,255,255,0.018), transparent 260px),
+    radial-gradient(circle at 100% 0, rgba(174,184,203,0.12), transparent 420px),
+    #0b0d12 !important;
+  box-shadow: none !important;
+  color: #f4f6fb !important;
+  max-width: 1180px !important;
+}
+
+.admin-console-header {
+  align-items: flex-end !important;
+  border-bottom: 1px solid rgba(226,232,240,0.12);
+  display: grid !important;
+  grid-template-columns: minmax(0, 1fr) auto auto;
+  margin-bottom: 40px !important;
+  padding-bottom: 32px !important;
+}
+
+.admin-console-kicker {
+  color: #bdc6d7 !important;
+  letter-spacing: 0.22em !important;
+  margin-bottom: 12px;
+}
+
+.admin-console-header h1 {
+  font-family: var(--font-display), sans-serif !important;
+  font-size: clamp(3rem, 6vw, 5.8rem) !important;
+  font-weight: 600 !important;
+  letter-spacing: -0.065em !important;
+  line-height: 0.88 !important;
+}
+
+.admin-console-header p:not(.admin-console-kicker) {
+  margin-top: 18px !important;
+}
+
+.admin-console-link {
+  background: rgba(255,255,255,0.025);
+  border-color: rgba(226,232,240,0.14) !important;
+  border-radius: 999px !important;
+  font-size: 0.86rem;
+  padding: 12px 18px !important;
+  white-space: nowrap;
+}
+
+.admin-access-card {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 24px;
+}
+
+.admin-console-card {
+  margin-bottom: 48px !important;
+  padding: 28px !important;
+}
+
+.admin-console-card-heading {
+  align-items: start;
+  border-bottom: 1px solid rgba(226,232,240,0.11);
+  display: flex;
+  gap: 24px;
+  justify-content: space-between;
+  margin-bottom: 24px;
+  padding-bottom: 22px;
+}
+
+.admin-console-card-heading span {
+  color: #9da7ba;
+  display: block;
+  font-size: 0.72rem;
+  font-weight: 700;
+  letter-spacing: 0.16em;
+  margin-bottom: 8px;
+  text-transform: uppercase;
+}
+
+.admin-console-card-heading h2 {
+  font-family: var(--font-display), sans-serif;
+  font-size: clamp(1.8rem, 3vw, 2.5rem);
+  letter-spacing: -0.045em;
+}
+
+.admin-console-card-heading strong {
+  background: rgba(134,216,184,0.09);
+  border: 1px solid rgba(134,216,184,0.16);
+  border-radius: 999px;
+  color: #86d8b8;
+  font-size: 0.78rem;
+  padding: 9px 12px;
+}
+
+.admin-console-card label {
+  min-width: 220px;
+}
+
+.admin-console-card label span {
+  color: #cbd1de;
+  font-size: 0.78rem;
+  font-weight: 600;
+  margin-bottom: 6px;
+}
+
+.admin-console-card select,
+.admin-console-card input {
+  width: 100%;
+}
+
+.admin-console-orders > div:first-child {
+  border-bottom: 1px solid rgba(226,232,240,0.12);
+  margin-bottom: 18px;
+  padding-bottom: 18px;
+}
+
+.admin-console-orders h2 {
+  font-family: var(--font-display), sans-serif;
+  font-size: 2rem;
+  letter-spacing: -0.045em;
+}
+
+.admin-order-count {
+  align-items: center;
+  background: rgba(237, 240, 247, 0.09);
+  border: 1px solid rgba(237, 240, 247, 0.12);
+  border-radius: 999px;
+  display: inline-flex;
+  font-family: var(--font-body), sans-serif;
+  font-size: 0.78rem;
+  height: 30px;
+  justify-content: center;
+  letter-spacing: 0;
+  margin-left: 8px;
+  vertical-align: middle;
+  width: 30px;
+}
+
+.admin-console-orders article {
+  background: linear-gradient(145deg, #171b24, #12151d) !important;
+  border-radius: 16px !important;
+  padding: 24px !important;
+}
+
+@media (max-width: 720px) {
+  .admin-console-header {
+    grid-template-columns: 1fr;
+    gap: 16px;
+  }
+
+  .admin-console-header h1 {
+    font-size: 3rem !important;
+  }
+
+  .admin-console-link {
+    justify-self: start;
+  }
+
+  .admin-console-card-heading,
+  .admin-access-card {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+}
+
 main.mx-auto.max-w-5xl,
 main.mx-auto.max-w-6xl {
   --admin-panel: #171b24;
