@@ -22,6 +22,7 @@ import { buildCheckoutSummary } from "@/lib/order";
 import {
   buildWhatsAppOrderUrl,
   normalizeWhatsAppBusinessPhone,
+  isWhatsAppCustomerDetails,
   isWhatsAppOrderSummary,
   type WhatsAppOrderSummary,
 } from "@/lib/whatsapp-order";
@@ -269,6 +270,14 @@ export function CatalogShell({ products, unavailable, announcements }: CatalogSh
         router.push("/login");
         return;
       }
+      const customer: unknown = await sessionResponse.json().catch(() => null);
+      if (!isWhatsAppCustomerDetails(customer)) {
+        whatsappWindow?.close();
+        setCheckoutError(
+          "No pudimos consultar tu nombre y datos de contacto. Vuelve a iniciar sesión e inténtalo nuevamente.",
+        );
+        return;
+      }
 
       const idempotencyKey = getIdempotencyKey(cart);
       // POST goes through the Next.js API route so the server can attach
@@ -301,7 +310,7 @@ export function CatalogShell({ products, unavailable, announcements }: CatalogSh
       }
 
       const persistedOrder: WhatsAppOrderSummary = payload.data;
-      const whatsappUrl = buildWhatsAppOrderUrl(WHATSAPP_BUSINESS_PHONE, persistedOrder);
+      const whatsappUrl = buildWhatsAppOrderUrl(WHATSAPP_BUSINESS_PHONE, persistedOrder, customer);
       if (whatsappWindow && whatsappUrl) {
         try {
           whatsappWindow.location.replace(whatsappUrl);

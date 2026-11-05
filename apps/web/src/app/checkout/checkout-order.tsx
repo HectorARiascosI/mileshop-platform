@@ -9,7 +9,11 @@ import {
   type OrderStatus,
   type PaymentDecision,
 } from "@/lib/order-presentation";
-import { buildWhatsAppOrderUrl } from "@/lib/whatsapp-order";
+import {
+  buildWhatsAppOrderUrl,
+  isWhatsAppCustomerDetails,
+  type WhatsAppCustomerDetails,
+} from "@/lib/whatsapp-order";
 
 type CheckoutOrderData = {
   orderId: string;
@@ -80,12 +84,15 @@ function isCheckoutOrder(value: unknown): value is CheckoutOrderData {
 
 export function CheckoutOrder({ orderId }: CheckoutOrderProps) {
   const [order, setOrder] = useState<CheckoutOrderData | null>(null);
+  const [customer, setCustomer] = useState<WhatsAppCustomerDetails | null>(null);
   const [isLoading, setIsLoading] = useState(Boolean(orderId));
+  const [customerLoading, setCustomerLoading] = useState(Boolean(orderId));
+  const [customerUnavailable, setCustomerUnavailable] = useState(false);
   const [statusUnavailable, setStatusUnavailable] = useState(false);
   const [notFound, setNotFound] = useState(false);
   const [refreshKey, setRefreshKey] = useState(0);
   const whatsAppUrl = order
-    ? buildWhatsAppOrderUrl(WHATSAPP_BUSINESS_PHONE, order)
+    ? buildWhatsAppOrderUrl(WHATSAPP_BUSINESS_PHONE, order, customer)
     : null;
 
   useEffect(() => {
@@ -94,6 +101,31 @@ export function CheckoutOrder({ orderId }: CheckoutOrderProps) {
     }
 
     let active = true;
+    void fetch("/api/auth/me", { cache: "no-store" })
+      .then(async (response) => {
+        if (!response.ok) {
+          throw new Error("Customer profile request failed");
+        }
+        const profile: unknown = await response.json();
+        if (!isWhatsAppCustomerDetails(profile)) {
+          throw new Error("Customer profile response is invalid");
+        }
+        if (active) {
+          setCustomer(profile);
+          setCustomerUnavailable(false);
+        }
+      })
+      .catch(() => {
+        if (active) {
+          setCustomerUnavailable(true);
+        }
+      })
+      .finally(() => {
+        if (active) {
+          setCustomerLoading(false);
+        }
+      });
+
     void fetch(`/api/orders/${encodeURIComponent(orderId)}`)
       .then(async (response) => {
         if (response.status === 404) {
@@ -158,6 +190,8 @@ export function CheckoutOrder({ orderId }: CheckoutOrderProps) {
                 onClick={() => {
                   setStatusUnavailable(false);
                   setIsLoading(true);
+                  setCustomerLoading(true);
+                  setCustomerUnavailable(false);
                   setRefreshKey((current) => current + 1);
                 }}
               >
@@ -195,16 +229,22 @@ export function CheckoutOrder({ orderId }: CheckoutOrderProps) {
           <strong>{order.orderId}</strong>
         </div>
 
-        {whatsAppUrl ? (
+        {customerLoading ? (
+          <p role="status">Cargando tus datos para preparar el mensaje de WhatsApp...</p>
+        ) : whatsAppUrl ? (
           <>
             <p>
-              Revisa el resumen que se abre en WhatsApp. Si realizas un pago, adjunta el comprobante en el chat y pulsa
-              Enviar para compartir la información con la tienda.
+              Abre el resumen en WhatsApp y espera a que la tienda confirme el método y los datos de pago. Si realizas
+              el pago, adjunta el comprobante en el chat y pulsa Enviar.
             </p>
             <a className="checkout-button" href={whatsAppUrl} target="_blank" rel="noopener noreferrer">
               Abrir WhatsApp con el resumen
             </a>
           </>
+        ) : customerUnavailable ? (
+          <p className="notice-error" role="alert">
+            No pudimos cargar tu nombre y datos de contacto para identificar el pedido en WhatsApp. Inicia sesión nuevamente e inténtalo otra vez.
+          </p>
         ) : (
           <p className="notice-error" role="status">
             El pedido está guardado, pero no se pudo abrir el WhatsApp Business de MileShop. No realices pagos hasta que la tienda confirme cómo continuar.

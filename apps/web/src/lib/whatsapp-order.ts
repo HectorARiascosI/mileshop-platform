@@ -12,6 +12,12 @@ export type WhatsAppOrderSummary = {
   }>;
 };
 
+export type WhatsAppCustomerDetails = {
+  name: string;
+  email: string;
+  phone?: string;
+};
+
 const E164_PHONE_PATTERN = /^\+[1-9]\d{7,14}$/;
 
 export function normalizeWhatsAppBusinessPhone(phone: string | undefined): string | null {
@@ -27,7 +33,7 @@ function isNonNegativeInteger(value: number): boolean {
 }
 
 function cleanMessageText(value: string): string {
-  return value.replace(/[\u0000-\u001f\u007f]/g, " ").trim();
+  return value.replace(/[\u0000-\u001f\u007f*_~`]/g, " ").replace(/\s+/g, " ").trim();
 }
 
 function formatPrice(priceCop: number): string {
@@ -38,6 +44,22 @@ function formatPrice(priceCop: number): string {
   }).format(priceCop);
 }
 
+export function isWhatsAppCustomerDetails(value: unknown): value is WhatsAppCustomerDetails {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    return false;
+  }
+
+  const candidate = value as Partial<WhatsAppCustomerDetails>;
+  return (
+    typeof candidate.name === "string" &&
+    cleanMessageText(candidate.name).length > 0 &&
+    typeof candidate.email === "string" &&
+    cleanMessageText(candidate.email).length > 0 &&
+    (candidate.phone === undefined ||
+      (typeof candidate.phone === "string" && cleanMessageText(candidate.phone).length > 0))
+  );
+}
+
 export function isWhatsAppOrderSummary(order: unknown): order is WhatsAppOrderSummary {
   if (!order || typeof order !== "object") {
     return false;
@@ -46,7 +68,7 @@ export function isWhatsAppOrderSummary(order: unknown): order is WhatsAppOrderSu
   const candidate = order as Partial<WhatsAppOrderSummary>;
   return (
     typeof candidate.orderId === "string" &&
-    candidate.orderId.trim().length > 0 &&
+    cleanMessageText(candidate.orderId).length > 0 &&
     typeof candidate.subtotalCop === "number" &&
     isNonNegativeInteger(candidate.subtotalCop) &&
     typeof candidate.deliveryFeeCop === "number" &&
@@ -62,7 +84,7 @@ export function isWhatsAppOrderSummary(order: unknown): order is WhatsAppOrderSu
         typeof line.productId === "string" &&
         typeof line.sku === "string" &&
         typeof line.name === "string" &&
-        line.name.trim().length > 0 &&
+        cleanMessageText(line.name).length > 0 &&
         Number.isSafeInteger(line.quantity) &&
         line.quantity > 0 &&
         isNonNegativeInteger(line.unitPriceCop) &&
@@ -74,27 +96,52 @@ export function isWhatsAppOrderSummary(order: unknown): order is WhatsAppOrderSu
 export function buildWhatsAppOrderUrl(
   businessPhone: string | undefined,
   order: unknown,
+  customer: unknown,
 ): string | null {
   const phone = normalizeWhatsAppBusinessPhone(businessPhone);
-  if (!phone || !isWhatsAppOrderSummary(order)) {
+  if (!phone || !isWhatsAppOrderSummary(order) || !isWhatsAppCustomerDetails(customer)) {
     return null;
   }
 
-  const lines = order.lines.map((line) => {
+  const customerLines = [
+    `Nombre: ${cleanMessageText(customer.name)}`,
+    ...(customer.phone ? [`Teléfono: ${cleanMessageText(customer.phone)}`] : []),
+    `Correo: ${cleanMessageText(customer.email)}`,
+  ];
+  const lines = order.lines.flatMap((line) => {
+    const name = cleanMessageText(line.name);
     const lineTotalCop = line.quantity * line.unitPriceCop;
-    return `• ${line.quantity} x ${cleanMessageText(line.name)} (${cleanMessageText(line.sku)}): ${formatPrice(line.unitPriceCop)} c/u — ${formatPrice(lineTotalCop)}`;
+    return [
+      `• *${name}*`,
+      `  ${line.quantity} unidades × ${formatPrice(line.unitPriceCop)} c/u`,
+      `  Importe: *${formatPrice(lineTotalCop)}*`,
+    ];
   });
   const message = [
-    `Hola MileShop, acabo de registrar el pedido ${cleanMessageText(order.orderId)}.`,
+    "*MileShop*",
+    "_La exclusividad hecha a tu medida._",
     "",
-    "Resumen del pedido:",
+    "¡Hola! 👋",
+    "He registrado este pedido y quisiera continuar con el proceso.",
+    "",
+    "*DATOS DEL CLIENTE*",
+    ...customerLines,
+    "",
+    "*MI PEDIDO*",
+    `Referencia: ${cleanMessageText(order.orderId)}`,
+    "",
+    "*PRODUCTOS*",
     ...lines,
     "",
+    "*RESUMEN DE COMPRA*",
     `Subtotal: ${formatPrice(order.subtotalCop)}`,
     `Envío: ${order.deliveryFeeCop === 0 ? "Gratis" : formatPrice(order.deliveryFeeCop)}`,
-    `Total: ${formatPrice(order.totalCop)}`,
+    `*TOTAL: ${formatPrice(order.totalCop)}*`,
     "",
-    "Por favor, confirmen cómo continuar con el pago y la entrega. Cuando realice el pago, enviaré el comprobante manualmente como archivo adjunto en este chat.",
+    "*SIGUIENTE PASO*",
+    "Por favor, confirmen el método y los datos de pago, junto con los detalles de entrega. Una vez realizado el pago, enviaré el comprobante por este chat.",
+    "",
+    "¡Muchas gracias!",
   ].join("\n");
 
   return `https://wa.me/${phone}?text=${encodeURIComponent(message)}`;
