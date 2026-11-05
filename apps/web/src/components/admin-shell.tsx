@@ -91,7 +91,7 @@ export function AdminShell({ children }: AdminShellProps) {
     <div className="admin-app-shell">
       <aside className="admin-sidebar" aria-label="Navegación administrativa">
         <Link className="admin-sidebar-brand" href="/">
-          <Image src="/mileshop-logo.webp" alt="" width={48} height={48} />
+          <Image src="/mileshop-mark.webp" alt="" width={48} height={48} />
           <span className="admin-brand-copy">
             <strong>MileShop</strong>
             <small>La exclusividad hecha a tu medida.</small>
@@ -120,7 +120,11 @@ export function AdminShell({ children }: AdminShellProps) {
       <div className="admin-workspace">
         <header className="admin-topbar">
           <Link className="admin-mobile-brand" href="/admin/orders" aria-label="MileShop, inicio de administración">
-            <Image src="/mileshop-logo.webp" alt="" width={40} height={40} />
+            <Image src="/mileshop-mark.webp" alt="" width={40} height={40} />
+            <span className="admin-mobile-brand-copy">
+              <strong>MileShop</strong>
+              <small>La exclusividad hecha a tu medida.</small>
+            </span>
           </Link>
           <p>Panel administrativo</p>
           <Link href="/">Ver tienda</Link>

@@ -338,7 +338,7 @@ export function CatalogShell({ products, unavailable, announcements }: CatalogSh
     <div className="site-shell">
       <header className="topbar">
         <Link className="brand" href="/" aria-label="MileShop inicio">
-          <Image className="brand-mark" src="/mileshop-logo.webp" alt="" width={60} height={60} priority />
+          <Image className="brand-mark" src="/mileshop-mark.webp" alt="" width={60} height={60} priority />
           <span className="brand-copy">
             <span className="brand-name">MileShop</span>
             <span className="brand-tagline">La exclusividad hecha a tu medida.</span>

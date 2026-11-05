@@ -3066,17 +3066,11 @@ main.mx-auto .bg-slate-50 {
   text-decoration: none;
 }
 
-.admin-sidebar-brand span,
 .admin-mobile-brand {
   align-items: center;
-  background: #171717;
-  border-radius: 50%;
-  color: #fff;
   display: inline-flex;
-  font-family: var(--font-display), sans-serif;
-  height: 38px;
-  justify-content: center;
-  width: 38px;
+  gap: 9px;
+  text-decoration: none;
 }
 
 .admin-sidebar-brand strong {
@@ -3784,6 +3778,7 @@ main.mx-auto .bg-slate-50 {
 .admin-brand-copy {
   display: grid;
   gap: 2px;
+  min-width: 0;
 }
 
 .brand-name {
@@ -3801,6 +3796,15 @@ main.mx-auto .bg-slate-50 {
   line-height: 1.25;
 }
 
+.brand-copy {
+  max-width: 210px;
+}
+
+.brand-tagline,
+.admin-brand-copy small {
+  display: block;
+}
+
 .admin-sidebar-brand > img {
   border-radius: 50%;
   flex: 0 0 48px;
@@ -3815,27 +3819,107 @@ main.mx-auto .bg-slate-50 {
 }
 
 .admin-mobile-brand {
-  overflow: hidden;
+  align-items: center;
+  color: #171717;
+  flex: 0 0 auto;
+  height: auto;
+  justify-content: flex-start;
+  overflow: visible;
+  width: auto;
 }
 
 .admin-mobile-brand img {
+  border-radius: 50%;
+  flex: 0 0 40px;
   height: 100%;
   object-fit: cover;
-  width: 100%;
+  width: 40px;
+}
+
+.admin-mobile-brand-copy {
+  display: grid;
+  gap: 2px;
+  text-align: left;
+}
+
+.admin-mobile-brand-copy strong {
+  font-size: 1rem;
+  line-height: 1.1;
+}
+
+.admin-mobile-brand-copy small {
+  color: #686868;
+  font-size: 0.62rem;
+  line-height: 1.2;
+  white-space: nowrap;
 }
 
 @media (max-width: 760px) {
+  .brand {
+    flex-shrink: 1;
+    gap: 8px;
+    min-width: 0;
+  }
+
+  .brand-copy {
+    max-width: 150px;
+  }
+
+  .brand-tagline {
+    color: #686868;
+    display: block;
+    font-size: 0.62rem;
+    line-height: 1.2;
+    white-space: normal;
+  }
+
   .brand-mark {
     flex-basis: 48px;
     height: 48px;
     width: 48px;
   }
+}
 
-  .brand-tagline {
-    display: none;
+@media (max-width: 860px) {
+  .admin-mobile-brand {
+    display: inline-flex;
+    margin-right: 12px;
+    text-decoration: none;
+  }
+
+  .admin-mobile-brand img {
+    height: 40px;
+  }
+}
+
+@media (max-width: 380px) {
+  .topbar {
+    gap: 8px;
+    padding-left: 10px;
+    padding-right: 10px;
+  }
+
+  .brand-copy {
+    max-width: 122px;
+  }
+
+  .brand-mark {
+    flex-basis: 40px;
+    height: 40px;
+    width: 40px;
   }
 
   .brand-name {
-    font-size: 1.05rem;
+    font-size: 0.98rem;
+  }
+
+  .brand-tagline {
+    font-size: 0.58rem;
+  }
+}
+
+@media (max-width: 540px) {
+  .admin-topbar p {
+    display: none;
   }
 }
