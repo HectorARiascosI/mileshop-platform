@@ -181,6 +181,22 @@ test("holds an order after an admin records a payment report", async () => {
   );
 });
 
+test("returns the updated order after a customer cancels it", async () => {
+  const service = createService();
+  const created = await service.createOrder({
+    customerId: "customer-cancel",
+    idempotencyKey: "00000000-0000-4000-8000-000000000098",
+    lines: [createLine()],
+  });
+
+  const result = await service.cancelOrder(created.orderId, "customer-cancel");
+
+  assert.equal(result.result, "cancelled");
+  assert.equal(result.order?.orderId, created.orderId);
+  assert.equal(result.order?.status, "CANCELLED");
+  assert.equal(result.order?.paymentDecision, null);
+});
+
 test("writes the created event into the outbox before publishing", async () => {
   const outbox = new InMemoryOrderEventOutbox();
   const service = new OrdersService(

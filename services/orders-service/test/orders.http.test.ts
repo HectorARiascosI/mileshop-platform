@@ -493,7 +493,13 @@ test("post-proof cancellation and admin resolution require trusted actor context
 });
 
 test("POST and GET payment evidence routes accept multipart and stream private files", async () => {
-  const evidenceCalls: unknown[] = [];
+  const evidenceCalls: Array<{
+    orderId: string;
+    actor: { customerId: string; role: string };
+    file: { originalFileName: string; contentType: string; bytes: Uint8Array };
+    reference: unknown;
+  }> = [];
+  const pdfContents = Buffer.from("%PDF-1.7\nreceipt\n%%EOF\n");
   const evidenceService = {
     upload: async (
       orderId: string,
@@ -549,7 +555,7 @@ test("POST and GET payment evidence routes accept multipart and stream private f
     const formData = new FormData();
     formData.append(
       "file",
-      new Blob(["%PDF-1.7\nreceipt\n%%EOF\n"], { type: "application/pdf" }),
+      new Blob([pdfContents], { type: "application/pdf" }),
       "receipt.pdf",
     );
     const unauthenticated = await fetch(
@@ -572,6 +578,10 @@ test("POST and GET payment evidence routes accept multipart and stream private f
     const uploadBody = await upload.text();
     assert.equal(upload.status, 201, uploadBody);
     assert.equal(evidenceCalls.length, 1);
+    assert.deepEqual(
+      Buffer.from(evidenceCalls[0]!.file.bytes),
+      pdfContents,
+    );
     const receipt = JSON.parse(uploadBody) as {
       data: { transactionReference: string; receivedAt: string; status: string };
     };

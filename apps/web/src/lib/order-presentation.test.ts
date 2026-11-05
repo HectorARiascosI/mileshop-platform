@@ -3,8 +3,17 @@ import test from "node:test";
 
 import {
   getOrderStatusMessage,
+  isOrderStatus,
   isPaymentDecisionForStatus,
 } from "./order-presentation";
+
+test("recognizes active payment and reservation states used by checkout", () => {
+  assert.equal(isOrderStatus("AWAITING_PAYMENT_PROOF"), true);
+  assert.deepEqual(getOrderStatusMessage("AWAITING_PAYMENT_PROOF", null), {
+    title: "Reserva activa",
+    description: "Tu pedido está reservado. Envía el comprobante antes de que venza la reserva.",
+  });
+});
 
 test("presents a rejected payment as cancelled and never paid", () => {
   const decision = {

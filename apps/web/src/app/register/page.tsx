@@ -8,11 +8,13 @@ export default function RegisterPage() {
   const router = useRouter();
   const [form, setForm] = useState({ name: "", phone: "", email: "", password: "" });
   const [error, setError] = useState("");
+  const [accountExists, setAccountExists] = useState(false);
   const [pending, setPending] = useState(false);
 
   const handleChange = (field: keyof typeof form, value: string) => {
     setForm((current) => ({ ...current, [field]: value }));
     setError("");
+    setAccountExists(false);
   };
 
   const handleSubmit = async (event: React.FormEvent<HTMLFormElement>) => {
@@ -43,6 +45,18 @@ export default function RegisterPage() {
 
       if (response.status === 409) {
         setError("Este correo ya está registrado.");
+        setAccountExists(true);
+        return;
+      }
+
+      if (response.status === 503) {
+        setError("El servicio de registro no está disponible. Verifica que la aplicación esté conectada y vuelve a intentarlo.");
+        return;
+      }
+
+      if (response.status === 400) {
+        const payload = (await response.json()) as { error?: string };
+        setError(payload.error ?? "Los datos ingresados no son válidos.");
         return;
       }
 
@@ -116,6 +130,11 @@ export default function RegisterPage() {
             <p role="alert" className="form-error">
               {error}
             </p>
+          ) : null}
+          {accountExists ? (
+            <Link className="form-error-link" href="/login">
+              Ir a iniciar sesión
+            </Link>
           ) : null}
 
           <button

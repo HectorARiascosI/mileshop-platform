@@ -13,6 +13,46 @@ import { IdentityClient } from "../src/identity.client.js";
 import { OrderService } from "../src/orders.service.js";
 import { StoreAdminGuard } from "../src/store-admin.guard.js";
 
+test("store administrators can read orders while customers remain limited to their own", async () => {
+  const requestedOrders: Array<{ orderId: string; customerId?: string; role: string }> = [];
+  const order = {
+    orderId: "order-1",
+    customerId: "customer-1",
+    subtotalCop: 100,
+    deliveryFeeCop: 0,
+    totalCop: 100,
+    status: "PENDING",
+    createdAt: new Date().toISOString(),
+    updatedAt: new Date().toISOString(),
+    lines: [],
+  };
+  const controller = new GatewayController({} as CatalogClient, {} as IdentityClient);
+  Object.defineProperty(controller, "orders", {
+    value: {
+      getOrder: async (orderId: string, customerId: string | undefined, role: string) => {
+        requestedOrders.push({ orderId, customerId, role });
+        return order;
+      },
+    },
+  });
+
+  const result = await controller.getOrder("order-1", {
+    customerId: "admin-1",
+    role: "STORE_ADMIN",
+  });
+  assert.deepEqual(result, { data: order });
+  assert.deepEqual(requestedOrders, [{
+    orderId: "order-1",
+    customerId: "admin-1",
+    role: "STORE_ADMIN",
+  }]);
+
+  await assert.rejects(
+    controller.getOrder("order-1", { customerId: "customer-2", role: "CUSTOMER" }),
+    (error: unknown) => error instanceof Error && error.message === "Order not found",
+  );
+});
+
 test("admin evidence deletion requires a verified store-admin role", async () => {
   const calls: unknown[] = [];
   let verifiedRole = "CUSTOMER";
@@ -678,15 +718,20 @@ test("payment evidence routes require verified identity and proxy private upload
     const adminOrder = await fetch(`${await app.getUrl()}/orders/order-1`, {
       headers: { authorization: "Bearer test-token" },
     });
-    assert.equal(adminOrder.status, 404);
-    assert.equal(calls.length, 3);
+    assert.equal(adminOrder.status, 200);
+    assert.deepEqual(calls[3], {
+      operation: "order",
+      orderId: "order-1",
+      customerId: "customer-1",
+      role: "STORE_ADMIN",
+    });
 
     verifiedRole = "CUSTOMER";
     const customerQueue = await fetch(`${await app.getUrl()}/admin/payments`, {
       headers: { authorization: "Bearer customer-token" },
     });
     assert.equal(customerQueue.status, 403);
-    assert.equal(calls.length, 3);
+    assert.equal(calls.length, 4);
 
     verifiedRole = "STORE_ADMIN";
     const queue = await fetch(`${await app.getUrl()}/admin/payments`, {
@@ -803,7 +848,7 @@ test("payment evidence routes require verified identity and proxy private upload
       data: { orderId: "order-1", legalHold: false, changed: true },
     });
 
-    assert.deepEqual(calls.slice(3), [
+    assert.deepEqual(calls.slice(4), [
       {
         operation: "admin-queue",
         customerId: "customer-1",

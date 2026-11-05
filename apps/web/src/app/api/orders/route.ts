@@ -3,6 +3,8 @@ import { NextRequest } from "next/server";
 
 import { fetchApiGateway, getApiGatewayEndpoint } from "@/lib/api-gateway-url";
 
+export const maxDuration = 30;
+
 /**
  * POST /api/orders
  *

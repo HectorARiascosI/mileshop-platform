@@ -66,7 +66,7 @@ Configúralas por proyecto y por entorno (`Production`, `Preview` y `Development
 
 | Proyecto | Variables |
 |---|---|
-| Storefront | `API_GATEWAY_URL` (URL HTTPS del Gateway terminada en `/api`), `VERCEL_GATEWAY_BYPASS_SECRET` (solo Preview; bypass del proyecto Gateway), `IMAGEKIT_PRIVATE_KEY` (clave privada de ImageKit para administrar fotos), `NEXT_PUBLIC_WHATSAPP_BUSINESS_PHONE` (número Business internacional, sin `+`, espacios ni guiones). |
+| Storefront | `API_GATEWAY_URL` (URL HTTPS del Gateway terminada en `/api`), `VERCEL_GATEWAY_BYPASS_SECRET` (solo Preview; bypass del proyecto Gateway), `IMAGEKIT_PRIVATE_KEY` (clave privada de ImageKit para administrar fotos), `NEXT_PUBLIC_WHATSAPP_BUSINESS_PHONE` (número Business en formato E.164, con `+` inicial y sin espacios ni guiones). |
 | API Gateway | `CATALOG_SERVICE_URL`, `IDENTITY_SERVICE_URL`, `ORDERS_SERVICE_URL` (cada una HTTPS y terminada en `/api`), `VERCEL_CATALOG_BYPASS_SECRET`, `VERCEL_IDENTITY_BYPASS_SECRET`, `VERCEL_ORDERS_BYPASS_SECRET` (solo Preview; bypass del proyecto de destino), `ORDERS_INTERNAL_TOKEN`, `CATALOG_INVENTORY_COMMAND_TOKEN`, `ALLOWED_ORIGINS` (origen HTTPS del storefront). |
 | Catálogo | `DATABASE_URL` (URL pooled de la base `catalog`), `CATALOG_RESERVATION_TOKEN`, `CATALOG_INVENTORY_COMMAND_TOKEN`. |
 | Identidad | `DATABASE_URL` (URL pooled de `identity`), `JWT_SECRET`, `ALLOWED_ORIGINS` (origen HTTPS del storefront). |
@@ -142,7 +142,7 @@ Después de desplegar Orders, revisa los pedidos pendientes heredados sin fecha 
 
 ## Límites actuales que no se deben ocultar
 
-- El backend de comprobantes de pago no tiene un proveedor de almacenamiento registrado en `AppModule`. Sus rutas ahora responden con error explícito; no se deben usar en Vercel. El flujo acordado es WhatsApp Business, no la carga de archivos a la web.
+- En producción, el módulo de comprobantes solo se registra si se configura `PAYMENT_EVIDENCE_STORAGE`. Sin esa variable, las rutas responden `503` explícitamente; en Vercel no configures el adaptador `local`, porque su filesystem no es persistente. El flujo acordado es WhatsApp Business, no la carga de archivos a la web.
 - La pantalla `/admin/orders` permite revisar pedidos recibidos por WhatsApp, confirmar pagos verificados, cancelar pedidos y registrar ventas manuales por producto/cantidad. `/admin/payments` sigue siendo el flujo antiguo de comprobantes subidos y no es necesario para la operación WhatsApp.
 - El enlace WhatsApp no equivale a una confirmación de pago. La administradora debe verificar la transferencia y luego confirmar o cancelar el pedido.
 - La administración de productos y entradas de inventario está disponible en `/admin/catalog`; `/admin/orders` permite revisar pedidos de WhatsApp, confirmarlos/cancelarlos y registrar ventas presenciales. Antes de abrir la tienda, carga el catálogo real desde el panel y verifica las operaciones con la cuenta `STORE_ADMIN`.

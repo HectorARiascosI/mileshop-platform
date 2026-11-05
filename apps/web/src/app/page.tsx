@@ -60,7 +60,7 @@ async function getCatalog(): Promise<CatalogResult> {
   }
 
   try {
-    const response = await fetchApiGateway(endpoint, { cache: "force-cache" });
+    const response = await fetchApiGateway(endpoint, { cache: "no-store" });
 
     if (!response.ok) {
       return { products: [], unavailable: true };

@@ -1,15 +1,19 @@
 import {
   BadRequestException,
   ConflictException,
+  ForbiddenException,
   Inject,
   Injectable,
   NotFoundException,
   ServiceUnavailableException,
 } from "@nestjs/common";
+import { Readable } from "node:stream";
+import type { ReadableStream as NodeReadableStream } from "node:stream/web";
 
 export const ORDER_FETCH = "ORDER_FETCH";
 export const ORDERS_SERVICE_URL = "ORDERS_SERVICE_URL";
 export const ORDERS_INTERNAL_TOKEN = "ORDERS_INTERNAL_TOKEN";
+const ORDER_CREATE_TIMEOUT_MS = 25_000;
 
 export type OrderLineInput = {
   productId: string;
@@ -59,6 +63,13 @@ export type OrderEvent = {
 
 export type CreatedOrderResult = OrderResult & { event: OrderEvent };
 
+export type OrderEvidenceStream = {
+  stream: Readable;
+  contentType: string;
+  contentDisposition: string;
+  contentLength?: number;
+};
+
 @Injectable()
 export class OrderService {
   public constructor(
@@ -91,7 +102,7 @@ export class OrderService {
           ...this.internalHeaders(customerId),
         },
         body: JSON.stringify({ customerId, lines: normalizedLines }),
-        signal: AbortSignal.timeout(3_000),
+        signal: AbortSignal.timeout(ORDER_CREATE_TIMEOUT_MS),
       });
     } catch {
       throw new ServiceUnavailableException("Orders service is unavailable");
@@ -210,21 +221,241 @@ export class OrderService {
     return (await response.json() as { data: unknown }).data;
   }
 
+  public async cancelOrder(
+    orderId: string,
+    customerId: string,
+    role: string,
+  ): Promise<unknown> {
+    const response = await this.requestAs(
+      `/orders/${encodeURIComponent(orderId)}/cancel`,
+      "POST",
+      customerId,
+      role,
+    );
+    return (await response.json() as { data: unknown }).data;
+  }
+
+  public async requestCancellation(
+    orderId: string,
+    customerId: string,
+    role: string,
+  ): Promise<unknown> {
+    const response = await this.requestAs(
+      `/orders/${encodeURIComponent(orderId)}/cancellation-request`,
+      "POST",
+      customerId,
+      role,
+    );
+    return (await response.json() as { data: unknown }).data;
+  }
+
+  public async listPendingCancellationRequests(
+    customerId: string,
+    role: string,
+  ): Promise<unknown> {
+    const response = await this.requestAs("/admin/cancellation-requests", "GET", customerId, role);
+    return (await response.json() as { data: unknown }).data;
+  }
+
+  public async recordCancellationRefund(
+    orderId: string,
+    customerId: string,
+    role: string,
+    paymentCaptured: boolean,
+    externalRefundReference: string | null,
+  ): Promise<unknown> {
+    const response = await this.requestAs(
+      `/admin/cancellation-requests/${encodeURIComponent(orderId)}/refund-handling`,
+      "POST",
+      customerId,
+      role,
+      { paymentCaptured, externalRefundReference },
+    );
+    return (await response.json() as { data: unknown }).data;
+  }
+
+  public async resolveCancellationRequest(
+    orderId: string,
+    customerId: string,
+    role: string,
+    action: "CANCEL" | "KEEP_OPEN",
+    note: string | null,
+  ): Promise<unknown> {
+    const response = await this.requestAs(
+      `/admin/cancellation-requests/${encodeURIComponent(orderId)}/resolve`,
+      "POST",
+      customerId,
+      role,
+      { action, note },
+    );
+    return (await response.json() as { data: unknown }).data;
+  }
+
+  public async uploadPaymentEvidence(
+    orderId: string,
+    customerId: string,
+    role: string,
+    form: FormData,
+  ): Promise<unknown> {
+    const response = await this.requestAs(
+      `/orders/${encodeURIComponent(orderId)}/payment-evidence`,
+      "POST",
+      customerId,
+      role,
+      form,
+    );
+    return (await response.json() as { data: unknown }).data;
+  }
+
+  public async getPaymentEvidence(
+    orderId: string,
+    customerId: string,
+    role: string,
+  ): Promise<OrderEvidenceStream> {
+    return this.fetchEvidence(
+      `/orders/${encodeURIComponent(orderId)}/payment-evidence`,
+      customerId,
+      role,
+    );
+  }
+
+  public async listPendingPaymentReviews(customerId: string, role: string): Promise<unknown> {
+    const response = await this.requestAs("/admin/payments", "GET", customerId, role);
+    return (await response.json() as { data: unknown }).data;
+  }
+
+  public async getPendingPaymentReview(
+    orderId: string,
+    customerId: string,
+    role: string,
+  ): Promise<unknown> {
+    const response = await this.requestAs(
+      `/admin/payments/${encodeURIComponent(orderId)}`,
+      "GET",
+      customerId,
+      role,
+    );
+    return (await response.json() as { data: unknown }).data;
+  }
+
+  public async getAdminPaymentEvidence(
+    orderId: string,
+    customerId: string,
+    role: string,
+  ): Promise<OrderEvidenceStream> {
+    return this.fetchEvidence(
+      `/admin/payments/${encodeURIComponent(orderId)}/evidence`,
+      customerId,
+      role,
+    );
+  }
+
+  public async deleteAdminPaymentEvidence(
+    orderId: string,
+    customerId: string,
+    role: string,
+    confirmDownloaded: boolean,
+  ): Promise<unknown> {
+    const response = await this.requestAs(
+      `/admin/payments/${encodeURIComponent(orderId)}/evidence`,
+      "POST",
+      customerId,
+      role,
+      { confirmDownloaded },
+    );
+    return (await response.json() as { data: unknown }).data;
+  }
+
+  public async approvePayment(
+    orderId: string,
+    customerId: string,
+    role: string,
+    reason?: string,
+  ): Promise<unknown> {
+    const response = await this.requestAs(
+      `/admin/payments/${encodeURIComponent(orderId)}/approve`,
+      "POST",
+      customerId,
+      role,
+      reason ? { reason } : {},
+    );
+    return (await response.json() as { data: unknown }).data;
+  }
+
+  public async rejectPayment(
+    orderId: string,
+    customerId: string,
+    role: string,
+    reason: string,
+  ): Promise<unknown> {
+    const response = await this.requestAs(
+      `/admin/payments/${encodeURIComponent(orderId)}/reject`,
+      "POST",
+      customerId,
+      role,
+      { reason },
+    );
+    return (await response.json() as { data: unknown }).data;
+  }
+
+  public async placePaymentEvidenceLegalHold(
+    orderId: string,
+    customerId: string,
+    role: string,
+    reason: string,
+  ): Promise<unknown> {
+    const response = await this.requestAs(
+      `/admin/payment-evidence/${encodeURIComponent(orderId)}/legal-hold`,
+      "POST",
+      customerId,
+      role,
+      { reason },
+    );
+    return (await response.json() as { data: unknown }).data;
+  }
+
+  public async releasePaymentEvidenceLegalHold(
+    orderId: string,
+    customerId: string,
+    role: string,
+    reason: string,
+  ): Promise<unknown> {
+    const response = await this.requestAs(
+      `/admin/payment-evidence/${encodeURIComponent(orderId)}/legal-hold`,
+      "DELETE",
+      customerId,
+      role,
+      { reason },
+    );
+    return (await response.json() as { data: unknown }).data;
+  }
+
   private async requestAdmin(
     path: string,
     method: "GET" | "POST",
     customerId: string,
     body?: unknown,
   ): Promise<Response> {
+    return this.requestAs(path, method, customerId, "STORE_ADMIN", body);
+  }
+
+  private async requestAs(
+    path: string,
+    method: "GET" | "POST" | "DELETE",
+    customerId: string,
+    role: string,
+    body?: unknown,
+  ): Promise<Response> {
     let response: Response;
+    const isForm = typeof FormData !== "undefined" && body instanceof FormData;
     try {
       response = await this.fetcher(`${this.ordersServiceUrl}${path}`, {
         method,
         headers: {
-          ...(body !== undefined ? { "content-type": "application/json" } : {}),
-          ...this.internalHeaders(customerId, "STORE_ADMIN"),
+          ...(body !== undefined && !isForm ? { "content-type": "application/json" } : {}),
+          ...this.internalHeaders(customerId, role),
         },
-        ...(body !== undefined ? { body: JSON.stringify(body) } : {}),
+        ...(body !== undefined ? { body: isForm ? body : JSON.stringify(body) } : {}),
         signal: AbortSignal.timeout(3_000),
       });
     } catch {
@@ -233,8 +464,31 @@ export class OrderService {
 
     if (response.status === 404) throw new NotFoundException("Order not found");
     if (response.status === 400) throw new BadRequestException("Order decision was rejected");
+    if (response.status === 403) throw new ForbiddenException();
     if (response.status === 409) throw new ConflictException("Order is no longer pending");
     if (!response.ok) throw new ServiceUnavailableException("Orders service is unavailable");
     return response;
+  }
+
+  private async fetchEvidence(
+    path: string,
+    customerId: string,
+    role: string,
+  ): Promise<OrderEvidenceStream> {
+    const response = await this.requestAs(path, "GET", customerId, role);
+    if (!response.body) {
+      throw new ServiceUnavailableException("Orders service returned an empty payment evidence stream");
+    }
+    const contentLengthValue = response.headers.get("content-length");
+    const contentLength = contentLengthValue ? Number(contentLengthValue) : undefined;
+    return {
+      stream: Readable.fromWeb(response.body as NodeReadableStream<Uint8Array>),
+      contentType: response.headers.get("content-type") ?? "application/octet-stream",
+      contentDisposition:
+        response.headers.get("content-disposition") ?? 'attachment; filename="payment-evidence"',
+      ...(contentLength !== undefined && Number.isSafeInteger(contentLength)
+        ? { contentLength }
+        : {}),
+    };
   }
 }

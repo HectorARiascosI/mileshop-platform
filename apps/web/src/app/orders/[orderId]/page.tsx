@@ -179,6 +179,7 @@ export default function OrderPage() {
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [isCancelling, setIsCancelling] = useState(false);
   const [isRequestingCancellation, setIsRequestingCancellation] = useState(false);
+  const [pendingConfirmation, setPendingConfirmation] = useState<"cancel" | "request" | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [requiresLogin, setRequiresLogin] = useState(false);
 
@@ -207,10 +208,6 @@ export default function OrderPage() {
   }, [applyOrderLoadResult, orderId]);
 
   const cancelOrder = useCallback(async () => {
-    if (!window.confirm("¿Deseas cancelar este pedido y liberar la reserva?")) {
-      return;
-    }
-
     setIsCancelling(true);
     setError(null);
     try {
@@ -257,14 +254,6 @@ export default function OrderPage() {
   }, [orderId]);
 
   const requestCancellation = useCallback(async () => {
-    if (
-      !window.confirm(
-        "¿Solicitas cancelar este pedido? La solicitud no libera la reserva; el equipo administrativo debe resolverla.",
-      )
-    ) {
-      return;
-    }
-
     setIsRequestingCancellation(true);
     setError(null);
     try {
@@ -470,7 +459,7 @@ export default function OrderPage() {
           <button
             className="checkout-button order-action"
             type="button"
-            onClick={() => void cancelOrder()}
+            onClick={() => setPendingConfirmation("cancel")}
             disabled={isCancelling || isRefreshing}
           >
             {isCancelling ? "Cancelando…" : "Cancelar pedido"}
@@ -480,7 +469,7 @@ export default function OrderPage() {
           <button
             className="checkout-button order-action"
             type="button"
-            onClick={() => void requestCancellation()}
+            onClick={() => setPendingConfirmation("request")}
             disabled={isRequestingCancellation || isRefreshing}
           >
             {isRequestingCancellation ? "Enviando solicitud…" : "Solicitar cancelación"}
@@ -488,6 +477,53 @@ export default function OrderPage() {
         )}
         <Link className="order-back-link" href="/">Volver al catálogo</Link>
       </section>
+      {pendingConfirmation && (
+        <div className="order-confirmation-backdrop">
+          <section
+            aria-labelledby="order-confirmation-title"
+            aria-modal="true"
+            className="order-confirmation"
+            role="alertdialog"
+          >
+            <p className="eyebrow">Pedido</p>
+            <h2 id="order-confirmation-title">
+              {pendingConfirmation === "cancel"
+                ? "Cancelar pedido"
+                : "Solicitar cancelación"}
+            </h2>
+            <p>
+              {pendingConfirmation === "cancel"
+                ? "El pedido se cancelará y se liberará la reserva. No realices pagos por este pedido."
+                : "La reserva seguirá activa mientras el equipo administrativo revisa tu solicitud."}
+            </p>
+            <div className="order-confirmation-actions">
+              <button
+                className="order-confirmation-button"
+                onClick={() => setPendingConfirmation(null)}
+                type="button"
+              >
+                Volver
+              </button>
+              <button
+                className="checkout-button order-confirmation-button"
+                disabled={isCancelling || isRequestingCancellation}
+                onClick={() => {
+                  const action = pendingConfirmation;
+                  setPendingConfirmation(null);
+                  if (action === "cancel") {
+                    void cancelOrder();
+                  } else {
+                    void requestCancellation();
+                  }
+                }}
+                type="button"
+              >
+                {pendingConfirmation === "cancel" ? "Sí, cancelar pedido" : "Enviar solicitud"}
+              </button>
+            </div>
+          </section>
+        </div>
+      )}
     </main>
   );
 }

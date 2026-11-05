@@ -65,7 +65,7 @@ export async function POST(request: NextRequest) {
   }
 
   if (!res.ok) {
-    return Response.json({ error: "Registration failed" }, { status: 500 });
+    return Response.json({ error: "Registration failed" }, { status: res.status });
   }
 
   const data = (await res.json()) as {

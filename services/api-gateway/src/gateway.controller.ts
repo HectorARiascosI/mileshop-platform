@@ -543,12 +543,9 @@ export class GatewayController {
     if (!verifiedCustomerId) {
       throw new NotFoundException("Order not found");
     }
-    if ((req.raw?.role ?? req.role) === "STORE_ADMIN") {
-      throw new NotFoundException("Order not found");
-    }
-
-    const order = await this.orders.getOrder(orderId, verifiedCustomerId, req.raw?.role ?? "CUSTOMER");
-    if (order.customerId !== verifiedCustomerId) {
+    const role = req.raw?.role ?? req.role ?? "CUSTOMER";
+    const order = await this.orders.getOrder(orderId, verifiedCustomerId, role);
+    if (role !== "STORE_ADMIN" && order.customerId !== verifiedCustomerId) {
       throw new NotFoundException("Order not found");
     }
 
@@ -620,8 +617,7 @@ export class GatewayController {
       throw new NotFoundException("Order not found");
     }
     try {
-      const data = await (this.orders as any).cancelOrder(orderId, actor.customerId, actor.role);
-      return { data };
+      return { data: await this.orders.cancelOrder(orderId, actor.customerId, actor.role) };
     } catch (error) {
       console.error("cancelOrder failed", error);
       throw error;
@@ -632,14 +628,16 @@ export class GatewayController {
   @HttpCode(201)
   public requestCancellation(@Param("orderId") orderId: string, @Req() req: any): Promise<{ data: unknown }> {
     const actor = this.actor(req);
-    return (this.orders as any).requestCancellation(orderId, actor.customerId, actor.role).then((data: unknown) => ({ data }));
+    return this.orders.requestCancellation(orderId, actor.customerId, actor.role)
+      .then((data) => ({ data }));
   }
 
   @Get("admin/cancellation-requests")
   @UseGuards(StoreAdminGuard)
   public cancellationQueue(@Req() req: any): Promise<{ data: unknown }> {
     const actor = this.actor(req);
-    return (this.orders as any).listPendingCancellationRequests(actor.customerId, actor.role).then((data: unknown) => ({ data }));
+    return this.orders.listPendingCancellationRequests(actor.customerId, actor.role)
+      .then((data) => ({ data }));
   }
 
   @Post("admin/cancellation-requests/:orderId/refund-handling")
@@ -651,9 +649,9 @@ export class GatewayController {
     @Req() req: any,
   ): Promise<{ data: unknown }> {
     const actor = this.actor(req);
-    return (this.orders as any).recordCancellationRefund(
+    return this.orders.recordCancellationRefund(
       orderId, actor.customerId, actor.role, body.paymentCaptured, body.externalRefundReference,
-    ).then((data: unknown) => ({ data }));
+    ).then((data) => ({ data }));
   }
 
   @Post("admin/cancellation-requests/:orderId/resolve")
@@ -665,9 +663,9 @@ export class GatewayController {
     @Req() req: any,
   ): Promise<{ data: unknown }> {
     const actor = this.actor(req);
-    return (this.orders as any).resolveCancellationRequest(
+    return this.orders.resolveCancellationRequest(
       orderId, actor.customerId, actor.role, body.action, body.note,
-    ).then((data: unknown) => ({ data }));
+    ).then((data) => ({ data }));
   }
 
   @Post("orders/:orderId/payment-evidence")
@@ -683,7 +681,8 @@ export class GatewayController {
     const uploaded = fields.file;
     if (uploaded?.file) form.append("file", new Blob([uploaded.file]), uploaded.filename ?? "receipt.pdf");
     else if (uploaded) form.append("file", uploaded);
-    return ((this.orders as any).uploadPaymentEvidence as any)(orderId, actor.customerId, actor.role, form).then((data: unknown) => ({ data }));
+    return this.orders.uploadPaymentEvidence(orderId, actor.customerId, actor.role, form)
+      .then((data) => ({ data }));
   }
 
   @Get("orders/:orderId/payment-evidence")
@@ -691,7 +690,7 @@ export class GatewayController {
   @Header("X-Content-Type-Options", "nosniff")
   public async downloadEvidence(@Param("orderId") orderId: string, @Req() req: any): Promise<StreamableFile> {
     const actor = this.actor(req);
-    const result = await (this.orders as any).getPaymentEvidence(orderId, actor.customerId, actor.role);
+    const result = await this.orders.getPaymentEvidence(orderId, actor.customerId, actor.role);
     return new StreamableFile(result.stream, { type: result.contentType, disposition: result.contentDisposition, length: result.contentLength });
   }
 
@@ -700,7 +699,8 @@ export class GatewayController {
   @Header("Cache-Control", "private, no-store")
   public adminPayments(@Req() req: any): Promise<{ data: unknown }> {
     const actor = this.actor(req);
-    return (this.orders as any).listPendingPaymentReviews(actor.customerId, actor.role).then((data: unknown) => ({ data }));
+    return this.orders.listPendingPaymentReviews(actor.customerId, actor.role)
+      .then((data) => ({ data }));
   }
 
   @Get("admin/payments/:orderId")
@@ -708,7 +708,8 @@ export class GatewayController {
   @Header("Cache-Control", "private, no-store")
   public adminPayment(@Param("orderId") orderId: string, @Req() req: any): Promise<{ data: unknown }> {
     const actor = this.actor(req);
-    return (this.orders as any).getPendingPaymentReview(orderId, actor.customerId, actor.role).then((data: unknown) => ({ data }));
+    return this.orders.getPendingPaymentReview(orderId, actor.customerId, actor.role)
+      .then((data) => ({ data }));
   }
 
   @Get("admin/payments/:orderId/evidence")
@@ -717,7 +718,7 @@ export class GatewayController {
   @Header("X-Content-Type-Options", "nosniff")
   public adminEvidence(@Param("orderId") orderId: string, @Req() req: any): Promise<StreamableFile> {
     const actor = this.actor(req);
-    return (this.orders as any).getAdminPaymentEvidence(orderId, actor.customerId, actor.role).then((result: any) =>
+    return this.orders.getAdminPaymentEvidence(orderId, actor.customerId, actor.role).then((result) =>
       new StreamableFile(result.stream, { type: result.contentType, disposition: result.contentDisposition, length: result.contentLength }),
     );
   }
@@ -728,7 +729,7 @@ export class GatewayController {
   public async deleteEvidence(@Param("orderId") orderId: string, @Req() req: any, @Body() body: any): Promise<{ data: unknown }> {
     const actor = this.actor(req);
     try {
-      const data = await (this.orders as any).deleteAdminPaymentEvidence(orderId, actor.customerId, actor.role, body.confirmDownloaded);
+      const data = await this.orders.deleteAdminPaymentEvidence(orderId, actor.customerId, actor.role, body.confirmDownloaded);
       return { data };
     } catch (error) {
       console.error("deleteEvidence failed", error);
@@ -742,7 +743,8 @@ export class GatewayController {
   @Header("Cache-Control", "private, no-store")
   public approvePayment(@Param("orderId") orderId: string, @Req() req: any, @Body() body: any): Promise<{ data: unknown }> {
     const actor = this.actor(req);
-    return (this.orders as any).approvePayment(orderId, actor.customerId, actor.role, body?.reason).then((data: unknown) => ({ data }));
+    return this.orders.approvePayment(orderId, actor.customerId, actor.role, body?.reason)
+      .then((data) => ({ data }));
   }
 
   @Post("admin/payments/:orderId/reject")
@@ -751,7 +753,11 @@ export class GatewayController {
   @Header("Cache-Control", "private, no-store")
   public rejectPayment(@Param("orderId") orderId: string, @Req() req: any, @Body() body: any): Promise<{ data: unknown }> {
     const actor = this.actor(req);
-    return (this.orders as any).rejectPayment(orderId, actor.customerId, actor.role, body?.reason).then((data: unknown) => ({ data }));
+    if (typeof body?.reason !== "string" || !body.reason.trim()) {
+      throw new BadRequestException("Payment rejection reason is required");
+    }
+    return this.orders.rejectPayment(orderId, actor.customerId, actor.role, body.reason)
+      .then((data) => ({ data }));
   }
 
   @Post("admin/payment-evidence/:orderId/legal-hold")
@@ -760,7 +766,8 @@ export class GatewayController {
   @Header("Cache-Control", "private, no-store")
   public placeHold(@Param("orderId") orderId: string, @Req() req: any, @Body() body: any): Promise<{ data: unknown }> {
     const actor = this.actor(req);
-    return (this.orders as any).placePaymentEvidenceLegalHold(orderId, actor.customerId, actor.role, body.reason).then((data: unknown) => ({ data }));
+    return this.orders.placePaymentEvidenceLegalHold(orderId, actor.customerId, actor.role, body.reason)
+      .then((data) => ({ data }));
   }
 
   @Delete("admin/payment-evidence/:orderId/legal-hold")
@@ -768,6 +775,7 @@ export class GatewayController {
   @Header("Cache-Control", "private, no-store")
   public releaseHold(@Param("orderId") orderId: string, @Req() req: any, @Body() body: any): Promise<{ data: unknown }> {
     const actor = this.actor(req);
-    return (this.orders as any).releasePaymentEvidenceLegalHold(orderId, actor.customerId, actor.role, body.reason).then((data: unknown) => ({ data }));
+    return this.orders.releasePaymentEvidenceLegalHold(orderId, actor.customerId, actor.role, body.reason)
+      .then((data) => ({ data }));
   }
 }

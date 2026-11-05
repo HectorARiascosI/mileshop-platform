@@ -2,9 +2,18 @@
 
 import { useEffect, useState } from "react";
 
-import { buildWhatsAppOrderUrl } from "@/lib/whatsapp-order";
-
-type OrderStatus = "PENDING" | "CONFIRMED" | "CANCELLED";
+import {
+  getOrderStatusMessage,
+  isOrderStatus,
+  isPaymentDecisionForStatus,
+  type OrderStatus,
+  type PaymentDecision,
+} from "@/lib/order-presentation";
+import {
+  buildWhatsAppOrderUrl,
+  isWhatsAppCustomerDetails,
+  type WhatsAppCustomerDetails,
+} from "@/lib/whatsapp-order";
 
 type CheckoutOrderData = {
   orderId: string;
@@ -13,6 +22,7 @@ type CheckoutOrderData = {
   totalCop: number;
   status: OrderStatus;
   createdAt: string;
+  paymentDecision: PaymentDecision | null;
   lines: Array<{
     productId: string;
     sku: string;
@@ -36,51 +46,53 @@ function formatPrice(priceCop: number): string {
   }).format(priceCop);
 }
 
-function isCheckoutOrder(value: unknown): value is CheckoutOrderData {
-  if (!value || typeof value !== "object") {
-    return false;
-  }
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
 
-  const order = value as Partial<CheckoutOrderData>;
+function isCheckoutLine(value: unknown): value is CheckoutOrderData["lines"][number] {
   return (
-    typeof order.orderId === "string" &&
-    typeof order.subtotalCop === "number" &&
-    typeof order.deliveryFeeCop === "number" &&
-    typeof order.totalCop === "number" &&
-    (order.status === "PENDING" || order.status === "CONFIRMED" || order.status === "CANCELLED") &&
-    typeof order.createdAt === "string" &&
-    Array.isArray(order.lines) &&
-    order.lines.every((line) =>
-      line !== null &&
-      typeof line === "object" &&
-      typeof line.productId === "string" &&
-      typeof line.sku === "string" &&
-      typeof line.name === "string" &&
-      Number.isInteger(line.quantity) &&
-      Number.isInteger(line.unitPriceCop),
-    )
+    isRecord(value) &&
+    typeof value.productId === "string" &&
+    typeof value.sku === "string" &&
+    typeof value.name === "string" &&
+    Number.isSafeInteger(value.quantity) &&
+    Number(value.quantity) > 0 &&
+    Number.isSafeInteger(value.unitPriceCop) &&
+    Number(value.unitPriceCop) >= 0
   );
 }
 
-function statusLabel(status: OrderStatus): string {
-  switch (status) {
-    case "PENDING":
-      return "Recibido; pendiente de procesamiento";
-    case "CONFIRMED":
-      return "Confirmado";
-    case "CANCELLED":
-      return "Cancelado";
-  }
+function isCheckoutOrder(value: unknown): value is CheckoutOrderData {
+  if (!isRecord(value)) return false;
+  return (
+    typeof value.orderId === "string" &&
+    Number.isSafeInteger(value.subtotalCop) &&
+    Number(value.subtotalCop) >= 0 &&
+    Number.isSafeInteger(value.deliveryFeeCop) &&
+    Number(value.deliveryFeeCop) >= 0 &&
+    Number.isSafeInteger(value.totalCop) &&
+    Number(value.totalCop) >= 0 &&
+    isOrderStatus(value.status) &&
+    typeof value.createdAt === "string" &&
+    Number.isFinite(Date.parse(value.createdAt)) &&
+    isPaymentDecisionForStatus(value.paymentDecision, value.status) &&
+    Array.isArray(value.lines) &&
+    value.lines.every(isCheckoutLine)
+  );
 }
 
 export function CheckoutOrder({ orderId }: CheckoutOrderProps) {
   const [order, setOrder] = useState<CheckoutOrderData | null>(null);
+  const [customer, setCustomer] = useState<WhatsAppCustomerDetails | null>(null);
   const [isLoading, setIsLoading] = useState(Boolean(orderId));
+  const [customerLoading, setCustomerLoading] = useState(Boolean(orderId));
+  const [customerUnavailable, setCustomerUnavailable] = useState(false);
   const [statusUnavailable, setStatusUnavailable] = useState(false);
   const [notFound, setNotFound] = useState(false);
   const [refreshKey, setRefreshKey] = useState(0);
   const whatsAppUrl = order
-    ? buildWhatsAppOrderUrl(WHATSAPP_BUSINESS_PHONE, order)
+    ? buildWhatsAppOrderUrl(WHATSAPP_BUSINESS_PHONE, order, customer)
     : null;
 
   useEffect(() => {
@@ -89,6 +101,31 @@ export function CheckoutOrder({ orderId }: CheckoutOrderProps) {
     }
 
     let active = true;
+    void fetch("/api/auth/me", { cache: "no-store" })
+      .then(async (response) => {
+        if (!response.ok) {
+          throw new Error("Customer profile request failed");
+        }
+        const profile: unknown = await response.json();
+        if (!isWhatsAppCustomerDetails(profile)) {
+          throw new Error("Customer profile response is invalid");
+        }
+        if (active) {
+          setCustomer(profile);
+          setCustomerUnavailable(false);
+        }
+      })
+      .catch(() => {
+        if (active) {
+          setCustomerUnavailable(true);
+        }
+      })
+      .finally(() => {
+        if (active) {
+          setCustomerLoading(false);
+        }
+      });
+
     void fetch(`/api/orders/${encodeURIComponent(orderId)}`)
       .then(async (response) => {
         if (response.status === 404) {
@@ -103,7 +140,11 @@ export function CheckoutOrder({ orderId }: CheckoutOrderProps) {
         return response.json() as Promise<{ data: unknown }>;
       })
       .then((response) => {
-        if (!active || !response || !isCheckoutOrder(response.data)) {
+        if (!active || !response) {
+          return;
+        }
+        if (!isCheckoutOrder(response.data)) {
+          setStatusUnavailable(true);
           return;
         }
         setOrder(response.data);
@@ -149,6 +190,8 @@ export function CheckoutOrder({ orderId }: CheckoutOrderProps) {
                 onClick={() => {
                   setStatusUnavailable(false);
                   setIsLoading(true);
+                  setCustomerLoading(true);
+                  setCustomerUnavailable(false);
                   setRefreshKey((current) => current + 1);
                 }}
               >
@@ -167,18 +210,14 @@ export function CheckoutOrder({ orderId }: CheckoutOrderProps) {
     );
   }
 
+  const statusMessage = getOrderStatusMessage(order.status, order.paymentDecision);
+
   return (
     <main className="checkout-page">
       <section className="checkout-card">
         <p className="eyebrow">Estado del pedido</p>
-        <h1>
-          {order.status === "CANCELLED"
-            ? "Pedido cancelado"
-            : order.status === "CONFIRMED"
-              ? "Pedido confirmado"
-              : "Pedido recibido"}
-        </h1>
-        <p role="status">{statusLabel(order.status)}</p>
+        <h1>{statusMessage.title}</h1>
+        <p role="status">{statusMessage.description}</p>
         {statusUnavailable && (
           <p className="notice-error" role="alert">
             No pudimos actualizar el estado ahora. Mostramos los últimos datos consultados.
@@ -190,17 +229,25 @@ export function CheckoutOrder({ orderId }: CheckoutOrderProps) {
           <strong>{order.orderId}</strong>
         </div>
 
-        <p>
-          Revisa el resumen que se abre en WhatsApp. Si realizas un pago, adjunta el comprobante en el chat y pulsa
-          Enviar para compartir la información con la tienda.
-        </p>
-        {whatsAppUrl ? (
-          <a className="checkout-button" href={whatsAppUrl} target="_blank" rel="noopener noreferrer">
-            Abrir WhatsApp con el resumen
-          </a>
+        {customerLoading ? (
+          <p role="status">Cargando tus datos para preparar el mensaje de WhatsApp...</p>
+        ) : whatsAppUrl ? (
+          <>
+            <p>
+              Abre el resumen en WhatsApp y espera a que la tienda confirme el método y los datos de pago. Si realizas
+              el pago, adjunta el comprobante en el chat y pulsa Enviar.
+            </p>
+            <a className="checkout-button" href={whatsAppUrl} target="_blank" rel="noopener noreferrer">
+              Abrir WhatsApp con el resumen
+            </a>
+          </>
+        ) : customerUnavailable ? (
+          <p className="notice-error" role="alert">
+            No pudimos cargar tu nombre y datos de contacto para identificar el pedido en WhatsApp. Inicia sesión nuevamente e inténtalo otra vez.
+          </p>
         ) : (
           <p className="notice-error" role="status">
-            Tu pedido está guardado, pero falta configurar el número internacional de WhatsApp Business de la tienda.
+            El pedido está guardado, pero no se pudo abrir el WhatsApp Business de MileShop. No realices pagos hasta que la tienda confirme cómo continuar.
           </p>
         )}
 

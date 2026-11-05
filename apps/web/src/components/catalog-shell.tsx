@@ -22,6 +22,7 @@ import { buildCheckoutSummary } from "@/lib/order";
 import {
   buildWhatsAppOrderUrl,
   normalizeWhatsAppBusinessPhone,
+  isWhatsAppCustomerDetails,
   isWhatsAppOrderSummary,
   type WhatsAppOrderSummary,
 } from "@/lib/whatsapp-order";
@@ -52,6 +53,8 @@ type CatalogShellProps = {
 const STORAGE_KEY = "mileshop-cart-v1";
 const IDEMPOTENCY_STORAGE_KEY = "mileshop-checkout-idempotency-v1";
 const WHATSAPP_BUSINESS_PHONE = process.env.NEXT_PUBLIC_WHATSAPP_BUSINESS_PHONE;
+const isWhatsAppBusinessConfigured =
+  normalizeWhatsAppBusinessPhone(WHATSAPP_BUSINESS_PHONE) !== null;
 
 function subscribeToHydration(): () => void {
   return () => {};
@@ -138,6 +141,25 @@ export function CatalogShell({ products, unavailable, announcements }: CatalogSh
   }, [cart, isCartHydrated]);
 
   useEffect(() => {
+    if (!isCartOpen) {
+      document.body.classList.remove("cart-is-open");
+      return;
+    }
+
+    document.body.classList.add("cart-is-open");
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") {
+        setIsCartOpen(false);
+      }
+    };
+    window.addEventListener("keydown", handleKeyDown);
+    return () => {
+      document.body.classList.remove("cart-is-open");
+      window.removeEventListener("keydown", handleKeyDown);
+    };
+  }, [isCartOpen]);
+
+  useEffect(() => {
     let active = true;
     void fetch("/api/auth/me", { cache: "no-store" })
       .then(async (response) => {
@@ -222,9 +244,15 @@ export function CatalogShell({ products, unavailable, announcements }: CatalogSh
     if (cart.length === 0 || isSubmitting) {
       return;
     }
+    if (!isWhatsAppBusinessConfigured) {
+      setCheckoutError(
+        "No se puede registrar el pedido porque WhatsApp Business no está configurado. No se creó la orden ni se reservó inventario.",
+      );
+      return;
+    }
 
     let whatsappWindow: Window | null = null;
-    if (normalizeWhatsAppBusinessPhone(WHATSAPP_BUSINESS_PHONE)) {
+    if (isWhatsAppBusinessConfigured) {
       // Open synchronously from the user's click so the browser does not block
       // the later WhatsApp navigation after the order API request completes.
       whatsappWindow = window.open("about:blank", "_blank");
@@ -240,6 +268,14 @@ export function CatalogShell({ products, unavailable, announcements }: CatalogSh
       if (!sessionResponse.ok) {
         whatsappWindow?.close();
         router.push("/login");
+        return;
+      }
+      const customer: unknown = await sessionResponse.json().catch(() => null);
+      if (!isWhatsAppCustomerDetails(customer)) {
+        whatsappWindow?.close();
+        setCheckoutError(
+          "No pudimos consultar tu nombre y datos de contacto. Vuelve a iniciar sesión e inténtalo nuevamente.",
+        );
         return;
       }
 
@@ -274,7 +310,7 @@ export function CatalogShell({ products, unavailable, announcements }: CatalogSh
       }
 
       const persistedOrder: WhatsAppOrderSummary = payload.data;
-      const whatsappUrl = buildWhatsAppOrderUrl(WHATSAPP_BUSINESS_PHONE, persistedOrder);
+      const whatsappUrl = buildWhatsAppOrderUrl(WHATSAPP_BUSINESS_PHONE, persistedOrder, customer);
       if (whatsappWindow && whatsappUrl) {
         try {
           whatsappWindow.location.replace(whatsappUrl);
@@ -302,8 +338,11 @@ export function CatalogShell({ products, unavailable, announcements }: CatalogSh
     <div className="site-shell">
       <header className="topbar">
         <Link className="brand" href="/" aria-label="MileShop inicio">
-          <span className="brand-mark" aria-hidden="true">M</span>
-          <span className="brand-name">MileShop</span>
+          <Image className="brand-mark" src="/mileshop-mark.webp" alt="" width={60} height={60} priority />
+          <span className="brand-copy">
+            <span className="brand-name">MileShop</span>
+            <span className="brand-tagline">La exclusividad hecha a tu medida.</span>
+          </span>
         </Link>
 
         <nav className="topbar-nav" aria-label="Navegación principal">
@@ -424,7 +463,17 @@ export function CatalogShell({ products, unavailable, announcements }: CatalogSh
                 unoptimized
               />
             ) : (
-              <span className="hero-monogram" aria-hidden="true">NUEVO</span>
+              <span className="hero-image-empty" role="img" aria-label="Aún no hay una fotografía destacada">
+                <span className="hero-image-empty-icon" aria-hidden="true">
+                  <svg viewBox="0 0 24 24" fill="none">
+                    <rect x="3" y="4" width="18" height="16" rx="3" />
+                    <circle cx="8.5" cy="9.5" r="1.5" />
+                    <path d="m5 17 4.7-4.7 3.1 3.1 2.1-2.1L19 17" />
+                  </svg>
+                </span>
+                <strong>Imagen destacada</strong>
+                <small>Agrega una foto al primer producto activo para mostrarla aquí.</small>
+              </span>
             )}
           </div>
         </section>
@@ -549,7 +598,13 @@ export function CatalogShell({ products, unavailable, announcements }: CatalogSh
                       />
                     ) : (
                       <div className="product-image-fallback" aria-label={`Fotografía no disponible para ${product.name}`}>
-                        <span className="fallback-mark" aria-hidden="true">M</span>
+                        <span className="fallback-mark" aria-hidden="true">
+                          <svg viewBox="0 0 24 24" fill="none">
+                            <rect x="3" y="4" width="18" height="16" rx="3" />
+                            <circle cx="8.5" cy="9.5" r="1.5" />
+                            <path d="m5 17 4.7-4.7 3.1 3.1 2.1-2.1L19 17" />
+                          </svg>
+                        </span>
                         <span>Fotografía no disponible</span>
                       </div>
                     )}
@@ -584,8 +639,7 @@ export function CatalogShell({ products, unavailable, announcements }: CatalogSh
 
                   <div className="product-info">
                     <p className={`product-stock${product.stock <= 0 ? " is-unavailable" : ""}`}>
-                      <span className="stock-indicator" aria-hidden="true" />
-                      {product.stock > 0 ? `${product.stock} disponibles` : "Agotado"}
+                      {product.stock > 0 ? "Disponible" : "Agotado"}
                     </p>
                     {product.category && (
                       <p className="product-category">{product.category.name}</p>
@@ -627,14 +681,26 @@ export function CatalogShell({ products, unavailable, announcements }: CatalogSh
         </section>
       </main>
 
-      <aside className={`cart-panel ${isCartOpen ? "is-open" : ""}`} aria-live="polite">
+      <button
+        className={`cart-backdrop ${isCartOpen ? "is-open" : ""}`}
+        type="button"
+        aria-label="Cerrar carrito"
+        tabIndex={isCartOpen ? 0 : -1}
+        onClick={() => setIsCartOpen(false)}
+      />
+      <aside
+        className={`cart-panel ${isCartOpen ? "is-open" : ""}`}
+        aria-live="polite"
+        aria-hidden={!isCartOpen}
+        inert={!isCartOpen ? true : undefined}
+      >
         <div className="cart-panel-header">
           <div>
-            <p className="eyebrow cart-eyebrow">Carrito</p>
-            <h2>Tu selección</h2>
+            <h2>CARRITO</h2>
           </div>
           <button className="close-cart" type="button" aria-label="Cerrar carrito" onClick={() => setIsCartOpen(false)}>
-            Cerrar
+            <span aria-hidden="true">×</span>
+            <span className="close-cart-label" aria-hidden="true">Cerrar</span>
           </button>
         </div>
 
@@ -652,9 +718,29 @@ export function CatalogShell({ products, unavailable, announcements }: CatalogSh
             <ul className="cart-items">
               {visibleCart.map((item) => (
                 <li key={item.productId} className="cart-item">
-                  <div>
-                    <strong>{item.name}</strong>
-                    <span>{formatPrice(item.priceCop)}</span>
+                  {(() => {
+                    const product = products.find((candidate) => candidate.id === item.productId);
+                    const imageUrl = product?.images?.[0]?.imageUrl ?? product?.imageUrl;
+                    return imageUrl ? (
+                      <Image
+                        className="cart-item-image"
+                        src={getOptimizedImageUrl(imageUrl, 180)}
+                        alt=""
+                        width={72}
+                        height={72}
+                        sizes="72px"
+                      />
+                    ) : (
+                      <div className="cart-item-image cart-item-image-fallback" aria-hidden="true">
+                        {item.name.charAt(0).toUpperCase()}
+                      </div>
+                    );
+                  })()}
+                  <div className="cart-item-details">
+                    <div>
+                      <strong>{item.name}</strong>
+                      <span>{formatPrice(item.priceCop)}</span>
+                    </div>
                   </div>
 
                   <div className="cart-item-actions">
@@ -691,12 +777,30 @@ export function CatalogShell({ products, unavailable, announcements }: CatalogSh
               </div>
             </div>
 
-            <p className="notice">
-              Al confirmar, guardaremos tu pedido y abriremos WhatsApp con el resumen para que lo revises y lo envíes.
-              Si pagas por transferencia, adjunta el comprobante manualmente en ese chat.
-            </p>
-            <button className="checkout-button" type="button" onClick={handleCheckout}>
-              {isSubmitting ? "Guardando pedido..." : "Confirmar y abrir WhatsApp"}
+            {isWhatsAppBusinessConfigured ? (
+              <p className="notice">
+                Al confirmar, guardaremos tu pedido y abriremos WhatsApp con el resumen para que lo revises y lo envíes.
+                <strong className="payment-proof-note">Si pagas por transferencia, adjunta el comprobante manualmente en este chat, por foto o archivo.</strong>
+              </p>
+            ) : (
+              <p className="notice-error" role="alert">
+                El canal de WhatsApp Business de MileShop no está configurado. No se registrará el pedido ni se reservará inventario hasta que la tienda habilite el contacto.
+              </p>
+            )}
+            <button
+              className="checkout-button whatsapp-checkout-button"
+              type="button"
+              onClick={handleCheckout}
+              disabled={isSubmitting || !isWhatsAppBusinessConfigured}
+            >
+              <svg className="whatsapp-icon" viewBox="0 0 24 24" aria-hidden="true">
+                <path d="M20.52 3.48A11.82 11.82 0 0 0 12.09 0 11.91 11.91 0 0 0 .21 11.89c0 2.09.55 4.14 1.59 5.94L0 24l6.32-1.66a11.96 11.96 0 0 0 5.76 1.47h.01A11.91 11.91 0 0 0 24 11.91a11.82 11.82 0 0 0-3.48-8.43Zm-8.43 18.4h-.01a9.91 9.91 0 0 1-5.05-1.38l-.36-.21-3.75.98 1-3.66-.24-.38a9.91 9.91 0 1 1 18.35-5.32 9.93 9.93 0 0 1-9.94 9.97Zm5.44-7.43c-.3-.15-1.77-.87-2.04-.97-.27-.1-.47-.15-.67.15-.2.3-.77.97-.95 1.17-.17.2-.35.22-.65.07-.3-.15-1.25-.46-2.38-1.47-.88-.78-1.47-1.75-1.64-2.05-.17-.3-.02-.46.13-.61.13-.13.3-.35.45-.52.15-.17.2-.3.3-.5.1-.2.05-.37-.02-.52-.08-.15-.67-1.62-.92-2.22-.24-.58-.49-.5-.67-.51h-.57c-.2 0-.52.07-.79.37-.27.3-1.04 1.02-1.04 2.49 0 1.47 1.07 2.89 1.22 3.09.15.2 2.1 3.21 5.09 4.5.71.31 1.27.49 1.7.63.71.23 1.36.2 1.87.12.57-.08 1.77-.72 2.02-1.42.25-.7.25-1.3.17-1.42-.07-.13-.27-.2-.57-.35Z" />
+              </svg>
+              {!isWhatsAppBusinessConfigured
+                ? "Pedidos temporalmente no disponibles"
+                : isSubmitting
+                  ? "Guardando pedido..."
+                  : "Confirmar y abrir WhatsApp"}
             </button>
             {checkoutError && <p className="notice-error" role="alert">{checkoutError}</p>}
           </>
@@ -704,7 +808,7 @@ export function CatalogShell({ products, unavailable, announcements }: CatalogSh
       </aside>
 
       <footer className="footer">
-        <span className="footer-brand">MileShop</span>
+        <span className="footer-brand">MileShop · La exclusividad hecha a tu medida.</span>
         <a href="#catalogo">Explorar productos</a>
       </footer>
     </div>

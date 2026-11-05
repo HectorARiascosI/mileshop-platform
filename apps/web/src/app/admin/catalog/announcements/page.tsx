@@ -4,6 +4,7 @@ import Link from "next/link";
 import { useCallback, useEffect, useState, type FormEvent } from "react";
 
 import type { CatalogAnnouncement, CatalogAnnouncementInput } from "@mileshop/contracts";
+import { AdminConfirmDialog } from "@/components/admin-confirm-dialog";
 
 const localDateTime = (date: Date) => {
   const adjusted = new Date(date.getTime() - date.getTimezoneOffset() * 60_000);
@@ -52,17 +53,16 @@ function isAnnouncement(value: unknown): value is CatalogAnnouncement {
 }
 
 export default function AdminAnnouncementsPage() {
-  const [authorized, setAuthorized] = useState<boolean | null>(null);
+  const [authorized, setAuthorized] = useState<boolean>(true);
   const [announcements, setAnnouncements] = useState<CatalogAnnouncement[]>([]);
   const [form, setForm] = useState<CatalogAnnouncementInput>(blankForm);
   const [editingId, setEditingId] = useState<string | null>(null);
-  const [busy, setBusy] = useState(false);
+  const [pendingDelete, setPendingDelete] = useState<CatalogAnnouncement | null>(null);
+  const [busy, setBusy] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
 
   const refresh = useCallback(async () => {
-    setBusy(true);
-    setError(null);
     try {
       const response = await fetch("/api/admin/catalog/announcements", { cache: "no-store" });
       if (response.status === 401 || response.status === 403) {
@@ -77,7 +77,6 @@ export default function AdminAnnouncementsPage() {
       const items = payload.data.filter(isAnnouncement);
       if (items.length !== payload.data.length) throw new Error("El servicio devolvió anuncios inválidos.");
       setAnnouncements(items);
-      setAuthorized(true);
     } catch (requestError) {
       setError(requestError instanceof Error ? requestError.message : "Error inesperado.");
     } finally {
@@ -86,27 +85,8 @@ export default function AdminAnnouncementsPage() {
   }, []);
 
   useEffect(() => {
-    let active = true;
-    void fetch("/api/auth/me", { cache: "no-store" })
-      .then(async (response) => {
-        if (!response.ok) {
-          if (active) setAuthorized(false);
-          return;
-        }
-        const profile: unknown = await response.json();
-        const isAdmin = isRecord(profile) && profile.role === "STORE_ADMIN";
-        if (active) {
-          setAuthorized(isAdmin);
-          if (isAdmin) await refresh();
-        }
-      })
-      .catch(() => {
-        if (active) {
-          setAuthorized(false);
-          setError("No pudimos verificar tu cuenta.");
-        }
-      });
-    return () => { active = false; };
+    const timer = window.setTimeout(() => void refresh(), 0);
+    return () => window.clearTimeout(timer);
   }, [refresh]);
 
   const reset = () => {
@@ -172,7 +152,6 @@ export default function AdminAnnouncementsPage() {
   };
 
   const remove = async (announcement: CatalogAnnouncement) => {
-    if (!window.confirm(`¿Eliminar el anuncio «${announcement.title}»?`)) return;
     setBusy(true);
     setError(null);
     setNotice(null);
@@ -193,17 +172,12 @@ export default function AdminAnnouncementsPage() {
 
   return (
     <main className="mx-auto min-h-screen max-w-6xl px-4 py-8 text-slate-900">
-      <header className="mb-8 flex flex-wrap items-center justify-between gap-4">
+      <header className="admin-console-header mb-8 flex flex-wrap items-center justify-between gap-4">
         <div>
           <p className="text-sm font-semibold uppercase tracking-wide text-emerald-700">MileShop</p>
           <h1 className="text-3xl font-bold">Anuncios de la tienda</h1>
           <p className="mt-1 text-slate-600">Publica avisos informativos independientes de precios y promociones.</p>
         </div>
-        <nav className="flex flex-wrap gap-2">
-          <Link className="rounded border px-4 py-2 font-medium hover:bg-slate-50" href="/admin/catalog">Catálogo</Link>
-          <Link className="rounded border px-4 py-2 font-medium hover:bg-slate-50" href="/admin/catalog/promotions">Promociones</Link>
-          <Link className="rounded border px-4 py-2 font-medium hover:bg-slate-50" href="/">Volver a la tienda</Link>
-        </nav>
       </header>
 
       {authorized === false && (
@@ -257,7 +231,7 @@ export default function AdminAnnouncementsPage() {
                   <h2 className="text-xl font-semibold" id="announcement-list-title">Anuncios</h2>
                   <p className="text-sm text-slate-600">{announcements.length} registrados, incluidos los inactivos.</p>
                 </div>
-                <button className="rounded border px-3 py-2 text-sm font-medium" type="button" onClick={() => void refresh()} disabled={busy}>Actualizar</button>
+                <button className="rounded border px-3 py-2 text-sm font-medium" type="button" onClick={() => { setBusy(true); setError(null); void refresh(); }} disabled={busy}>Actualizar</button>
               </div>
               {announcements.length === 0 ? <p className="rounded bg-slate-50 p-4 text-slate-600">Aún no hay anuncios.</p> : (
                 <ul className="grid gap-3">
@@ -271,7 +245,7 @@ export default function AdminAnnouncementsPage() {
                         </div>
                         <div className="flex gap-2">
                           <button className="rounded border px-3 py-1.5 text-sm" type="button" onClick={() => beginEdit(announcement)}>Editar</button>
-                          <button className="rounded border border-red-300 px-3 py-1.5 text-sm text-red-700" type="button" disabled={busy} onClick={() => void remove(announcement)}>Eliminar</button>
+                          <button className="rounded border border-red-300 px-3 py-1.5 text-sm text-red-700" type="button" disabled={busy} onClick={() => setPendingDelete(announcement)}>Eliminar</button>
                         </div>
                       </div>
                       <p className="mt-2 text-sm text-slate-700">{announcement.message}</p>
@@ -285,6 +259,20 @@ export default function AdminAnnouncementsPage() {
             </section>
           </section>
         </>
+      )}
+      {pendingDelete && (
+        <AdminConfirmDialog
+          title="Eliminar anuncio"
+          message={`El anuncio «${pendingDelete.title}» dejará de mostrarse en la tienda.`}
+          confirmLabel="Eliminar anuncio"
+          busy={busy}
+          onCancel={() => setPendingDelete(null)}
+          onConfirm={() => {
+            const announcement = pendingDelete;
+            setPendingDelete(null);
+            void remove(announcement);
+          }}
+        />
       )}
     </main>
   );

@@ -4,6 +4,7 @@ import Link from "next/link";
 import { useCallback, useEffect, useState, type FormEvent } from "react";
 
 import type { CatalogPromotion, CatalogPromotionInput } from "@mileshop/contracts";
+import { AdminConfirmDialog } from "@/components/admin-confirm-dialog";
 
 type Product = { id: string; sku: string; name: string; priceCop: number; isActive: boolean };
 type ProductDiscounts = Record<string, string>;
@@ -77,19 +78,18 @@ function formatPrice(priceCop: number): string {
 }
 
 export default function AdminPromotionsPage() {
-  const [authorized, setAuthorized] = useState<boolean | null>(null);
+  const [authorized, setAuthorized] = useState<boolean>(true);
   const [products, setProducts] = useState<Product[]>([]);
   const [promotions, setPromotions] = useState<CatalogPromotion[]>([]);
   const [form, setForm] = useState<CatalogPromotionInput>(blankForm);
   const [discounts, setDiscounts] = useState<ProductDiscounts>({});
   const [editingId, setEditingId] = useState<string | null>(null);
-  const [busy, setBusy] = useState(false);
+  const [pendingDelete, setPendingDelete] = useState<CatalogPromotion | null>(null);
+  const [busy, setBusy] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
 
   const refresh = useCallback(async () => {
-    setBusy(true);
-    setError(null);
     try {
       const [productsResponse, promotionsResponse] = await Promise.all([
         fetch("/api/admin/catalog/products", { cache: "no-store" }),
@@ -116,7 +116,6 @@ export default function AdminPromotionsPage() {
       }
       setProducts(nextProducts);
       setPromotions(nextPromotions);
-      setAuthorized(true);
     } catch (requestError) {
       setError(requestError instanceof Error ? requestError.message : "Error inesperado.");
     } finally {
@@ -125,27 +124,8 @@ export default function AdminPromotionsPage() {
   }, []);
 
   useEffect(() => {
-    let active = true;
-    void fetch("/api/auth/me", { cache: "no-store" })
-      .then(async (response) => {
-        if (!response.ok) {
-          if (active) setAuthorized(false);
-          return;
-        }
-        const profile: unknown = await response.json();
-        const isAdmin = isRecord(profile) && profile.role === "STORE_ADMIN";
-        if (active) {
-          setAuthorized(isAdmin);
-          if (isAdmin) await refresh();
-        }
-      })
-      .catch(() => {
-        if (active) {
-          setAuthorized(false);
-          setError("No pudimos verificar tu cuenta.");
-        }
-      });
-    return () => { active = false; };
+    const timer = window.setTimeout(() => void refresh(), 0);
+    return () => window.clearTimeout(timer);
   }, [refresh]);
 
   const reset = () => {
@@ -222,7 +202,6 @@ export default function AdminPromotionsPage() {
   };
 
   const remove = async (promotion: CatalogPromotion) => {
-    if (!window.confirm(`¿Eliminar la promoción «${promotion.title}»?`)) return;
     setBusy(true);
     setError(null);
     setNotice(null);
@@ -243,17 +222,12 @@ export default function AdminPromotionsPage() {
 
   return (
     <main className="mx-auto min-h-screen max-w-6xl px-4 py-8 text-slate-900">
-      <header className="mb-8 flex flex-wrap items-center justify-between gap-4">
+      <header className="admin-console-header mb-8 flex flex-wrap items-center justify-between gap-4">
         <div>
           <p className="text-sm font-semibold uppercase tracking-wide text-emerald-700">MileShop</p>
           <h1 className="text-3xl font-bold">Promociones y descuentos</h1>
           <p className="mt-1 text-slate-600">Crea campañas con precio rebajado real, vigencia y productos específicos.</p>
         </div>
-        <nav className="flex flex-wrap gap-2">
-          <Link className="rounded border px-4 py-2 font-medium hover:bg-slate-50" href="/admin/catalog">Catálogo</Link>
-          <Link className="rounded border px-4 py-2 font-medium hover:bg-slate-50" href="/admin/catalog/announcements">Anuncios</Link>
-          <Link className="rounded border px-4 py-2 font-medium hover:bg-slate-50" href="/">Volver a la tienda</Link>
-        </nav>
       </header>
 
       {authorized === false && (
@@ -337,7 +311,7 @@ export default function AdminPromotionsPage() {
                   <h2 className="text-xl font-semibold" id="promotion-list-title">Campañas</h2>
                   <p className="text-sm text-slate-600">{promotions.length} registradas, incluidas las inactivas.</p>
                 </div>
-                <button className="rounded border px-3 py-2 text-sm font-medium" type="button" onClick={() => void refresh()} disabled={busy}>Actualizar</button>
+                <button className="rounded border px-3 py-2 text-sm font-medium" type="button" onClick={() => { setBusy(true); setError(null); void refresh(); }} disabled={busy}>Actualizar</button>
               </div>
               {promotions.length === 0 ? <p className="rounded bg-slate-50 p-4 text-slate-600">Aún no hay promociones.</p> : (
                 <ul className="grid gap-3">
@@ -351,7 +325,7 @@ export default function AdminPromotionsPage() {
                         </div>
                         <div className="flex gap-2">
                           <button className="rounded border px-3 py-1.5 text-sm" type="button" onClick={() => beginEdit(promotion)}>Editar</button>
-                          <button className="rounded border border-red-300 px-3 py-1.5 text-sm text-red-700" type="button" disabled={busy} onClick={() => void remove(promotion)}>Eliminar</button>
+                          <button className="rounded border border-red-300 px-3 py-1.5 text-sm text-red-700" type="button" disabled={busy} onClick={() => setPendingDelete(promotion)}>Eliminar</button>
                         </div>
                       </div>
                       {promotion.description && <p className="mt-2 text-sm text-slate-700">{promotion.description}</p>}
@@ -365,6 +339,20 @@ export default function AdminPromotionsPage() {
             </section>
           </section>
         </>
+      )}
+      {pendingDelete && (
+        <AdminConfirmDialog
+          title="Eliminar promoción"
+          message={`La campaña «${pendingDelete.title}» dejará de aplicarse a los pedidos futuros.`}
+          confirmLabel="Eliminar promoción"
+          busy={busy}
+          onCancel={() => setPendingDelete(null)}
+          onConfirm={() => {
+            const promotion = pendingDelete;
+            setPendingDelete(null);
+            void remove(promotion);
+          }}
+        />
       )}
     </main>
   );
