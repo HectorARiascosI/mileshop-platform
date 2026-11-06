@@ -1285,6 +1285,7 @@ h3 {
     max-width: none;
     padding: 24px 20px;
     top: auto;
+    bottom: 0;
     transform: translateY(105%);
     transition: transform 420ms cubic-bezier(0.32, 0.72, 0, 1);
     width: 100%;
