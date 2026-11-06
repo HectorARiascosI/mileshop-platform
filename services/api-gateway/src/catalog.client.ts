@@ -55,6 +55,18 @@ export type CatalogProductInput = {
   categoryId?: string | null;
   isActive: boolean;
 };
+export type CatalogProductDeletionResult = {
+  deleted: true;
+  relatedRecords: {
+    images: number;
+    promotionAssignments: number;
+    manualSaleLines: number;
+    stockReceiptLines: number;
+    reservationLines: number;
+    inventoryMovements: number;
+  };
+  imageFileIds: string[];
+};
 export type StockReceiptLineInput = ManualSaleLineInput;
 export type StockReceiptResult = {
   idempotencyKey: string;
@@ -261,6 +273,17 @@ export class CatalogClient {
     );
   }
 
+  public async deleteProduct(
+    productId: string,
+    confirmRelatedDataDeletion: boolean,
+  ): Promise<CatalogProductDeletionResult> {
+    return this.adminRequest<CatalogProductDeletionResult>(
+      "DELETE",
+      `/internal/admin/products/${encodeURIComponent(productId)}`,
+      { confirmRelatedDataDeletion },
+    );
+  }
+
   public async receiveStock(
     adminCustomerId: string,
     idempotencyKey: string,
@@ -309,6 +332,19 @@ export class CatalogClient {
       throw new NotFoundException("Catalog resource was not found");
     }
     if (response.status === 409) {
+      try {
+        const payload: unknown = await response.json();
+        if (
+          typeof payload === "object" &&
+          payload !== null &&
+          "code" in payload &&
+          payload.code === "PRODUCT_HAS_RELATED_DATA"
+        ) {
+          throw new ConflictException(payload);
+        }
+      } catch (error) {
+        if (error instanceof ConflictException) throw error;
+      }
       throw new ConflictException("Catalog resource conflicts with current data");
     }
     if (!response.ok) {

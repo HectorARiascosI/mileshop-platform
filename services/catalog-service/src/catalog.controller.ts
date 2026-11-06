@@ -25,6 +25,7 @@ import {
   CatalogConflictError,
   CatalogInputError,
   CatalogNotFoundError,
+  ProductDeletionConfirmationRequiredError,
   CATEGORY_THEMES,
   InventoryConflictError,
   ManualSaleIdempotencyConflictError,
@@ -489,6 +490,42 @@ export class CatalogController {
     try {
       return { data: await this.catalog.updateProduct(productId, parseProductInput(input)) };
     } catch (error) {
+      return rethrowCatalogError(error);
+    }
+  }
+
+  @Delete("internal/admin/products/:productId")
+  @UseGuards(InventoryCommandGuard)
+  public async deleteProduct(
+    @Param("productId") productId: string,
+    @Body() input: unknown,
+  ): Promise<{ data: Awaited<ReturnType<CatalogService["deleteProduct"]>> }> {
+    let confirmRelatedDataDeletion = false;
+    if (input !== undefined) {
+      if (
+        typeof input !== "object" ||
+        input === null ||
+        !("confirmRelatedDataDeletion" in input) ||
+        typeof input.confirmRelatedDataDeletion !== "boolean"
+      ) {
+        throw new BadRequestException("Invalid product deletion request");
+      }
+      confirmRelatedDataDeletion = input.confirmRelatedDataDeletion;
+    }
+
+    try {
+      return {
+        data: await this.catalog.deleteProduct(productId, confirmRelatedDataDeletion),
+      };
+    } catch (error) {
+      if (error instanceof ProductDeletionConfirmationRequiredError) {
+        throw new ConflictException({
+          code: "PRODUCT_HAS_RELATED_DATA",
+          message:
+            "Este producto tiene información relacionada. Confirma si quieres borrar sus datos de catálogo e inventario; los pedidos y pagos se conservarán como historial.",
+          relatedRecords: error.relatedRecords,
+        });
+      }
       return rethrowCatalogError(error);
     }
   }

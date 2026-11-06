@@ -3,6 +3,7 @@ import { PrismaClient } from "../generated/catalog-client/index.js";
 import {
   CatalogConflictError,
   CatalogNotFoundError,
+  ProductDeletionConfirmationRequiredError,
   InventoryConflictError,
   ManualSaleIdempotencyConflictError,
   ReservationIdempotencyConflictError,
@@ -24,6 +25,8 @@ import type {
   ManualSale,
   ProductInput,
   Product,
+  ProductDeletionResult,
+  ProductRelatedRecordCounts,
   Promotion,
   PromotionInput,
   ReservationRequestLine,
@@ -632,6 +635,125 @@ export class PrismaCatalogStore implements CatalogStore {
         error.code === "P2025"
       ) {
         throw new CatalogNotFoundError("Product not found");
+      }
+      throw error;
+    }
+  }
+
+  public async deleteProduct(
+    productId: string,
+    confirmRelatedDataDeletion: boolean,
+  ): Promise<ProductDeletionResult> {
+    try {
+      return await this.prisma.$transaction(async (transaction) => {
+        const product = await transaction.product.findUnique({
+          where: { id: productId },
+          select: {
+            imageUrl: true,
+            imageFileId: true,
+            images: { select: { imageFileId: true } },
+          },
+        });
+        if (!product) throw new CatalogNotFoundError("Product not found");
+
+        const [
+          imageCount,
+          promotionAssignments,
+          manualSaleLines,
+          stockReceiptLines,
+          reservationLines,
+          inventoryMovements,
+          receiptReferences,
+          saleReferences,
+          reservationReferences,
+        ] = await Promise.all([
+          transaction.productImage.count({ where: { productId } }),
+          transaction.promotionProduct.count({ where: { productId } }),
+          transaction.manualSaleLine.count({ where: { productId } }),
+          transaction.stockReceiptLine.count({ where: { productId } }),
+          transaction.inventoryReservationLine.count({ where: { productId } }),
+          transaction.inventoryMovement.count({ where: { productId } }),
+          transaction.stockReceiptLine.findMany({
+            where: { productId },
+            select: { receiptId: true },
+            distinct: ["receiptId"],
+          }),
+          transaction.manualSaleLine.findMany({
+            where: { productId },
+            select: { saleId: true },
+            distinct: ["saleId"],
+          }),
+          transaction.inventoryReservationLine.findMany({
+            where: { productId },
+            select: { reservationId: true },
+            distinct: ["reservationId"],
+          }),
+        ]);
+        const relatedRecords: ProductRelatedRecordCounts = {
+          images:
+            imageCount +
+            (product.imageUrl && imageCount === 0 ? 1 : 0),
+          promotionAssignments,
+          manualSaleLines,
+          stockReceiptLines,
+          reservationLines,
+          inventoryMovements,
+        };
+        if (
+          !confirmRelatedDataDeletion &&
+          Object.values(relatedRecords).some((count) => count > 0)
+        ) {
+          throw new ProductDeletionConfirmationRequiredError(relatedRecords);
+        }
+
+        const imageFileIds = new Set<string>();
+        if (product.imageFileId) imageFileIds.add(product.imageFileId);
+        for (const image of product.images) {
+          if (image.imageFileId) imageFileIds.add(image.imageFileId);
+        }
+
+        const receiptIds = receiptReferences.map(({ receiptId }) => receiptId);
+        const saleIds = saleReferences.map(({ saleId }) => saleId);
+        const reservationIds = reservationReferences.map(({ reservationId }) => reservationId);
+
+        await transaction.promotionProduct.deleteMany({ where: { productId } });
+        await transaction.manualSaleLine.deleteMany({ where: { productId } });
+        await transaction.stockReceiptLine.deleteMany({ where: { productId } });
+        await transaction.inventoryMovement.deleteMany({ where: { productId } });
+        await transaction.inventoryReservationLine.deleteMany({ where: { productId } });
+
+        if (saleIds.length > 0) {
+          await transaction.manualSale.deleteMany({
+            where: { id: { in: saleIds }, lines: { none: {} } },
+          });
+        }
+        if (receiptIds.length > 0) {
+          await transaction.stockReceipt.deleteMany({
+            where: { id: { in: receiptIds }, lines: { none: {} } },
+          });
+        }
+        if (reservationIds.length > 0) {
+          await transaction.inventoryReservation.deleteMany({
+            where: {
+              id: { in: reservationIds },
+              items: { none: {} },
+              movements: { none: {} },
+            },
+          });
+        }
+        await transaction.product.delete({ where: { id: productId } });
+
+        return {
+          deleted: true,
+          relatedRecords,
+          imageFileIds: [...imageFileIds],
+        };
+      });
+    } catch (error) {
+      if (isPrismaForeignKeyConstraintError(error)) {
+        throw new CatalogConflictError(
+          "Product records changed during deletion. Refresh the catalog and try again.",
+        );
       }
       throw error;
     }

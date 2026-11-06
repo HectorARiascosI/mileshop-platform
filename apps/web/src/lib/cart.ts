@@ -4,6 +4,7 @@ export type CartLine = {
   name: string;
   priceCop: number;
   quantity: number;
+  imageUrl?: string | null;
 };
 
 export function addProductToCart(currentCart: CartLine[], product: CartLine): CartLine[] {

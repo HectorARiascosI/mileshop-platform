@@ -38,6 +38,20 @@ type Product = {
   isActive: boolean;
 };
 
+type ProductRelatedRecords = {
+  images: number;
+  promotionAssignments: number;
+  manualSaleLines: number;
+  stockReceiptLines: number;
+  reservationLines: number;
+  inventoryMovements: number;
+};
+
+type PendingProductDeletion = {
+  product: Product;
+  relatedRecords: ProductRelatedRecords;
+};
+
 type ProductForm = {
   sku: string;
   name: string;
@@ -123,6 +137,39 @@ function isUploadedImage(value: unknown): value is { fileId: string; imageUrl: s
   );
 }
 
+function isProductRelatedRecords(value: unknown): value is ProductRelatedRecords {
+  return (
+    isRecord(value) &&
+    typeof value.images === "number" &&
+    typeof value.promotionAssignments === "number" &&
+    typeof value.manualSaleLines === "number" &&
+    typeof value.stockReceiptLines === "number" &&
+    typeof value.reservationLines === "number" &&
+    typeof value.inventoryMovements === "number" &&
+    Number.isSafeInteger(value.images) &&
+    Number.isSafeInteger(value.promotionAssignments) &&
+    Number.isSafeInteger(value.manualSaleLines) &&
+    Number.isSafeInteger(value.stockReceiptLines) &&
+    Number.isSafeInteger(value.reservationLines) &&
+    Number.isSafeInteger(value.inventoryMovements)
+  );
+}
+
+function describeRelatedRecords(records: ProductRelatedRecords): string {
+  const labels: Array<[keyof ProductRelatedRecords, string]> = [
+    ["images", "fotos"],
+    ["promotionAssignments", "asignaciones a promociones"],
+    ["manualSaleLines", "líneas de ventas presenciales"],
+    ["stockReceiptLines", "registros de recepción de inventario"],
+    ["reservationLines", "reservas de inventario"],
+    ["inventoryMovements", "movimientos de inventario"],
+  ];
+  return labels
+    .filter(([key]) => records[key] > 0)
+    .map(([key, label]) => `${records[key]} ${label}`)
+    .join(", ");
+}
+
 function formatPrice(priceCop: number): string {
   return new Intl.NumberFormat("es-CO", {
     style: "currency",
@@ -195,7 +242,11 @@ export default function AdminCatalogPage() {
     product: Product;
     isActive: boolean;
   } | null>(null);
+  const [pendingProductDeletion, setPendingProductDeletion] =
+    useState<PendingProductDeletion | null>(null);
+  const [showRetiredProducts, setShowRetiredProducts] = useState(false);
   const [updatingProductVisibilityId, setUpdatingProductVisibilityId] = useState<string | null>(null);
+  const [deletingProductId, setDeletingProductId] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [isSavingProduct, setIsSavingProduct] = useState(false);
   const [isReceivingStock, setIsReceivingStock] = useState(false);
@@ -814,6 +865,109 @@ export default function AdminCatalogPage() {
     }
   };
 
+  const deleteProduct = async (
+    product: Product,
+    confirmRelatedDataDeletion: boolean,
+  ) => {
+    setDeletingProductId(product.id);
+    setError(null);
+    setNotice(null);
+    try {
+      const response = await fetch(
+        `/api/admin/catalog/products/${encodeURIComponent(product.id)}`,
+        {
+          method: "DELETE",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ confirmRelatedDataDeletion }),
+        },
+      );
+      if (!response.ok) {
+        let payload: unknown;
+        try {
+          payload = await response.json();
+        } catch {
+          payload = null;
+        }
+        if (
+          response.status === 409 &&
+          isRecord(payload) &&
+          payload.code === "PRODUCT_HAS_RELATED_DATA" &&
+          isProductRelatedRecords(payload.relatedRecords)
+        ) {
+          setPendingProductDeletion({
+            product,
+            relatedRecords: payload.relatedRecords,
+          });
+          return;
+        }
+        throw new Error(
+          isRecord(payload) && typeof payload.message === "string"
+            ? payload.message
+            : isRecord(payload) && typeof payload.error === "string"
+              ? payload.error
+              : "No se pudo eliminar el producto.",
+        );
+      }
+
+      const payload: unknown = await response.json();
+      if (
+        !isRecord(payload) ||
+        !isRecord(payload.data) ||
+        payload.data.deleted !== true ||
+        !Array.isArray(payload.data.imageFileIds) ||
+        payload.data.imageFileIds.some((fileId) => typeof fileId !== "string")
+      ) {
+        throw new Error(
+          "El servidor respondió que eliminó el producto, pero la confirmación no tiene el formato esperado. Actualiza el catálogo antes de volver a intentarlo.",
+        );
+      }
+
+      const refreshedProducts = await refreshProducts();
+      if (!refreshedProducts || refreshedProducts.some((current) => current.id === product.id)) {
+        throw new Error(
+          "El servidor aceptó la eliminación, pero no pudimos verificarla en el catálogo. Actualiza la lista antes de volver a intentarlo.",
+        );
+      }
+
+      const referencedImageIds = new Set(
+        refreshedProducts.flatMap((current) => [
+          current.imageFileId,
+          ...(current.images ?? []).map((image) => image.imageFileId ?? null),
+        ]).filter((fileId): fileId is string => Boolean(fileId)),
+      );
+      const deletedImageIds = payload.data.imageFileIds.filter(
+        (fileId): fileId is string => typeof fileId === "string",
+      );
+      const unreferencedImageIds = [...new Set(deletedImageIds)]
+        .filter((fileId) => !referencedImageIds.has(fileId));
+      const failedImageIds: string[] = [];
+      for (const fileId of unreferencedImageIds) {
+        try {
+          await deleteProductImage(fileId);
+        } catch {
+          failedImageIds.push(fileId);
+        }
+      }
+      if (failedImageIds.length > 0) {
+        setPendingImageCleanup((current) => [...new Set([...current, ...failedImageIds])]);
+      }
+
+      setPendingProductDeletion(null);
+      setNotice(
+        failedImageIds.length > 0
+          ? "Producto eliminado y verificado. Algunas fotos quedaron pendientes de retirar; usa «Reintentar» en Fotos pendientes de retirar."
+          : "Producto eliminado y verificado. Los pedidos y pagos se conservaron como historial; la categoría sigue disponible.",
+      );
+      if (failedImageIds.length > 0) {
+        setError("No pudimos retirar todas las fotos del almacenamiento; quedaron registradas para reintentar.");
+      }
+    } catch (requestError) {
+      setError(requestError instanceof Error ? requestError.message : "Error inesperado.");
+    } finally {
+      setDeletingProductId(null);
+    }
+  };
+
   const receiveStock = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     let request = receiptRequest;
@@ -879,6 +1033,10 @@ export default function AdminCatalogPage() {
       setIsReceivingStock(false);
     }
   };
+
+  const activeProducts = products.filter((product) => product.isActive);
+  const retiredProducts = products.filter((product) => !product.isActive);
+  const displayedProducts = showRetiredProducts ? products : activeProducts;
 
   return (
     <main className="mx-auto min-h-screen max-w-6xl px-4 py-8 text-slate-900">
@@ -1315,19 +1473,42 @@ export default function AdminCatalogPage() {
             <div className="mb-4 flex flex-wrap items-end justify-between gap-3">
               <div>
                 <h2 className="text-xl font-semibold">Productos</h2>
-                <p className="text-sm text-slate-600">{products.length} productos registrados, incluidos los desactivados.</p>
+                <p className="text-sm text-slate-600">
+                  {activeProducts.length} visibles · {retiredProducts.length} retirados
+                  {retiredProducts.length > 0 && !showRetiredProducts
+                    ? " · los retirados están ocultos de esta lista"
+                    : ""}
+                </p>
               </div>
-              <button className="rounded border px-3 py-2 text-sm font-medium" type="button" onClick={() => { setIsLoading(true); setError(null); void refreshProducts(); }} disabled={isLoading}>
-                {isLoading ? "Actualizando…" : "Actualizar"}
-              </button>
+              <div className="flex flex-wrap gap-2">
+                {retiredProducts.length > 0 && (
+                  <button
+                    className="rounded border px-3 py-2 text-sm font-medium"
+                    type="button"
+                    aria-pressed={showRetiredProducts}
+                    onClick={() => setShowRetiredProducts((current) => !current)}
+                  >
+                    {showRetiredProducts
+                      ? "Ocultar retirados"
+                      : `Mostrar retirados (${retiredProducts.length})`}
+                  </button>
+                )}
+                <button className="rounded border px-3 py-2 text-sm font-medium" type="button" onClick={() => { setIsLoading(true); setError(null); void refreshProducts(); }} disabled={isLoading}>
+                  {isLoading ? "Actualizando…" : "Actualizar"}
+                </button>
+              </div>
             </div>
             {isLoading ? (
               <p role="status">Cargando catálogo…</p>
-            ) : products.length === 0 ? (
+            ) : displayedProducts.length === 0 && products.length === 0 ? (
               <p className="rounded bg-slate-50 p-4 text-slate-600">Aún no hay productos. Agrega el primero desde el formulario.</p>
+            ) : displayedProducts.length === 0 ? (
+              <p className="rounded bg-slate-50 p-4 text-slate-600">
+                No hay productos visibles. Los productos retirados siguen guardados; usa «Mostrar retirados» para revisarlos o eliminarlos.
+              </p>
             ) : (
               <ul className="divide-y">
-                {products.map((product) => (
+                {displayedProducts.map((product) => (
                   <li className="flex flex-wrap items-center gap-4 py-4" key={product.id}>
                     {product.imageUrl ? (
                       <Image className="h-16 w-16 rounded-lg object-cover" src={getOptimizedImageUrl(product.imageUrl, 128)} alt="" width={64} height={64} unoptimized />
@@ -1360,6 +1541,14 @@ export default function AdminCatalogPage() {
                         onClick={() => setPendingProductVisibility({ product, isActive: !product.isActive })}
                       >
                         {product.isActive ? "Retirar de tienda" : "Restaurar en tienda"}
+                      </button>
+                      <button
+                        className="rounded border border-rose-300 px-3 py-2 text-sm font-medium text-rose-900 disabled:opacity-50"
+                        type="button"
+                        disabled={deletingProductId !== null}
+                        onClick={() => void deleteProduct(product, false)}
+                      >
+                        {deletingProductId === product.id ? "Eliminando…" : "Eliminar definitivamente"}
                       </button>
                     </div>
                   </li>
@@ -1395,6 +1584,18 @@ export default function AdminCatalogPage() {
           onConfirm={() => {
             const change = pendingProductVisibility;
             void updateProductVisibility(change.product, change.isActive);
+          }}
+        />
+      )}
+      {pendingProductDeletion && (
+        <AdminConfirmDialog
+          title="Confirmar eliminación permanente"
+          message={`«${pendingProductDeletion.product.name}» tiene estos datos relacionados: ${describeRelatedRecords(pendingProductDeletion.relatedRecords)}. Si confirmas, se eliminarán definitivamente esos registros de catálogo e inventario y sus fotos del almacenamiento cuando sea posible. Los pedidos y pagos conservarán sus datos históricos, y la categoría no se eliminará. Esta acción no se puede deshacer.`}
+          confirmLabel="Eliminar producto y datos relacionados"
+          busy={deletingProductId === pendingProductDeletion.product.id}
+          onCancel={() => setPendingProductDeletion(null)}
+          onConfirm={() => {
+            void deleteProduct(pendingProductDeletion.product, true);
           }}
         />
       )}

@@ -50,3 +50,17 @@ test("actualiza la cantidad y elimina un producto", () => {
   cart = removeProductFromCart(cart, "p-2");
   assert.deepEqual(cart, []);
 });
+
+test("conserva en el carrito la imagen del producto para mostrarla fuera del catálogo", () => {
+  const imageUrl = "https://ik.imagekit.io/store/products/item.jpg";
+  const cart = addProductToCart([], {
+    productId: "p-image",
+    sku: "SKU-IMAGE",
+    name: "Producto con foto",
+    priceCop: 12000,
+    quantity: 1,
+    imageUrl,
+  });
+
+  assert.equal(cart[0]?.imageUrl, imageUrl);
+});

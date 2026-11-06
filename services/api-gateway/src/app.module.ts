@@ -34,6 +34,7 @@ export const AUTHENTICATED_ROUTES = [
   { path: "admin/catalog/products", method: RequestMethod.GET },
   { path: "admin/catalog/products", method: RequestMethod.POST },
   { path: "admin/catalog/products/:productId", method: RequestMethod.PATCH },
+  { path: "admin/catalog/products/:productId", method: RequestMethod.DELETE },
   { path: "admin/catalog/categories", method: RequestMethod.GET },
   { path: "admin/catalog/categories", method: RequestMethod.POST },
   { path: "admin/catalog/categories/:categoryId", method: RequestMethod.PATCH },

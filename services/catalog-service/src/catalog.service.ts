@@ -56,6 +56,21 @@ export type ProductInput = {
   isActive: boolean;
 };
 
+export type ProductRelatedRecordCounts = {
+  images: number;
+  promotionAssignments: number;
+  manualSaleLines: number;
+  stockReceiptLines: number;
+  reservationLines: number;
+  inventoryMovements: number;
+};
+
+export type ProductDeletionResult = {
+  deleted: true;
+  relatedRecords: ProductRelatedRecordCounts;
+  imageFileIds: string[];
+};
+
 export type StockReceipt = {
   idempotencyKey: string;
   adminCustomerId: string;
@@ -94,6 +109,7 @@ export interface CatalogStore {
   deleteAnnouncement(announcementId: string): Promise<void>;
   createProduct(input: ProductInput): Promise<Product>;
   updateProduct(productId: string, input: ProductInput): Promise<Product>;
+  deleteProduct(productId: string, confirmRelatedDataDeletion: boolean): Promise<ProductDeletionResult>;
   recordStockReceipt(adminCustomerId: string, idempotencyKey: string, reason: string, lines: ReservationRequestLine[]): Promise<StockReceipt>;
   recordManualSale(adminCustomerId: string, idempotencyKey: string, lines: ReservationRequestLine[]): Promise<ManualSale>;
   reserveProducts(orderId: string, lines: ReservationRequestLine[]): Promise<InventoryReservation>;
@@ -189,6 +205,14 @@ export class CatalogNotFoundError extends Error {
     super(message);
     this.name = "CatalogNotFoundError";
     (this as Error & { code?: string }).code = "NOT_FOUND";
+  }
+}
+
+export class ProductDeletionConfirmationRequiredError extends Error {
+  public constructor(public readonly relatedRecords: ProductRelatedRecordCounts) {
+    super("Product has related records that require administrator confirmation");
+    this.name = "ProductDeletionConfirmationRequiredError";
+    (this as Error & { code?: string }).code = "PRODUCT_HAS_RELATED_DATA";
   }
 }
 
@@ -775,6 +799,79 @@ export class InMemoryCatalogStore implements CatalogStore {
     });
   }
 
+  public async deleteProduct(
+    productId: string,
+    confirmRelatedDataDeletion: boolean,
+  ): Promise<ProductDeletionResult> {
+    return this.withExclusiveLock(async () => {
+      const productIndex = this.products.findIndex((product) => product.id === productId);
+      if (productIndex < 0) throw new CatalogNotFoundError("Product not found");
+      const product = this.products[productIndex]!;
+      const relatedRecords: ProductRelatedRecordCounts = {
+        images: product.images?.length ?? 0,
+        promotionAssignments: this.promotions.reduce(
+          (count, promotion) => count + promotion.products.filter((item) => item.productId === productId).length,
+          0,
+        ),
+        manualSaleLines: [...this.manualSales.values()].reduce(
+          (count, sale) => count + sale.result.lines.filter((line) => line.productId === productId).length,
+          0,
+        ),
+        stockReceiptLines: [...this.stockReceipts.values()].reduce(
+          (count, receipt) => count + receipt.result.lines.filter((line) => line.productId === productId).length,
+          0,
+        ),
+        reservationLines: [...this.reservations.values()].reduce(
+          (count, reservation) => count + reservation.result.lines.filter((line) => line.productId === productId).length,
+          0,
+        ),
+        inventoryMovements: 0,
+      };
+      if (
+        !confirmRelatedDataDeletion &&
+        Object.values(relatedRecords).some((count) => count > 0)
+      ) {
+        throw new ProductDeletionConfirmationRequiredError(relatedRecords);
+      }
+
+      const imageFileIds = new Set<string>();
+      if (product.imageFileId) imageFileIds.add(product.imageFileId);
+      for (const image of product.images ?? []) {
+        if (image.imageFileId) imageFileIds.add(image.imageFileId);
+      }
+      this.products.splice(productIndex, 1);
+      for (const promotion of this.promotions) {
+        promotion.products = promotion.products.filter((item) => item.productId !== productId);
+      }
+      for (const [key, receipt] of this.stockReceipts) {
+        const lines = receipt.result.lines.filter((line) => line.productId !== productId);
+        if (lines.length === 0) this.stockReceipts.delete(key);
+        else receipt.result = { ...receipt.result, lines };
+      }
+      for (const [key, sale] of this.manualSales) {
+        const lines = sale.result.lines.filter((line) => line.productId !== productId);
+        if (lines.length === 0) this.manualSales.delete(key);
+        else {
+          sale.result = { ...sale.result, lines };
+          sale.requestLines = sale.requestLines.filter((line) => line.productId !== productId);
+        }
+      }
+      for (const [key, reservation] of this.reservations) {
+        const lines = reservation.result.lines.filter((line) => line.productId !== productId);
+        if (lines.length === 0) this.reservations.delete(key);
+        else {
+          reservation.result = { ...reservation.result, lines };
+          reservation.requestLines = reservation.requestLines.filter((line) => line.productId !== productId);
+        }
+      }
+      return {
+        deleted: true,
+        relatedRecords,
+        imageFileIds: [...imageFileIds],
+      };
+    });
+  }
+
   public async updateProduct(productId: string, input: ProductInput): Promise<Product> {
     return this.withExclusiveLock(async () => {
       const normalized = normalizeProductInput(input);
@@ -1113,6 +1210,14 @@ export class CatalogService {
   public async updateProduct(productId: string, input: ProductInput): Promise<Product> {
     if (!productId.trim()) throw new CatalogInputError("Product id is required");
     return this.store.updateProduct(productId, normalizeProductInput(input));
+  }
+
+  public async deleteProduct(
+    productId: string,
+    confirmRelatedDataDeletion = false,
+  ): Promise<ProductDeletionResult> {
+    if (!productId.trim()) throw new CatalogInputError("Product id is required");
+    return this.store.deleteProduct(productId, confirmRelatedDataDeletion);
   }
 
   public async receiveStock(

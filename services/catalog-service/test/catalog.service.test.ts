@@ -1,7 +1,11 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { CatalogService, InMemoryCatalogStore } from "../src/catalog.service.js";
+import {
+  CatalogService,
+  InMemoryCatalogStore,
+  ProductDeletionConfirmationRequiredError,
+} from "../src/catalog.service.js";
 
 test("catalog starts with the seeded active product catalog", async () => {
   const catalog = new CatalogService(new InMemoryCatalogStore());
@@ -418,6 +422,81 @@ test("admin can soft-disable a product without deleting its inventory history", 
     ]),
     { code: "INSUFFICIENT_INVENTORY" },
   );
+});
+
+test("permanent product deletion confirms related catalog data and preserves its category", async () => {
+  const service = new CatalogService(new InMemoryCatalogStore([]));
+  const category = await service.createCategory({ name: "Accesorios", theme: "neutral" });
+  const product = await service.createProduct({
+    sku: "DELETE-RELATED-01",
+    name: "Producto con historial",
+    description: "",
+    priceCop: 5000,
+    imageUrl: "https://ik.imagekit.io/store/products/delete.jpg",
+    imageFileId: "delete-image",
+    categoryId: category.id,
+    isActive: true,
+  });
+  await service.receiveStock("admin-1", "delete-receipt", "Compra de prueba", [
+    { productId: product.id, quantity: 5 },
+  ]);
+  await service.recordManualSale("admin-1", "delete-sale", [
+    { productId: product.id, quantity: 1 },
+  ]);
+  await service.reserveInventory(
+    "delete-order",
+    [{ productId: product.id, quantity: 1 }],
+    new Date(Date.now() + 60_000),
+  );
+  await service.createPromotion({
+    title: "Descuento relacionado",
+    description: "",
+    startsAt: new Date(Date.now() - 60_000).toISOString(),
+    endsAt: new Date(Date.now() + 60_000).toISOString(),
+    isActive: false,
+    products: [{ productId: product.id, discountPercent: 10 }],
+  });
+
+  await assert.rejects(
+    () => service.deleteProduct(product.id),
+    (error: unknown) => {
+      assert.ok(error instanceof ProductDeletionConfirmationRequiredError);
+      assert.deepEqual(error.relatedRecords, {
+        images: 1,
+        promotionAssignments: 1,
+        manualSaleLines: 1,
+        stockReceiptLines: 1,
+        reservationLines: 1,
+        inventoryMovements: 0,
+      });
+      return true;
+    },
+  );
+  assert.equal((await service.listAdminProducts()).length, 1);
+
+  const deleted = await service.deleteProduct(product.id, true);
+  assert.equal(deleted.deleted, true);
+  assert.deepEqual(deleted.imageFileIds, ["delete-image"]);
+  assert.equal((await service.listAdminProducts()).length, 0);
+  assert.equal((await service.listCategories())[0]?.productCount, 0);
+  assert.deepEqual((await service.listPromotions(true))[0]?.products, []);
+});
+
+test("permanent product deletion without related records does not require confirmation", async () => {
+  const service = new CatalogService(new InMemoryCatalogStore([]));
+  const product = await service.createProduct({
+    sku: "DELETE-EMPTY-01",
+    name: "Producto sin historial",
+    description: "",
+    priceCop: 5000,
+    imageUrl: null,
+    isActive: true,
+  });
+
+  const deleted = await service.deleteProduct(product.id);
+  assert.equal(deleted.deleted, true);
+  assert.deepEqual(deleted.imageFileIds, []);
+  assert.deepEqual(await service.listAdminProducts(), []);
 });
 
 test("manual sales atomically reduce stock and replay idempotently", async () => {

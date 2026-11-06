@@ -147,6 +147,30 @@ export class GatewayController {
     };
   }
 
+  @Delete("admin/catalog/products/:productId")
+  @UseGuards(StoreAdminGuard)
+  @Header("Cache-Control", "private, no-store")
+  public async deleteCatalogProduct(
+    @Param("productId") productId: string,
+    @Body() body: unknown,
+  ): Promise<{ data: unknown }> {
+    if (!productId.trim()) throw new BadRequestException("Product id is required");
+    if (
+      typeof body !== "object" ||
+      body === null ||
+      !("confirmRelatedDataDeletion" in body) ||
+      typeof body.confirmRelatedDataDeletion !== "boolean"
+    ) {
+      throw new BadRequestException("Invalid product deletion request");
+    }
+    return {
+      data: await this.catalog.deleteProduct(
+        productId,
+        body.confirmRelatedDataDeletion,
+      ),
+    };
+  }
+
   @Get("admin/catalog/categories")
   @UseGuards(StoreAdminGuard)
   @Header("Cache-Control", "private, no-store")

@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
+import { ConflictException } from "@nestjs/common";
 
 import { CatalogClient } from "../src/catalog.client.js";
 
@@ -20,6 +21,83 @@ test("catalog client maps upstream failures to service unavailable", async () =>
   const client = new CatalogClient(async () => new Response(null, { status: 503 }));
 
   await assert.rejects(client.listProducts(), { status: 503 });
+});
+
+test("catalog client forwards confirmed product deletion through internal auth", async () => {
+  const previousToken = process.env.CATALOG_INVENTORY_COMMAND_TOKEN;
+  process.env.CATALOG_INVENTORY_COMMAND_TOKEN = "0123456789abcdef0123456789abcdef";
+  let request: { url: string; init?: RequestInit } | undefined;
+  try {
+    const client = new CatalogClient(async (input, init) => {
+      request = { url: input, init };
+      return new Response(JSON.stringify({
+        data: {
+          deleted: true,
+          relatedRecords: {
+            images: 0,
+            promotionAssignments: 0,
+            manualSaleLines: 0,
+            stockReceiptLines: 0,
+            reservationLines: 0,
+            inventoryMovements: 0,
+          },
+          imageFileIds: [],
+        },
+      }), { status: 200, headers: { "content-type": "application/json" } });
+    });
+
+    const result = await client.deleteProduct("product-1", true);
+    assert.equal(result.deleted, true);
+    assert.equal(new URL(request?.url ?? "").pathname, "/internal/admin/products/product-1");
+    assert.equal(request?.init?.method, "DELETE");
+    assert.deepEqual(JSON.parse(String(request?.init?.body)), {
+      confirmRelatedDataDeletion: true,
+    });
+    assert.equal(
+      new Headers(request?.init?.headers).get("authorization"),
+      "Bearer 0123456789abcdef0123456789abcdef",
+    );
+  } finally {
+    if (previousToken === undefined) delete process.env.CATALOG_INVENTORY_COMMAND_TOKEN;
+    else process.env.CATALOG_INVENTORY_COMMAND_TOKEN = previousToken;
+  }
+});
+
+test("catalog client preserves the related-data deletion confirmation details", async () => {
+  const previousToken = process.env.CATALOG_INVENTORY_COMMAND_TOKEN;
+  process.env.CATALOG_INVENTORY_COMMAND_TOKEN = "0123456789abcdef0123456789abcdef";
+  try {
+    const body = {
+      code: "PRODUCT_HAS_RELATED_DATA",
+      message: "Confirmar borrado relacionado",
+      relatedRecords: {
+        images: 1,
+        promotionAssignments: 0,
+        manualSaleLines: 0,
+        stockReceiptLines: 2,
+        reservationLines: 0,
+        inventoryMovements: 0,
+      },
+    };
+    const client = new CatalogClient(async () =>
+      new Response(JSON.stringify(body), {
+        status: 409,
+        headers: { "content-type": "application/json" },
+      }),
+    );
+
+    await assert.rejects(
+      client.deleteProduct("product-1", false),
+      (error: unknown) => {
+        assert.ok(error instanceof ConflictException);
+        assert.deepEqual(error.getResponse(), body);
+        return true;
+      },
+    );
+  } finally {
+    if (previousToken === undefined) delete process.env.CATALOG_INVENTORY_COMMAND_TOKEN;
+    else process.env.CATALOG_INVENTORY_COMMAND_TOKEN = previousToken;
+  }
 });
 
 test("catalog client forwards idempotent manual sales with the internal token", async () => {

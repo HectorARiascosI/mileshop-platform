@@ -3,7 +3,7 @@
 import Link from "next/link";
 import Image from "next/image";
 import { useRouter } from "next/navigation";
-import { useEffect, useState, useSyncExternalStore } from "react";
+import { useEffect, useState, useSyncExternalStore, type SyntheticEvent } from "react";
 
 import type {
   CatalogAnnouncement,
@@ -76,6 +76,11 @@ function formatPrice(priceCop: number): string {
   }).format(priceCop);
 }
 
+function getProductImages(product: Product): CatalogProductImageSummary[] {
+  if (product.images?.length) return product.images;
+  return product.imageUrl ? [{ imageUrl: product.imageUrl, position: 0 }] : [];
+}
+
 function getIdempotencyKey(cart: CartLine[]): string {
   const fingerprint = JSON.stringify(
     cart.map(({ productId, quantity, priceCop }) => ({ productId, quantity, priceCop })),
@@ -131,6 +136,11 @@ export function CatalogShell({ products, unavailable, announcements }: CatalogSh
   const [searchQuery, setSearchQuery] = useState("");
   const [selectedCategoryId, setSelectedCategoryId] = useState<string | null>(null);
   const [galleryIndices, setGalleryIndices] = useState<Record<string, number>>({});
+  const [productGalleryPreview, setProductGalleryPreview] = useState<{
+    productId: string;
+    index: number;
+  } | null>(null);
+  const [imageAspectRatios, setImageAspectRatios] = useState<Record<string, number>>({});
   const [isMenuOpen, setIsMenuOpen] = useState(false);
 
   useEffect(() => {
@@ -194,6 +204,15 @@ export function CatalogShell({ products, unavailable, announcements }: CatalogSh
     left.name.localeCompare(right.name, "es"),
   );
   const visibleProducts = filterCatalogProducts(products, searchQuery, selectedCategoryId);
+  const previewProduct = productGalleryPreview
+    ? products.find((product) => product.id === productGalleryPreview.productId)
+    : undefined;
+  const previewImages = previewProduct ? getProductImages(previewProduct) : [];
+  const previewIndex = Math.min(
+    productGalleryPreview?.index ?? 0,
+    Math.max(previewImages.length - 1, 0),
+  );
+  const previewImage = previewImages[previewIndex];
 
   const handleAddToCart = (product: Product) => {
     if (product.stock <= 0) return;
@@ -204,6 +223,7 @@ export function CatalogShell({ products, unavailable, announcements }: CatalogSh
         name: product.name,
         priceCop: product.priceCop,
         quantity: 1,
+        imageUrl: product.images?.[0]?.imageUrl ?? product.imageUrl ?? null,
       }),
     );
     setIsCartOpen(true);
@@ -214,7 +234,56 @@ export function CatalogShell({ products, unavailable, announcements }: CatalogSh
       ...current,
       [productId]: ((current[productId] ?? 0) + offset + imageCount) % imageCount,
     }));
+    setProductGalleryPreview((current) =>
+      current?.productId === productId
+        ? { ...current, index: (current.index + offset + imageCount) % imageCount }
+        : current,
+    );
   };
+
+  const selectGalleryImage = (productId: string, index: number) => {
+    setGalleryIndices((current) => ({ ...current, [productId]: index }));
+    setProductGalleryPreview((current) =>
+      current?.productId === productId ? { ...current, index } : current,
+    );
+  };
+
+  const openProductGallery = (productId: string, index: number) => {
+    setGalleryIndices((current) => ({ ...current, [productId]: index }));
+    setProductGalleryPreview({ productId, index });
+  };
+
+  useEffect(() => {
+    if (!productGalleryPreview) return;
+    document.body.classList.add("product-gallery-is-open");
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") {
+        setProductGalleryPreview(null);
+        return;
+      }
+      if (event.key !== "ArrowLeft" && event.key !== "ArrowRight") return;
+      const product = products.find((candidate) => candidate.id === productGalleryPreview.productId);
+      if (!product) return;
+      const imageCount = getProductImages(product).length;
+      if (imageCount < 2) return;
+      event.preventDefault();
+      const offset = event.key === "ArrowRight" ? 1 : -1;
+      setGalleryIndices((current) => ({
+        ...current,
+        [product.id]: ((current[product.id] ?? 0) + offset + imageCount) % imageCount,
+      }));
+      setProductGalleryPreview((current) =>
+        current?.productId === product.id
+          ? { ...current, index: (current.index + offset + imageCount) % imageCount }
+          : current,
+      );
+    };
+    window.addEventListener("keydown", handleKeyDown);
+    return () => {
+      document.body.classList.remove("product-gallery-is-open");
+      window.removeEventListener("keydown", handleKeyDown);
+    };
+  }, [productGalleryPreview, products]);
 
   const increaseQuantity = (productId: string) => {
     setCart((currentCart) => {
@@ -573,11 +642,7 @@ export function CatalogShell({ products, unavailable, announcements }: CatalogSh
           ) : (
             <ul className="product-grid" aria-label="Productos disponibles">
               {visibleProducts.map((product) => {
-                const productImages = product.images?.length
-                  ? product.images
-                  : product.imageUrl
-                    ? [{ imageUrl: product.imageUrl, position: 0 }]
-                    : [];
+                const productImages = getProductImages(product);
                 const galleryIndex = Math.min(
                   galleryIndices[product.id] ?? 0,
                   Math.max(productImages.length - 1, 0),
@@ -587,15 +652,36 @@ export function CatalogShell({ products, unavailable, announcements }: CatalogSh
                   <li className="product-card" key={product.id} data-theme={product.category?.theme ?? "neutral"}>
                   <div className="product-art">
                     {currentImage ? (
-                      <Image
-                        className="product-image"
-                        src={getOptimizedImageUrl(currentImage.imageUrl, 800)}
-                        alt={`${product.name}, foto ${galleryIndex + 1} de ${productImages.length}`}
-                        width={600}
-                        height={480}
-                        sizes="(max-width: 480px) 46vw, (max-width: 760px) 44vw, (max-width: 1100px) 30vw, 22vw"
-                        unoptimized
-                      />
+                      <button
+                        className="product-image-trigger"
+                        type="button"
+                        aria-label={`Ampliar foto ${galleryIndex + 1} de ${product.name}`}
+                        style={{ aspectRatio: imageAspectRatios[currentImage.imageUrl] ?? 1 }}
+                        onClick={() => openProductGallery(product.id, galleryIndex)}
+                      >
+                        <Image
+                          className="product-image"
+                          src={getOptimizedImageUrl(currentImage.imageUrl, 1000)}
+                          alt={`${product.name}, foto ${galleryIndex + 1} de ${productImages.length}`}
+                          fill
+                          sizes="(max-width: 480px) 46vw, (max-width: 760px) 44vw, (max-width: 1100px) 30vw, 22vw"
+                          unoptimized
+                          onLoad={(event: SyntheticEvent<HTMLImageElement>) => {
+                            const { naturalWidth, naturalHeight } = event.currentTarget;
+                            if (!naturalWidth || !naturalHeight) return;
+                            const aspectRatio = Math.min(
+                              1.6,
+                              Math.max(0.72, naturalWidth / naturalHeight),
+                            );
+                            setImageAspectRatios((current) =>
+                              current[currentImage.imageUrl] === aspectRatio
+                                ? current
+                                : { ...current, [currentImage.imageUrl]: aspectRatio },
+                            );
+                          }}
+                        />
+                        <span className="product-image-hint">Ampliar</span>
+                      </button>
                     ) : (
                       <div className="product-image-fallback" aria-label={`Fotografía no disponible para ${product.name}`}>
                         <span className="fallback-mark" aria-hidden="true">
@@ -636,6 +722,28 @@ export function CatalogShell({ products, unavailable, announcements }: CatalogSh
                       </div>
                     )}
                   </div>
+                  {productImages.length > 1 && (
+                    <div className="product-gallery-thumbnails" role="group" aria-label={`Elegir foto de ${product.name}`}>
+                      {productImages.map((image, index) => (
+                        <button
+                          className={`product-gallery-thumbnail${index === galleryIndex ? " is-selected" : ""}`}
+                          key={`${image.position}-${image.imageUrl}`}
+                          type="button"
+                          aria-label={`Mostrar foto ${index + 1} de ${product.name}`}
+                          aria-pressed={index === galleryIndex}
+                          onClick={() => selectGalleryImage(product.id, index)}
+                        >
+                          <Image
+                            src={getOptimizedImageUrl(image.imageUrl, 120)}
+                            alt=""
+                            fill
+                            sizes="56px"
+                            unoptimized
+                          />
+                        </button>
+                      ))}
+                    </div>
+                  )}
 
                   <div className="product-info">
                     <p className={`product-stock${product.stock <= 0 ? " is-unavailable" : ""}`}>
@@ -681,6 +789,105 @@ export function CatalogShell({ products, unavailable, announcements }: CatalogSh
         </section>
       </main>
 
+      {previewProduct && previewImage && (
+        <div
+          className="product-gallery-backdrop"
+          role="presentation"
+          onClick={(event) => {
+            if (event.target === event.currentTarget) setProductGalleryPreview(null);
+          }}
+        >
+          <section
+            className="product-gallery-dialog"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="product-gallery-title"
+          >
+            <header className="product-gallery-dialog-header">
+              <div>
+                <h2 id="product-gallery-title">{previewProduct.name}</h2>
+                <p aria-live="polite">
+                  Foto {previewIndex + 1} de {previewImages.length}
+                </p>
+              </div>
+              <button
+                className="product-gallery-close"
+                type="button"
+                aria-label="Cerrar vista de fotos"
+                onClick={() => setProductGalleryPreview(null)}
+              >
+                ×
+              </button>
+            </header>
+            <div
+              className="product-gallery-lightbox-image"
+              style={{
+                aspectRatio: imageAspectRatios[previewImage.imageUrl] ?? 1,
+              }}
+            >
+              <Image
+                src={getOptimizedImageUrl(previewImage.imageUrl, 1800)}
+                alt={`${previewProduct.name}, foto ${previewIndex + 1} de ${previewImages.length}`}
+                fill
+                sizes="(max-width: 760px) 92vw, 1000px"
+                unoptimized
+                priority
+                onLoad={(event: SyntheticEvent<HTMLImageElement>) => {
+                  const { naturalWidth, naturalHeight } = event.currentTarget;
+                  if (!naturalWidth || !naturalHeight) return;
+                  const aspectRatio = Math.min(1.6, Math.max(0.72, naturalWidth / naturalHeight));
+                  setImageAspectRatios((current) =>
+                    current[previewImage.imageUrl] === aspectRatio
+                      ? current
+                      : { ...current, [previewImage.imageUrl]: aspectRatio },
+                  );
+                }}
+              />
+            </div>
+            {previewImages.length > 1 && (
+              <>
+                <div className="product-gallery-dialog-controls">
+                  <button
+                    className="product-gallery-dialog-button"
+                    type="button"
+                    onClick={() => moveGallery(previewProduct.id, -1, previewImages.length)}
+                  >
+                    Anterior
+                  </button>
+                  <button
+                    className="product-gallery-dialog-button"
+                    type="button"
+                    onClick={() => moveGallery(previewProduct.id, 1, previewImages.length)}
+                  >
+                    Siguiente
+                  </button>
+                </div>
+                <div className="product-gallery-dialog-thumbnails" role="group" aria-label="Fotos del producto">
+                  {previewImages.map((image, index) => (
+                    <button
+                      className={`product-gallery-thumbnail${index === previewIndex ? " is-selected" : ""}`}
+                      key={`${image.position}-${image.imageUrl}`}
+                      type="button"
+                      aria-label={`Mostrar foto ${index + 1} de ${previewProduct.name}`}
+                      aria-pressed={index === previewIndex}
+                      onClick={() => selectGalleryImage(previewProduct.id, index)}
+                    >
+                      <Image
+                        src={getOptimizedImageUrl(image.imageUrl, 120)}
+                        alt=""
+                        fill
+                        sizes="56px"
+                        unoptimized
+                      />
+                    </button>
+                  ))}
+                </div>
+              </>
+            )}
+          </section>
+        </div>
+      )}
+
       <button
         className={`cart-backdrop ${isCartOpen ? "is-open" : ""}`}
         type="button"
@@ -720,7 +927,8 @@ export function CatalogShell({ products, unavailable, announcements }: CatalogSh
                 <li key={item.productId} className="cart-item">
                   {(() => {
                     const product = products.find((candidate) => candidate.id === item.productId);
-                    const imageUrl = product?.images?.[0]?.imageUrl ?? product?.imageUrl;
+                    const imageUrl =
+                      item.imageUrl ?? product?.images?.[0]?.imageUrl ?? product?.imageUrl;
                     return imageUrl ? (
                       <Image
                         className="cart-item-image"
@@ -729,6 +937,7 @@ export function CatalogShell({ products, unavailable, announcements }: CatalogSh
                         width={72}
                         height={72}
                         sizes="72px"
+                        unoptimized
                       />
                     ) : (
                       <div className="cart-item-image cart-item-image-fallback" aria-hidden="true">

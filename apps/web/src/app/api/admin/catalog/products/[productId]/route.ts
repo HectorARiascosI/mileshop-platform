@@ -18,3 +18,22 @@ export async function PATCH(
     await request.text(),
   );
 }
+
+export async function DELETE(
+  request: Request,
+  context: { params: Promise<{ productId: string }> },
+): Promise<Response> {
+  const { productId } = await context.params;
+  if (!productId.trim()) {
+    return Response.json(
+      { error: "Product id is required" },
+      { status: 400, headers: { "Cache-Control": "private, no-store" } },
+    );
+  }
+  return proxyAdminPayments(
+    `/admin/catalog/products/${encodeURIComponent(productId)}`,
+    false,
+    "DELETE",
+    await request.text(),
+  );
+}
