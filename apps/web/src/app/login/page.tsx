@@ -2,7 +2,29 @@
 
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { useState } from "react";
+import { useEffect, useState } from "react";
+
+type SessionProfile = {
+  customerId: string;
+  email: string;
+  name: string;
+  role: "CUSTOMER" | "STORE_ADMIN";
+};
+
+function isSessionProfile(value: unknown): value is SessionProfile {
+  return (
+    typeof value === "object" &&
+    value !== null &&
+    "customerId" in value &&
+    typeof value.customerId === "string" &&
+    "email" in value &&
+    typeof value.email === "string" &&
+    "name" in value &&
+    typeof value.name === "string" &&
+    "role" in value &&
+    (value.role === "CUSTOMER" || value.role === "STORE_ADMIN")
+  );
+}
 
 export default function LoginPage() {
   const router = useRouter();
@@ -10,6 +32,38 @@ export default function LoginPage() {
   const [error, setError] = useState("");
   const [pending, setPending] = useState(false);
   const [showPassword, setShowPassword] = useState(false);
+  const [session, setSession] = useState<SessionProfile | null>(null);
+  const [isCheckingSession, setIsCheckingSession] = useState(true);
+  const [sessionCheckError, setSessionCheckError] = useState("");
+  const [isLoggingOut, setIsLoggingOut] = useState(false);
+
+  useEffect(() => {
+    let active = true;
+    const checkSession = async () => {
+      try {
+        const response = await fetch("/api/auth/me", { cache: "no-store" });
+        if (response.status === 401) return;
+        if (!response.ok) {
+          throw new Error("No pudimos verificar la sesión existente.");
+        }
+        const profile: unknown = await response.json();
+        if (!isSessionProfile(profile)) {
+          throw new Error("El servicio devolvió un perfil de sesión inválido.");
+        }
+        if (active) setSession(profile);
+      } catch {
+        if (active) {
+          setSessionCheckError("No pudimos comprobar si ya hay una sesión activa. Puedes intentar iniciar sesión.");
+        }
+      } finally {
+        if (active) setIsCheckingSession(false);
+      }
+    };
+    void checkSession();
+    return () => {
+      active = false;
+    };
+  }, []);
 
   const handleChange = (field: keyof typeof form, value: string) => {
     setForm((current) => ({ ...current, [field]: value }));
@@ -55,6 +109,23 @@ export default function LoginPage() {
     }
   };
 
+  const handleLogout = async () => {
+    setIsLoggingOut(true);
+    setError("");
+    try {
+      const response = await fetch("/api/auth/logout", { method: "POST" });
+      if (!response.ok) {
+        throw new Error("No se pudo cerrar la sesión.");
+      }
+      setSession(null);
+      router.refresh();
+    } catch {
+      setError("No pudimos cerrar la sesión. Intenta de nuevo.");
+    } finally {
+      setIsLoggingOut(false);
+    }
+  };
+
   return (
     <main className="checkout-page">
       <section className="checkout-card auth-card">
@@ -64,7 +135,43 @@ export default function LoginPage() {
           Ingresa con tu correo y contraseña para acceder a tu cuenta.
         </p>
 
-        <form className="auth-form" onSubmit={handleSubmit} noValidate>
+        {isCheckingSession ? (
+          <p className="auth-hint" role="status">Comprobando si ya tienes una sesión activa…</p>
+        ) : session ? (
+          <div className="auth-form">
+            <p className="auth-hint" role="status">
+              Ya tienes la sesión iniciada como <strong>{session.name}</strong> ({session.email}).
+              {session.role === "STORE_ADMIN"
+                ? " Puedes ir a administración o volver a la tienda sin ingresar tus datos otra vez."
+                : " Puedes volver a la tienda sin ingresar tus datos otra vez."}
+            </p>
+            {error && <p role="alert" className="form-error">{error}</p>}
+            <div className="flex flex-wrap gap-3">
+              {session.role === "STORE_ADMIN" && (
+                <Link className="checkout-button text-center" href="/admin/orders">
+                  Ir a administración
+                </Link>
+              )}
+              <Link className="checkout-button text-center" href="/">
+                Volver a la tienda
+              </Link>
+            </div>
+            <button
+              className="rounded border border-slate-300 px-4 py-2 font-semibold text-slate-800 disabled:opacity-50"
+              type="button"
+              onClick={() => void handleLogout()}
+              disabled={isLoggingOut}
+              aria-busy={isLoggingOut}
+            >
+              {isLoggingOut ? "Cerrando sesión…" : "Cerrar sesión"}
+            </button>
+          </div>
+        ) : (
+          <>
+            {sessionCheckError && (
+              <p className="form-error" role="alert">{sessionCheckError}</p>
+            )}
+            <form className="auth-form" onSubmit={handleSubmit} noValidate>
           <label className="form-field">
             <span>Correo electrónico</span>
             <input
@@ -126,6 +233,8 @@ export default function LoginPage() {
           ¿No tienes cuenta?{" "}
           <Link href="/register">Regístrate aquí</Link>
         </p>
+        </>
+        )}
       </section>
     </main>
   );

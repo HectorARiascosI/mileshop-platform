@@ -127,7 +127,10 @@ export function AdminShell({ children }: AdminShellProps) {
             </span>
           </Link>
           <p>Panel administrativo</p>
-          <Link href="/">Ver tienda</Link>
+          <div className="flex items-center gap-4">
+            <Link className="admin-topbar-account-link" href="/login">Cuenta</Link>
+            <Link href="/">Ver tienda</Link>
+          </div>
         </header>
         <div className="admin-route-content" aria-busy={authorized === null}>
           {authorized === null ? (

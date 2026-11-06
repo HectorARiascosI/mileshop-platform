@@ -187,6 +187,11 @@ export default function AdminCatalogPage() {
   const [stockQuantity, setStockQuantity] = useState("1");
   const [stockReason, setStockReason] = useState("");
   const [receiptRequest, setReceiptRequest] = useState<ReceiptRequest | null>(null);
+  const [pendingProductVisibility, setPendingProductVisibility] = useState<{
+    product: Product;
+    isActive: boolean;
+  } | null>(null);
+  const [updatingProductVisibilityId, setUpdatingProductVisibilityId] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [isSavingProduct, setIsSavingProduct] = useState(false);
   const [isReceivingStock, setIsReceivingStock] = useState(false);
@@ -379,7 +384,7 @@ export default function AdminCatalogPage() {
       setStockProductId((current) =>
         validProducts.some((product) => product.id === current)
           ? current
-          : validProducts[0]?.id ?? "",
+          : (validProducts.find((product) => product.isActive) ?? validProducts[0])?.id ?? "",
       );
     } catch (requestError) {
       setError(requestError instanceof Error ? requestError.message : "Error inesperado.");
@@ -524,21 +529,19 @@ export default function AdminCatalogPage() {
     let productSaved = false;
     try {
       const savedImages: Array<{ imageUrl: string; imageFileId: string | null }> = [];
-      if (form.isActive) {
-        for (const image of form.images) {
-          if (image.file) {
-            const uploadedImage = await uploadProductImage(image.file);
-            uploadedImages.push(uploadedImage);
-            savedImages.push({
-              imageUrl: uploadedImage.imageUrl,
-              imageFileId: uploadedImage.fileId,
-            });
-          } else {
-            savedImages.push({
-              imageUrl: image.imageUrl,
-              imageFileId: image.imageFileId,
-            });
-          }
+      for (const image of form.images) {
+        if (image.file) {
+          const uploadedImage = await uploadProductImage(image.file);
+          uploadedImages.push(uploadedImage);
+          savedImages.push({
+            imageUrl: uploadedImage.imageUrl,
+            imageFileId: uploadedImage.fileId,
+          });
+        } else {
+          savedImages.push({
+            imageUrl: image.imageUrl,
+            imageFileId: image.imageFileId,
+          });
         }
       }
       const primaryImage = savedImages[0] ?? null;
@@ -631,6 +634,53 @@ export default function AdminCatalogPage() {
       setError(requestError instanceof Error ? requestError.message : "No se pudo retirar la foto.");
     } finally {
       setCleaningImageId(null);
+    }
+  };
+
+  const updateProductVisibility = async (product: Product, isActive: boolean) => {
+    setUpdatingProductVisibilityId(product.id);
+    setError(null);
+    setNotice(null);
+    try {
+      const images = product.images?.length
+        ? product.images.map(({ imageUrl, imageFileId }) => ({
+            imageUrl,
+            imageFileId: imageFileId ?? null,
+          }))
+        : product.imageUrl
+          ? [{ imageUrl: product.imageUrl, imageFileId: product.imageFileId }]
+          : [];
+      const primaryImage = images[0] ?? null;
+      const response = await fetch(`/api/admin/catalog/products/${encodeURIComponent(product.id)}`, {
+        method: "PATCH",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          sku: product.sku,
+          name: product.name,
+          description: product.description,
+          priceCop: product.priceCop,
+          imageUrl: primaryImage?.imageUrl ?? null,
+          imageFileId: primaryImage?.imageFileId ?? null,
+          images,
+          categoryId: product.categoryId,
+          isActive,
+        }),
+      });
+      if (!response.ok) {
+        throw new Error(await responseError(
+          response,
+          isActive ? "No se pudo restaurar el producto." : "No se pudo retirar el producto.",
+        ));
+      }
+      setNotice(isActive
+        ? "Producto restaurado en la tienda."
+        : "Producto retirado de la tienda. Se conservaron sus datos e historial.");
+      await refreshProducts();
+    } catch (requestError) {
+      setError(requestError instanceof Error ? requestError.message : "Error inesperado.");
+    } finally {
+      setUpdatingProductVisibilityId(null);
+      setPendingProductVisibility(null);
     }
   };
 
@@ -806,8 +856,8 @@ export default function AdminCatalogPage() {
             </div>
           </section>
 
-          <section className="mb-8 grid gap-6 lg:grid-cols-[minmax(0,1.3fr)_minmax(18rem,0.7fr)]">
-            <form className="grid gap-4 rounded-xl border bg-white p-5 shadow-sm" onSubmit={saveProduct}>
+          <section className="mb-8 grid min-w-0 grid-cols-1 gap-6 lg:grid-cols-[minmax(0,1.3fr)_minmax(18rem,0.7fr)]">
+            <form className="grid min-w-0 gap-4 rounded-xl border bg-white p-5 shadow-sm" onSubmit={saveProduct}>
               <div>
                 <h2 className="text-xl font-semibold">{editingProductId ? "Editar producto" : "Agregar producto"}</h2>
                 <p className="mt-1 text-sm text-slate-600">
@@ -963,7 +1013,7 @@ export default function AdminCatalogPage() {
                   </label>
                   {!form.isActive && (
                     <span className="text-xs text-slate-600">
-                      Al guardar, el producto dejará de mostrarse y se retirarán sus fotos administradas; las URL externas solo se desvinculan.
+                      Al guardar, el producto dejará de mostrarse. Sus fotos, datos e historial se conservarán para poder restaurarlo.
                     </span>
                   )}
                 </div>
@@ -980,7 +1030,7 @@ export default function AdminCatalogPage() {
               </div>
             </form>
 
-            <form className="grid content-start gap-4 rounded-xl border bg-white p-5 shadow-sm" onSubmit={receiveStock}>
+            <form className="grid min-w-0 content-start gap-4 rounded-xl border bg-white p-5 shadow-sm" onSubmit={receiveStock}>
               <div>
                 <h2 className="text-xl font-semibold">Agregar unidades disponibles</h2>
                 <p className="mt-1 text-sm text-slate-600">
@@ -989,11 +1039,19 @@ export default function AdminCatalogPage() {
               </div>
               <label className="grid gap-1 text-sm font-medium">
                 ¿A qué producto agregar unidades?
-                <select className="rounded border px-3 py-2" required disabled={Boolean(receiptRequest) || products.length === 0} value={stockProductId} onChange={(event) => setStockProductId(event.target.value)}>
+                <select className="admin-stock-product-select min-h-12 rounded border px-3 py-2 text-base" required disabled={Boolean(receiptRequest) || products.length === 0} value={stockProductId} onChange={(event) => setStockProductId(event.target.value)}>
+                  <option value="" disabled>Selecciona un producto</option>
                   {products.map((product) => (
-                    <option key={product.id} value={product.id}>{product.name} · {product.stock} en stock</option>
+                    <option key={product.id} value={product.id}>
+                      {product.name} · {product.stock} en stock{product.isActive ? "" : " · retirado"}
+                    </option>
                   ))}
                 </select>
+                {products.length === 0 && (
+                  <span className="text-xs font-normal text-slate-600">
+                    Primero crea un producto para poder registrar unidades.
+                  </span>
+                )}
               </label>
               <label className="grid gap-1 text-sm font-medium">
                 ¿Cuántas unidades vas a agregar?
@@ -1068,9 +1126,21 @@ export default function AdminCatalogPage() {
                       <p className="font-semibold">{product.name} <span className="text-xs font-normal text-slate-500">{product.sku}</span></p>
                       <p className="text-sm text-slate-600">{formatPrice(product.priceCop)} · {product.stock} en stock · {product.isActive ? "Visible" : "Desactivado"}</p>
                     </div>
-                    <button className="rounded border px-3 py-2 text-sm font-medium" type="button" onClick={() => beginEdit(product)}>
-                      Editar
-                    </button>
+                    <div className="flex flex-wrap gap-2">
+                      <button className="rounded border px-3 py-2 text-sm font-medium" type="button" onClick={() => beginEdit(product)}>
+                        Editar
+                      </button>
+                      <button
+                        className={`rounded border px-3 py-2 text-sm font-medium disabled:opacity-50 ${
+                          product.isActive ? "border-amber-300 text-amber-900" : "border-emerald-300 text-emerald-900"
+                        }`}
+                        type="button"
+                        disabled={updatingProductVisibilityId !== null}
+                        onClick={() => setPendingProductVisibility({ product, isActive: !product.isActive })}
+                      >
+                        {product.isActive ? "Retirar de tienda" : "Restaurar en tienda"}
+                      </button>
+                    </div>
                   </li>
                 ))}
               </ul>
@@ -1089,6 +1159,21 @@ export default function AdminCatalogPage() {
             const category = pendingCategoryDeletion;
             setPendingCategoryDeletion(null);
             void deleteCategory(category);
+          }}
+        />
+      )}
+      {pendingProductVisibility && (
+        <AdminConfirmDialog
+          title={pendingProductVisibility.isActive ? "Restaurar producto" : "Retirar producto de la tienda"}
+          message={pendingProductVisibility.isActive
+            ? `«${pendingProductVisibility.product.name}» volverá a aparecer en la tienda con sus datos e imágenes actuales.`
+            : `«${pendingProductVisibility.product.name}» dejará de aparecer en la tienda. Se conservarán el registro, las fotos, el stock y el historial; puedes restaurarlo después.`}
+          confirmLabel={pendingProductVisibility.isActive ? "Restaurar producto" : "Retirar de tienda"}
+          busy={updatingProductVisibilityId === pendingProductVisibility.product.id}
+          onCancel={() => setPendingProductVisibility(null)}
+          onConfirm={() => {
+            const change = pendingProductVisibility;
+            void updateProductVisibility(change.product, change.isActive);
           }}
         />
       )}
