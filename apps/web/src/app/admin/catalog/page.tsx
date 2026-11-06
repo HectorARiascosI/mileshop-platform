@@ -63,6 +63,8 @@ type ReceiptRequest = {
   reason: string;
 };
 
+type ProductWizardStep = 1 | 2 | 3 | 4;
+
 const EMPTY_FORM: ProductForm = {
   sku: "",
   name: "",
@@ -183,6 +185,8 @@ export default function AdminCatalogPage() {
   const [imageCleanupLoaded, setImageCleanupLoaded] = useState(false);
   const [cleaningImageId, setCleaningImageId] = useState<string | null>(null);
   const [editingProductId, setEditingProductId] = useState<string | null>(null);
+  const [productWizardStep, setProductWizardStep] = useState<ProductWizardStep>(1);
+  const [recentlySavedProduct, setRecentlySavedProduct] = useState<Product | null>(null);
   const [stockProductId, setStockProductId] = useState("");
   const [stockQuantity, setStockQuantity] = useState("1");
   const [stockReason, setStockReason] = useState("");
@@ -198,6 +202,11 @@ export default function AdminCatalogPage() {
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
   const imagePreviewUrls = useRef(new Set<string>());
+  const errorRef = useRef<HTMLParagraphElement | null>(null);
+
+  useEffect(() => {
+    if (error) errorRef.current?.scrollIntoView({ behavior: "smooth", block: "center" });
+  }, [error]);
 
   useEffect(() => () => {
     for (const previewUrl of imagePreviewUrls.current) URL.revokeObjectURL(previewUrl);
@@ -336,7 +345,7 @@ export default function AdminCatalogPage() {
     }
   }, [imageCleanupLoaded, pendingImageCleanup]);
 
-  const refreshProducts = useCallback(async () => {
+  const refreshProducts = useCallback(async (): Promise<Product[] | null> => {
     try {
       const [response, categoriesResponse] = await Promise.all([
         fetch("/api/admin/catalog/products", { cache: "no-store" }),
@@ -351,7 +360,7 @@ export default function AdminCatalogPage() {
         setAuthorized(false);
         setProducts([]);
         setCategories([]);
-        return;
+        return null;
       }
       if (!response.ok) {
         throw new Error(await responseError(response, "No se pudo cargar el catálogo."));
@@ -386,8 +395,10 @@ export default function AdminCatalogPage() {
           ? current
           : (validProducts.find((product) => product.isActive) ?? validProducts[0])?.id ?? "",
       );
+      return validProducts;
     } catch (requestError) {
       setError(requestError instanceof Error ? requestError.message : "Error inesperado.");
+      return null;
     } finally {
       setIsLoading(false);
     }
@@ -401,6 +412,8 @@ export default function AdminCatalogPage() {
   const beginEdit = (product: Product) => {
     releaseImagePreviews(form.images);
     setEditingProductId(product.id);
+    setRecentlySavedProduct(null);
+    setProductWizardStep(1);
     const productImages = product.images?.length
       ? product.images
       : product.imageUrl
@@ -431,6 +444,40 @@ export default function AdminCatalogPage() {
     setEditingProductId(null);
     setForm(EMPTY_FORM);
     setImageUrlDraft("");
+  };
+
+  const startNewProduct = () => {
+    resetForm();
+    setRecentlySavedProduct(null);
+    setProductWizardStep(1);
+    setError(null);
+    setNotice(null);
+  };
+
+  const openStockStep = (product: Product) => {
+    setStockProductId(product.id);
+    setRecentlySavedProduct(product);
+    setProductWizardStep(4);
+    setError(null);
+    setNotice(null);
+  };
+
+  const handleProductWizardSubmit = (event: FormEvent<HTMLFormElement>) => {
+    if (productWizardStep === 1) {
+      event.preventDefault();
+      setError(null);
+      setNotice(null);
+      setProductWizardStep(2);
+      return;
+    }
+    if (productWizardStep === 2) {
+      event.preventDefault();
+      setError(null);
+      setNotice(null);
+      setProductWizardStep(3);
+      return;
+    }
+    if (productWizardStep === 3) void saveProduct(event);
   };
 
   const resetCategoryForm = () => {
@@ -527,6 +574,9 @@ export default function AdminCatalogPage() {
     ];
     const uploadedImages: Array<{ fileId: string; imageUrl: string }> = [];
     let productSaved = false;
+    let preserveUploadedImages = false;
+    let productRequestOutcomeUnknown = false;
+    const submittedSku = form.sku.trim().toUpperCase();
     try {
       const savedImages: Array<{ imageUrl: string; imageFileId: string | null }> = [];
       for (const image of form.images) {
@@ -546,6 +596,8 @@ export default function AdminCatalogPage() {
       }
       const primaryImage = savedImages[0] ?? null;
 
+      preserveUploadedImages = true;
+      productRequestOutcomeUnknown = true;
       const response = await fetch(
         editingProductId
           ? `/api/admin/catalog/products/${encodeURIComponent(editingProductId)}`
@@ -566,13 +618,52 @@ export default function AdminCatalogPage() {
           }),
         },
       );
+      productRequestOutcomeUnknown = response.status >= 500;
       if (!response.ok) {
+        preserveUploadedImages = response.status >= 500;
         throw new Error(await responseError(response, "No se pudo guardar el producto."));
       }
       productSaved = true;
-      setNotice(editingProductId ? "Producto actualizado." : "Producto creado.");
+      productRequestOutcomeUnknown = false;
+      const payload: unknown = await response.json().catch(() => null);
+      const returnedProduct =
+        isRecord(payload) && isProduct(payload.data) ? payload.data : null;
+      const refreshedProducts = await refreshProducts();
+      const confirmedProduct = refreshedProducts?.find((product) =>
+        editingProductId
+          ? product.id === editingProductId
+          : returnedProduct
+            ? product.id === returnedProduct.id && product.sku === returnedProduct.sku
+            : product.sku.toUpperCase() === submittedSku,
+      );
+      if (!confirmedProduct) {
+        throw new Error(
+          "El servidor aceptó la solicitud, pero no pudimos confirmar el producto en la lista. No vuelvas a crearlo todavía; pulsa «Actualizar» y verifica el SKU.",
+        );
+      }
+      productRequestOutcomeUnknown = false;
+      if (
+        confirmedProduct.sku.toUpperCase() !== submittedSku ||
+        confirmedProduct.name !== form.name.trim() ||
+        confirmedProduct.priceCop !== priceCop ||
+        confirmedProduct.categoryId !== form.categoryId
+      ) {
+        throw new Error(
+          "El servidor devolvió un producto, pero los datos no coinciden con lo enviado. No vuelvas a guardarlo; actualiza el catálogo y revisa el producto.",
+        );
+      }
+      setError(null);
+      if (editingProductId) {
+        setNotice("Cambios guardados y verificados en la lista de productos.");
+        setRecentlySavedProduct(null);
+        setProductWizardStep(1);
+      } else {
+        setNotice("Producto guardado y verificado. Ahora puedes registrar sus unidades.");
+        setRecentlySavedProduct(confirmedProduct);
+        setStockProductId(confirmedProduct.id);
+        setProductWizardStep(4);
+      }
       resetForm();
-      await refreshProducts();
       let cleanupFailed = false;
       const retainedImageFileIds = new Set(
         savedImages
@@ -597,7 +688,7 @@ export default function AdminCatalogPage() {
       }
     } catch (requestError) {
       let cleanupFailed = false;
-      if (!productSaved) {
+      if (!productSaved && !preserveUploadedImages) {
         for (const image of uploadedImages) {
           try {
             await deleteProductImage(image.fileId);
@@ -613,10 +704,13 @@ export default function AdminCatalogPage() {
       }
       const requestMessage =
         requestError instanceof Error ? requestError.message : "Error inesperado.";
+      const visibleRequestMessage = productRequestOutcomeUnknown
+        ? `${requestMessage} No podemos saber si el servidor alcanzó a guardar el producto. Pulsa «Actualizar» y verifica el SKU antes de volver a intentarlo.`
+        : requestMessage;
       setError(
         cleanupFailed
-          ? `${requestMessage} Algunas fotos cargadas quedaron pendientes de retirar.`
-          : requestMessage,
+          ? `${visibleRequestMessage} Algunas fotos cargadas quedaron pendientes de retirar.`
+          : visibleRequestMessage,
       );
     } finally {
       setIsSavingProduct(false);
@@ -672,10 +766,18 @@ export default function AdminCatalogPage() {
           isActive ? "No se pudo restaurar el producto." : "No se pudo retirar el producto.",
         ));
       }
+      const refreshedProducts = await refreshProducts();
+      const updatedProduct = refreshedProducts?.find(
+        (current) => current.id === product.id && current.isActive === isActive,
+      );
+      if (!updatedProduct) {
+        throw new Error(
+          "El servidor aceptó el cambio, pero no pudimos verificarlo en el catálogo. Pulsa «Actualizar» antes de volver a intentarlo.",
+        );
+      }
       setNotice(isActive
-        ? "Producto restaurado en la tienda."
-        : "Producto retirado de la tienda. Se conservaron sus datos e historial.");
-      await refreshProducts();
+        ? "Producto restaurado y verificado en el catálogo."
+        : "Producto retirado y verificado. Se conservaron sus datos e historial.");
     } catch (requestError) {
       setError(requestError instanceof Error ? requestError.message : "Error inesperado.");
     } finally {
@@ -705,6 +807,11 @@ export default function AdminCatalogPage() {
       };
       setReceiptRequest(request);
     }
+    const stockBeforeReceipt = products.find((product) => product.id === request.productId)?.stock;
+    if (stockBeforeReceipt === undefined) {
+      setError("No encontramos el producto en el catálogo actualizado. Pulsa «Actualizar» y vuelve a seleccionarlo.");
+      return;
+    }
     setIsReceivingStock(true);
     setError(null);
     setNotice(null);
@@ -723,11 +830,21 @@ export default function AdminCatalogPage() {
       if (!response.ok) {
         throw new Error(await responseError(response, "No se pudo registrar la entrada."));
       }
-      setNotice("Entrada registrada y stock actualizado. El movimiento quedó auditado.");
+      const refreshedProducts = await refreshProducts();
+      const updatedProduct = refreshedProducts?.find(
+        (product) =>
+          product.id === request.productId &&
+          product.stock >= stockBeforeReceipt + request.quantity,
+      );
+      if (!updatedProduct) {
+        throw new Error(
+          "El servidor aceptó la entrada, pero no pudimos verificar el nuevo stock. No repitas el registro; intenta de nuevo para verificar el mismo movimiento.",
+        );
+      }
+      setNotice(`Entrada verificada. ${updatedProduct.name} ahora tiene ${updatedProduct.stock} unidades.`);
       setStockQuantity("1");
       setStockReason("");
       setReceiptRequest(null);
-      await refreshProducts();
     } catch (requestError) {
       setError(requestError instanceof Error ? requestError.message : "Error inesperado.");
     } finally {
@@ -756,10 +873,12 @@ export default function AdminCatalogPage() {
 
       {authorized && (
         <>
-          {error && <p className="mb-4 rounded-lg bg-red-50 p-3 text-red-800" role="alert">{error}</p>}
+          {error && <p ref={errorRef} className="mb-4 rounded-lg bg-red-50 p-3 text-red-800" role="alert">{error}</p>}
           {notice && <p className="mb-4 rounded-lg bg-emerald-50 p-3 text-emerald-800" role="status">{notice}</p>}
 
-          <section className="mb-8 grid gap-6 lg:grid-cols-2" aria-labelledby="category-management-title">
+          <details className="mb-8 rounded-xl border bg-white p-5 shadow-sm">
+            <summary className="cursor-pointer font-semibold">Administrar categorías (opcional)</summary>
+            <section className="mt-4 grid gap-6 lg:grid-cols-2" aria-labelledby="category-management-title">
             <form className="grid content-start gap-4 rounded-xl border bg-white p-5 shadow-sm" onSubmit={saveCategory}>
               <div>
                 <h2 className="text-xl font-semibold" id="category-management-title">
@@ -854,16 +973,43 @@ export default function AdminCatalogPage() {
                 </ul>
               )}
             </div>
-          </section>
+            </section>
+          </details>
 
-          <section className="mb-8 grid min-w-0 grid-cols-1 gap-6 lg:grid-cols-[minmax(0,1.3fr)_minmax(18rem,0.7fr)]">
-            <form className="grid min-w-0 gap-4 rounded-xl border bg-white p-5 shadow-sm" onSubmit={saveProduct}>
+          <section className="mb-8 grid min-w-0 gap-6" aria-labelledby="product-workflow-title">
+            <div className="rounded-xl border bg-white p-5 shadow-sm">
               <div>
-                <h2 className="text-xl font-semibold">{editingProductId ? "Editar producto" : "Agregar producto"}</h2>
+                <h2 className="text-xl font-semibold" id="product-workflow-title">
+                  {productWizardStep === 4 ? "Paso 4 de 4 · Registrar unidades" : `${editingProductId ? "Editar producto" : "Crear producto"} · Paso ${productWizardStep} de 3`}
+                </h2>
                 <p className="mt-1 text-sm text-slate-600">
-                  Guarda primero los datos del producto. Después podrás agregar las unidades que tengas; hasta entonces no aparecerá disponible para comprar.
+                  {productWizardStep === 4
+                    ? "El producto ya está guardado. Registra aquí las unidades recibidas; no necesitas volver a crearlo."
+                    : "Completa cada paso en orden. El producto no se anunciará como guardado hasta que el servidor y la lista confirmen el resultado."}
                 </p>
               </div>
+              <ol className="mt-5 grid grid-cols-2 gap-2 sm:grid-cols-4" aria-label="Pasos del proceso">
+                {["Datos", "Fotos", "Revisión", "Unidades"].map((label, index) => {
+                  const step = (index + 1) as ProductWizardStep;
+                  const complete = productWizardStep > step;
+                  const current = productWizardStep === step;
+                  return (
+                    <li
+                      className={`rounded-lg border px-3 py-2 text-sm ${current ? "border-slate-900 bg-slate-900 font-semibold text-white" : complete ? "border-emerald-300 bg-emerald-50 text-emerald-900" : "text-slate-500"}`}
+                      aria-current={current ? "step" : undefined}
+                      key={label}
+                    >
+                      {index + 1}. {label}{complete ? " · Listo" : ""}
+                    </li>
+                  );
+                })}
+              </ol>
+            </div>
+
+            {productWizardStep < 4 && (
+            <form className="grid min-w-0 gap-4 rounded-xl border bg-white p-5 shadow-sm" onSubmit={handleProductWizardSubmit}>
+              {productWizardStep === 1 && (
+                <>
               <div className="grid gap-4 sm:grid-cols-2">
                 <label className="grid gap-1 text-sm font-medium">
                   Código del producto (SKU)
@@ -903,9 +1049,26 @@ export default function AdminCatalogPage() {
                   ))}
                 </select>
                 <span className="text-xs font-normal text-slate-600">
-                  La tienda usa el tema de esta categoría para distinguir el producto y ofrecer filtros.
+                  La categoría es opcional. Si no encuentras una, puedes crearla después desde «Administrar categorías».
                 </span>
               </label>
+              {editingProductId && (
+                <div className="grid gap-1">
+                  <label className="flex items-center gap-2 text-sm font-medium">
+                    <input type="checkbox" checked={form.isActive} onChange={(event) => setForm({ ...form, isActive: event.target.checked })} />
+                    Producto visible en la tienda
+                  </label>
+                  {!form.isActive && (
+                    <span className="text-xs text-slate-600">
+                      Al guardar, el producto dejará de mostrarse. Sus fotos, datos e historial se conservarán para poder restaurarlo.
+                    </span>
+                  )}
+                </div>
+              )}
+                </>
+              )}
+
+              {productWizardStep === 2 && (
               <fieldset className="grid gap-3 rounded-lg border p-4">
                 <legend className="px-1 text-sm font-semibold">Galería del producto</legend>
                 <p className="text-sm text-slate-600">
@@ -1005,36 +1168,57 @@ export default function AdminCatalogPage() {
                   </p>
                 )}
               </fieldset>
-              {editingProductId && (
-                <div className="grid gap-1">
-                  <label className="flex items-center gap-2 text-sm font-medium">
-                    <input type="checkbox" checked={form.isActive} onChange={(event) => setForm({ ...form, isActive: event.target.checked })} />
-                    Producto visible en la tienda
-                  </label>
-                  {!form.isActive && (
-                    <span className="text-xs text-slate-600">
-                      Al guardar, el producto dejará de mostrarse. Sus fotos, datos e historial se conservarán para poder restaurarlo.
-                    </span>
-                  )}
-                </div>
               )}
+
+              {productWizardStep === 3 && (
+                <section className="grid gap-3 rounded-lg border bg-slate-50 p-4" aria-labelledby="product-review-title">
+                  <h3 className="font-semibold" id="product-review-title">Revisa antes de guardar</h3>
+                  <dl className="grid gap-2 text-sm sm:grid-cols-2">
+                    <div><dt className="text-slate-500">Código</dt><dd className="font-medium">{form.sku.trim()}</dd></div>
+                    <div><dt className="text-slate-500">Nombre</dt><dd className="font-medium">{form.name.trim()}</dd></div>
+                    <div><dt className="text-slate-500">Precio</dt><dd className="font-medium">{formatPrice(Number(form.priceCop))}</dd></div>
+                    <div><dt className="text-slate-500">Categoría</dt><dd className="font-medium">{categories.find((category) => category.id === form.categoryId)?.name ?? "Sin categoría"}</dd></div>
+                    <div><dt className="text-slate-500">Fotos</dt><dd className="font-medium">{form.images.length === 0 ? "Ninguna (opcional)" : `${form.images.length} seleccionada${form.images.length === 1 ? "" : "s"}`}</dd></div>
+                    <div><dt className="text-slate-500">Unidades iniciales</dt><dd className="font-medium">0 · Se registran en el siguiente paso</dd></div>
+                  </dl>
+                  <p className="text-sm text-slate-600">
+                    Al confirmar, verificaremos la respuesta del servidor y volveremos a consultar el catálogo. Solo entonces mostraremos el producto como guardado y abriremos el registro de unidades.
+                  </p>
+                </section>
+              )}
+
               <div className="flex flex-wrap gap-2">
-                <button className="rounded bg-emerald-700 px-4 py-2 font-semibold text-white disabled:opacity-50" type="submit" disabled={isSavingProduct}>
-                  {isSavingProduct ? "Guardando…" : editingProductId ? "Guardar cambios" : "Crear producto"}
-                </button>
+                {productWizardStep > 1 && (
+                  <button className="rounded border px-4 py-2 font-medium" type="button" disabled={isSavingProduct} onClick={() => { setError(null); setProductWizardStep((productWizardStep - 1) as ProductWizardStep); }}>
+                    Anterior
+                  </button>
+                )}
+                {productWizardStep < 3 ? (
+                  <button className="rounded bg-slate-900 px-4 py-2 font-semibold text-white" type="submit">
+                    Siguiente
+                  </button>
+                ) : (
+                  <button className="rounded bg-slate-900 px-4 py-2 font-semibold text-white disabled:opacity-50" type="submit" disabled={isSavingProduct}>
+                    {isSavingProduct ? "Guardando y verificando…" : editingProductId ? "Guardar cambios" : "Guardar producto"}
+                  </button>
+                )}
                 {editingProductId && (
-                  <button className="rounded border px-4 py-2 font-medium" type="button" onClick={resetForm}>
+                  <button className="rounded border px-4 py-2 font-medium" type="button" disabled={isSavingProduct} onClick={() => { resetForm(); setProductWizardStep(1); }}>
                     Cancelar edición
                   </button>
                 )}
               </div>
             </form>
+            )}
 
+            {productWizardStep === 4 && (
             <form className="grid min-w-0 content-start gap-4 rounded-xl border bg-white p-5 shadow-sm" onSubmit={receiveStock}>
               <div>
-                <h2 className="text-xl font-semibold">Agregar unidades disponibles</h2>
+                <h3 className="text-xl font-semibold">Agregar unidades disponibles</h3>
                 <p className="mt-1 text-sm text-slate-600">
-                  Registra las unidades reales recibidas antes de ofrecer el producto para la venta.
+                  {recentlySavedProduct
+                    ? `Guardado y visible en «Productos»: ${recentlySavedProduct.name} (${recentlySavedProduct.sku}).`
+                    : "Selecciona un producto del catálogo para registrar su entrada de inventario."}
                 </p>
               </div>
               <label className="grid gap-1 text-sm font-medium">
@@ -1047,11 +1231,6 @@ export default function AdminCatalogPage() {
                     </option>
                   ))}
                 </select>
-                {products.length === 0 && (
-                  <span className="text-xs font-normal text-slate-600">
-                    Primero crea un producto para poder registrar unidades.
-                  </span>
-                )}
               </label>
               <label className="grid gap-1 text-sm font-medium">
                 ¿Cuántas unidades vas a agregar?
@@ -1067,10 +1246,16 @@ export default function AdminCatalogPage() {
                   Describe la procedencia para mantener la trazabilidad; por ejemplo, compra a proveedor o ajuste de inventario.
                 </span>
               </label>
-              <button className="rounded bg-slate-900 px-4 py-2 font-semibold text-white disabled:opacity-50" type="submit" disabled={isReceivingStock || products.length === 0}>
-                {isReceivingStock ? "Guardando unidades…" : "Agregar unidades"}
-              </button>
+              <div className="flex flex-wrap gap-2">
+                <button className="rounded bg-slate-900 px-4 py-2 font-semibold text-white disabled:opacity-50" type="submit" disabled={isReceivingStock || products.length === 0}>
+                  {isReceivingStock ? "Guardando y verificando…" : "Registrar unidades"}
+                </button>
+                <button className="rounded border px-4 py-2 font-medium" type="button" disabled={isReceivingStock} onClick={startNewProduct}>
+                  Crear otro producto
+                </button>
+              </div>
             </form>
+            )}
           </section>
 
           {pendingImageCleanup.length > 0 && (
@@ -1127,6 +1312,13 @@ export default function AdminCatalogPage() {
                       <p className="text-sm text-slate-600">{formatPrice(product.priceCop)} · {product.stock} en stock · {product.isActive ? "Visible" : "Desactivado"}</p>
                     </div>
                     <div className="flex flex-wrap gap-2">
+                      <button
+                        className="rounded border px-3 py-2 text-sm font-medium"
+                        type="button"
+                        onClick={() => openStockStep(product)}
+                      >
+                        Registrar unidades
+                      </button>
                       <button className="rounded border px-3 py-2 text-sm font-medium" type="button" onClick={() => beginEdit(product)}>
                         Editar
                       </button>
