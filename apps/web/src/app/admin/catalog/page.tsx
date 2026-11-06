@@ -347,6 +347,25 @@ export default function AdminCatalogPage() {
 
   const refreshProducts = useCallback(async (): Promise<Product[] | null> => {
     try {
+      const sessionResponse = await fetch("/api/auth/me", { cache: "no-store" });
+      if (!sessionResponse.ok) {
+        setAuthorized(false);
+        setProducts([]);
+        setCategories([]);
+        setError(
+          "La sesión de administración venció o ya no tiene permisos. Inicia sesión de nuevo; si estabas guardando, verifica el SKU antes de volver a intentarlo.",
+        );
+        return null;
+      }
+      const profile: unknown = await sessionResponse.json();
+      if (!isRecord(profile) || profile.role !== "STORE_ADMIN") {
+        setAuthorized(false);
+        setProducts([]);
+        setCategories([]);
+        setError("Esta cuenta no tiene permisos de administración para gestionar el catálogo.");
+        return null;
+      }
+
       const [response, categoriesResponse] = await Promise.all([
         fetch("/api/admin/catalog/products", { cache: "no-store" }),
         fetch("/api/admin/catalog/categories", { cache: "no-store" }),
@@ -360,6 +379,9 @@ export default function AdminCatalogPage() {
         setAuthorized(false);
         setProducts([]);
         setCategories([]);
+        setError(
+          "La sesión de administración venció o ya no tiene permisos. Inicia sesión de nuevo; si estabas guardando, verifica el SKU antes de volver a intentarlo.",
+        );
         return null;
       }
       if (!response.ok) {
@@ -619,6 +641,12 @@ export default function AdminCatalogPage() {
         },
       );
       productRequestOutcomeUnknown = response.status >= 500;
+      if (response.status === 401 || response.status === 403) {
+        setAuthorized(false);
+        throw new Error(
+          "La sesión de administración venció o ya no tiene permisos. El producto no se guardó; inicia sesión de nuevo y verifica el SKU antes de reintentar.",
+        );
+      }
       if (!response.ok) {
         preserveUploadedImages = response.status >= 500;
         throw new Error(await responseError(response, "No se pudo guardar el producto."));
@@ -864,6 +892,8 @@ export default function AdminCatalogPage() {
         </div>
       </header>
 
+      {error && <p ref={errorRef} className="mb-4 rounded-lg bg-red-50 p-3 text-red-800" role="alert">{error}</p>}
+
       {authorized === false && (
         <section className="rounded-lg border border-amber-300 bg-amber-50 p-5">
           Inicia sesión con la cuenta de administradora de tienda.
@@ -873,7 +903,6 @@ export default function AdminCatalogPage() {
 
       {authorized && (
         <>
-          {error && <p ref={errorRef} className="mb-4 rounded-lg bg-red-50 p-3 text-red-800" role="alert">{error}</p>}
           {notice && <p className="mb-4 rounded-lg bg-emerald-50 p-3 text-emerald-800" role="status">{notice}</p>}
 
           <details className="mb-8 rounded-xl border bg-white p-5 shadow-sm">

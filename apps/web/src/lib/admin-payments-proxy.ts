@@ -1,6 +1,11 @@
 import { cookies } from "next/headers";
 
 import { fetchApiGateway } from "./api-gateway-url";
+import {
+  clearSessionCookies,
+  exchangeRefreshToken,
+  setSessionCookies,
+} from "./auth-session";
 
 const PRIVATE_HEADERS = { "Cache-Control": "private, no-store" };
 
@@ -18,18 +23,15 @@ export async function proxyAdminPayments(
   body?: string,
   extraHeaders: Record<string, string> = {},
 ): Promise<Response> {
-  const accessToken = (await cookies()).get("accessToken")?.value?.trim();
-  if (!accessToken) {
-    return jsonError("Not authenticated", 401);
-  }
-
+  const cookieStore = await cookies();
+  let accessToken = cookieStore.get("accessToken")?.value?.trim() ?? "";
+  const refreshToken = cookieStore.get("refreshToken")?.value?.trim() ?? "";
   const gatewayUrl = process.env.API_GATEWAY_URL ?? "http://localhost:3000";
-  let upstream: Response;
-  try {
-    upstream = await fetchApiGateway(`${gatewayUrl.replace(/\/$/, "")}${path}`, {
+  const sendRequest = (token: string) =>
+    fetchApiGateway(`${gatewayUrl.replace(/\/$/, "")}${path}`, {
       method,
       headers: {
-        authorization: `Bearer ${accessToken}`,
+        authorization: ["Bearer", token].join(" "),
         ...extraHeaders,
         ...(body !== undefined ? { "content-type": "application/json" } : {}),
       },
@@ -37,8 +39,53 @@ export async function proxyAdminPayments(
       cache: "no-store",
       signal: AbortSignal.timeout(15_000),
     });
-  } catch {
+
+  let upstream: Response | null = null;
+  if (accessToken) {
+    try {
+      upstream = await sendRequest(accessToken);
+    } catch {
+      return jsonError("Service unavailable", 503);
+    }
+  }
+
+  if (!upstream || upstream.status === 401) {
+    if (!refreshToken) {
+      await clearSessionCookies();
+      return jsonError("Session expired", 401);
+    }
+
+    const refreshed = await exchangeRefreshToken(
+      gatewayUrl,
+      refreshToken,
+      (input, init) =>
+        fetchApiGateway(input, {
+          ...init,
+          signal: AbortSignal.timeout(15_000),
+        }),
+    );
+    if (refreshed.status === "unauthenticated") {
+      await clearSessionCookies();
+      return jsonError("Session expired", 401);
+    }
+    if (refreshed.status === "unavailable") {
+      return jsonError("Service unavailable", 503);
+    }
+
+    accessToken = refreshed.tokens.accessToken;
+    await setSessionCookies(refreshed.tokens);
+    try {
+      upstream = await sendRequest(accessToken);
+    } catch {
+      return jsonError("Service unavailable", 503);
+    }
+  }
+
+  if (!upstream) {
     return jsonError("Service unavailable", 503);
+  }
+  if (upstream.status === 401) {
+    await clearSessionCookies();
   }
 
   if (stream) {
