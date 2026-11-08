@@ -4,6 +4,7 @@
   "buildCommand": "npm run db:generate && npm run build",
   "functions": {
     "api/handler.ts": {
+      "includeFiles": "../../packages/contracts/src/**",
       "maxDuration": 30
     }
   },

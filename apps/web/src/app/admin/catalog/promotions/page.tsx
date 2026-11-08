@@ -338,7 +338,7 @@ export default function AdminPromotionsPage() {
               ))}
             </section>
           )}
-          <section className="grid gap-6 lg:grid-cols-[minmax(0,1fr)_minmax(0,1fr)]">
+          <section className="grid gap-6 xl:grid-cols-[minmax(0,1fr)_minmax(0,1fr)]">
             <form className="grid content-start gap-4 rounded-xl border bg-white p-5 shadow-sm" onSubmit={save}>
               <div>
                 <h2 className="text-xl font-semibold">{editingId ? "Editar promoción" : "Nueva promoción"}</h2>
@@ -365,7 +365,7 @@ export default function AdminPromotionsPage() {
                   <input className="rounded border px-3 py-2" type="datetime-local" required value={form.endsAt} onChange={(event) => setForm({ ...form, endsAt: event.target.value })} />
                 </label>
               </div>
-              <fieldset className="grid gap-2">
+              <fieldset className="admin-promotion-products grid gap-2">
                 <legend className="mb-1 text-sm font-semibold">Productos y descuentos</legend>
                 {products.length === 0 ? <p className="text-sm text-slate-600">Primero agrega productos al catálogo.</p> : products.map((product) => (
                   <label className="flex flex-wrap items-center gap-3 rounded border p-3 text-sm" key={product.id}>

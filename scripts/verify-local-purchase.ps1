@@ -75,6 +75,13 @@ $product = $catalog.data | Where-Object { $_.sku -eq 'MILE-MUG-001' } | Select-O
 if ($null -eq $product) {
     throw 'Smoke product MILE-MUG-001 was not returned by the active catalog.'
 }
+$deliveryFeeCop = 7000
+$deliveryFeeThresholdCop = 12000
+$expectedDeliveryFeeCop = if ([int]$product.priceCop -ge $deliveryFeeThresholdCop) {
+    0
+} else {
+    $deliveryFeeCop
+}
 
 $orderInput = @{
     lines = @(
@@ -94,8 +101,8 @@ $created = Get-JsonResponse -Uri 'http://localhost:3000/orders' -Method Post -Bo
 $order = $created.data
 $event = $order.event
 Assert-Equal -Actual $order.subtotalCop -Expected $product.priceCop -Message 'Gateway returned an inconsistent order subtotal'
-Assert-Equal -Actual $order.deliveryFeeCop -Expected 12000 -Message 'Gateway returned an inconsistent delivery fee'
-Assert-Equal -Actual $order.totalCop -Expected ($product.priceCop + 12000) -Message 'Gateway returned an inconsistent order total'
+Assert-Equal -Actual $order.deliveryFeeCop -Expected $expectedDeliveryFeeCop -Message 'Gateway returned an inconsistent delivery fee'
+Assert-Equal -Actual $order.totalCop -Expected ($product.priceCop + $expectedDeliveryFeeCop) -Message 'Gateway returned an inconsistent order total'
 Assert-Equal -Actual $event.payload.customerId -Expected $auth.customerId -Message 'Gateway returned an inconsistent customer id'
 Assert-Equal -Actual $event.eventType -Expected 'OrderCreated.v1' -Message 'Gateway returned an unexpected event type'
 
@@ -111,7 +118,7 @@ Write-Host '==> Reading the authorized order status through API gateway...'
 $persisted = Get-JsonResponse -Uri "http://localhost:3000/orders/$($order.orderId)" -Headers @{ Authorization = $script:smokeAuthorizationHeader }
 Assert-Equal -Actual $persisted.data.orderId -Expected $order.orderId -Message 'Order was not persisted with the returned orderId'
 Assert-Equal -Actual $persisted.data.customerId -Expected $auth.customerId -Message 'Persisted order has an inconsistent customer id'
-Assert-Equal -Actual $persisted.data.totalCop -Expected ($product.priceCop + 12000) -Message 'Persisted order has an inconsistent total'
+Assert-Equal -Actual $persisted.data.totalCop -Expected ($product.priceCop + $expectedDeliveryFeeCop) -Message 'Persisted order has an inconsistent total'
 Assert-Equal -Actual $persisted.data.status -Expected 'AWAITING_PAYMENT_PROOF' -Message 'Persisted order has an unexpected initial status'
 
 Write-Host '==> Replaying the same event to verify worker deduplication...'

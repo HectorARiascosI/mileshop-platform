@@ -288,7 +288,7 @@ export default function AdminAnnouncementsPage() {
               ))}
             </section>
           )}
-          <section className="grid gap-6 lg:grid-cols-[minmax(0,0.9fr)_minmax(0,1.1fr)]">
+          <section className="grid gap-6 xl:grid-cols-[minmax(0,0.9fr)_minmax(0,1.1fr)]">
             <form className="grid content-start gap-4 rounded-xl border bg-white p-5 shadow-sm" onSubmit={save}>
               <div>
                 <h2 className="text-xl font-semibold">{editingId ? "Editar anuncio" : "Nuevo anuncio"}</h2>

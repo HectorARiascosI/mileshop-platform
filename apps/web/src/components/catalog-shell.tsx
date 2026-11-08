@@ -213,6 +213,8 @@ export function CatalogShell({ products, unavailable, announcements, promotions 
   const previewProduct = productGalleryPreview
     ? products.find((product) => product.id === productGalleryPreview.productId)
     : undefined;
+  const selectedCategory = categories.find((category) => category.id === selectedCategoryId);
+  const activeTheme = previewProduct?.category?.theme ?? selectedCategory?.theme ?? "neutral";
   const previewImages = previewProduct ? getProductImages(previewProduct) : [];
   const previewIndex = Math.min(
     productGalleryPreview?.index ?? 0,
@@ -410,7 +412,7 @@ export function CatalogShell({ products, unavailable, announcements, promotions 
   };
 
   return (
-    <div className="site-shell">
+    <div className="site-shell" data-theme={activeTheme}>
       <header className="topbar">
         <Link className="brand" href="/" aria-label="MileShop inicio">
           <Image className="brand-mark" src="/mileshop-mark.webp" alt="" width={60} height={60} priority />
@@ -658,6 +660,7 @@ export function CatalogShell({ products, unavailable, announcements, promotions 
               <button
                 className="category-filter"
                 type="button"
+                data-theme="neutral"
                 aria-pressed={selectedCategoryId === null}
                 onClick={() => setSelectedCategoryId(null)}
               >
@@ -668,6 +671,7 @@ export function CatalogShell({ products, unavailable, announcements, promotions 
                   className="category-filter"
                   type="button"
                   key={category.id}
+                  data-theme={category.theme}
                   aria-pressed={selectedCategoryId === category.id}
                   onClick={() => setSelectedCategoryId(category.id)}
                 >
@@ -865,6 +869,7 @@ export function CatalogShell({ products, unavailable, announcements, promotions 
         >
           <section
             className="product-gallery-dialog"
+            data-theme={previewProduct.category?.theme ?? "neutral"}
             role="dialog"
             aria-modal="true"
             aria-labelledby="product-gallery-title"
