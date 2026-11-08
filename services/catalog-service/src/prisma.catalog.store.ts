@@ -240,6 +240,8 @@ export class PrismaCatalogStore implements CatalogStore {
       id: promotion.id,
       title: promotion.title,
       description: promotion.description,
+      imageUrl: promotion.imageUrl,
+      imageFileId: promotion.imageFileId,
       startsAt: promotion.startsAt.toISOString(),
       endsAt: promotion.endsAt.toISOString(),
       isActive: promotion.isActive,
@@ -263,6 +265,8 @@ export class PrismaCatalogStore implements CatalogStore {
           data: {
             title: normalized.title,
             description: normalized.description,
+            imageUrl: normalized.imageUrl,
+            imageFileId: normalized.imageFileId,
             startsAt: new Date(normalized.startsAt),
             endsAt: new Date(normalized.endsAt),
             isActive: normalized.isActive,
@@ -311,6 +315,8 @@ export class PrismaCatalogStore implements CatalogStore {
           data: {
             title: normalized.title,
             description: normalized.description,
+            imageUrl: normalized.imageUrl,
+            imageFileId: normalized.imageFileId,
             startsAt: new Date(normalized.startsAt),
             endsAt: new Date(normalized.endsAt),
             isActive: normalized.isActive,
@@ -461,6 +467,8 @@ export class PrismaCatalogStore implements CatalogStore {
     id: string;
     title: string;
     description: string;
+    imageUrl: string | null;
+    imageFileId: string | null;
     startsAt: Date;
     endsAt: Date;
     isActive: boolean;
@@ -476,6 +484,8 @@ export class PrismaCatalogStore implements CatalogStore {
       id: promotion.id,
       title: promotion.title,
       description: promotion.description,
+      imageUrl: promotion.imageUrl,
+      imageFileId: promotion.imageFileId,
       startsAt: promotion.startsAt.toISOString(),
       endsAt: promotion.endsAt.toISOString(),
       isActive: promotion.isActive,

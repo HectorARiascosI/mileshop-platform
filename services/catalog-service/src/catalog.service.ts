@@ -245,6 +245,55 @@ function validateMarketingDates(startsAt: string, endsAt: string): { startsAt: D
   return { startsAt: start, endsAt: end };
 }
 
+function normalizeMarketingImage(
+  imageUrlInput: unknown,
+  imageFileIdInput: unknown,
+): { imageUrl: string | null; imageFileId: string | null } {
+  const imageUrl = typeof imageUrlInput === "string" ? imageUrlInput.trim() : imageUrlInput;
+  const imageFileId = typeof imageFileIdInput === "string" ? imageFileIdInput.trim() : imageFileIdInput;
+  if (
+    imageUrl !== undefined &&
+    imageUrl !== null &&
+    typeof imageUrl !== "string"
+  ) {
+    throw new CatalogInputError("Campaign image URL is invalid");
+  }
+  if (
+    imageFileId !== undefined &&
+    imageFileId !== null &&
+    imageFileId !== "" &&
+    (typeof imageFileId !== "string" ||
+      imageFileId.length > 128 ||
+      !/^[A-Za-z0-9_-]+$/.test(imageFileId))
+  ) {
+    throw new CatalogInputError("Campaign image file reference is invalid");
+  }
+  if (!imageUrl) {
+    if (imageFileId) throw new CatalogInputError("Campaign image file reference requires an image URL");
+    return { imageUrl: null, imageFileId: null };
+  }
+  if (imageUrl.length > 2048) throw new CatalogInputError("Campaign image URL is invalid");
+
+  let parsed: URL;
+  try {
+    parsed = new URL(imageUrl);
+  } catch {
+    throw new CatalogInputError("Campaign image URL must be a valid HTTPS URL");
+  }
+  if (
+    parsed.protocol !== "https:" ||
+    parsed.username ||
+    parsed.password ||
+    (imageFileId && parsed.hostname !== "ik.imagekit.io")
+  ) {
+    throw new CatalogInputError("Campaign image URL must use HTTPS and managed images must use ImageKit");
+  }
+  return {
+    imageUrl: parsed.toString(),
+    imageFileId: typeof imageFileId === "string" && imageFileId ? imageFileId : null,
+  };
+}
+
 export function normalizePromotionInput(input: PromotionInput): PromotionInput {
   const title = typeof input.title === "string" ? input.title.trim() : "";
   const description = typeof input.description === "string" ? input.description.trim() : "";
@@ -258,6 +307,7 @@ export function normalizePromotionInput(input: PromotionInput): PromotionInput {
     throw new CatalogInputError("Promotion status is invalid");
   }
   const dates = validateMarketingDates(input.startsAt, input.endsAt);
+  const image = normalizeMarketingImage(input.imageUrl, input.imageFileId);
   if (!Array.isArray(input.products) || input.products.length < 1 || input.products.length > 100) {
     throw new CatalogInputError("A promotion must include between 1 and 100 products");
   }
@@ -283,6 +333,7 @@ export function normalizePromotionInput(input: PromotionInput): PromotionInput {
   return {
     title,
     description,
+    ...image,
     startsAt: dates.startsAt.toISOString(),
     endsAt: dates.endsAt.toISOString(),
     isActive: input.isActive,
@@ -319,9 +370,11 @@ export function normalizeAnnouncementInput(input: AnnouncementInput): Announceme
     }
   }
   const dates = validateMarketingDates(input.startsAt, input.endsAt);
+  const image = normalizeMarketingImage(input.imageUrl, input.imageFileId);
   return {
     title,
     message,
+    ...image,
     linkUrl,
     linkLabel,
     startsAt: dates.startsAt.toISOString(),

@@ -17,6 +17,41 @@ test("catalog client returns products from the catalog service", async () => {
   ]);
 });
 
+test("catalog client loads current public promotions without caching", async () => {
+  let requestUrl = "";
+  let requestInit: RequestInit | undefined;
+  const promotion = {
+    id: "promo-1",
+    title: "Oferta de temporada",
+    description: "Descuento vigente.",
+    imageUrl: "https://ik.imagekit.io/store/marketing/promotions/offer.jpg",
+    imageFileId: "promotion-file-01",
+    startsAt: "2026-11-08T00:00:00.000Z",
+    endsAt: "2026-11-15T00:00:00.000Z",
+    isActive: true,
+    products: [{
+      productId: "product-1",
+      discountPercent: 20,
+      name: "Artículo",
+      sku: "SKU-01",
+    }],
+    createdAt: "2026-11-08T00:00:00.000Z",
+    updatedAt: "2026-11-08T00:00:00.000Z",
+  };
+  const client = new CatalogClient(async (input, init) => {
+    requestUrl = input;
+    requestInit = init;
+    return new Response(JSON.stringify({ data: [promotion] }), {
+      status: 200,
+      headers: { "content-type": "application/json" },
+    });
+  });
+
+  assert.deepEqual(await client.listActivePromotions(), [promotion]);
+  assert.equal(new URL(requestUrl).pathname, "/promotions");
+  assert.equal(requestInit?.cache, "no-store");
+});
+
 test("catalog client maps upstream failures to service unavailable", async () => {
   const client = new CatalogClient(async () => new Response(null, { status: 503 }));
 

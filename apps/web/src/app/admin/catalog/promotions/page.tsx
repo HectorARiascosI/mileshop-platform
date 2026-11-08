@@ -5,6 +5,8 @@ import { useCallback, useEffect, useState, type FormEvent } from "react";
 
 import type { CatalogPromotion, CatalogPromotionInput } from "@mileshop/contracts";
 import { AdminConfirmDialog } from "@/components/admin-confirm-dialog";
+import { AdminCatalogImageField } from "@/components/admin-catalog-image-field";
+import { deleteCatalogImage, uploadCatalogImage } from "@/lib/catalog-media";
 
 type Product = { id: string; sku: string; name: string; priceCop: number; isActive: boolean };
 type ProductDiscounts = Record<string, string>;
@@ -20,6 +22,8 @@ function blankForm(): CatalogPromotionInput {
   return {
     title: "",
     description: "",
+    imageUrl: null,
+    imageFileId: null,
     startsAt: localDateTime(startsAt),
     endsAt: localDateTime(endsAt),
     isActive: true,
@@ -56,6 +60,8 @@ function isPromotion(value: unknown): value is CatalogPromotion {
     typeof value.id === "string" &&
     typeof value.title === "string" &&
     typeof value.description === "string" &&
+    (!("imageUrl" in value) || typeof value.imageUrl === "string" || value.imageUrl === null) &&
+    (!("imageFileId" in value) || typeof value.imageFileId === "string" || value.imageFileId === null) &&
     typeof value.startsAt === "string" &&
     typeof value.endsAt === "string" &&
     typeof value.isActive === "boolean" &&
@@ -82,14 +88,16 @@ export default function AdminPromotionsPage() {
   const [products, setProducts] = useState<Product[]>([]);
   const [promotions, setPromotions] = useState<CatalogPromotion[]>([]);
   const [form, setForm] = useState<CatalogPromotionInput>(blankForm);
+  const [imageFile, setImageFile] = useState<File | null>(null);
   const [discounts, setDiscounts] = useState<ProductDiscounts>({});
   const [editingId, setEditingId] = useState<string | null>(null);
   const [pendingDelete, setPendingDelete] = useState<CatalogPromotion | null>(null);
   const [busy, setBusy] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
+  const [pendingImageCleanup, setPendingImageCleanup] = useState<string[]>([]);
 
-  const refresh = useCallback(async () => {
+  const refresh = useCallback(async (): Promise<CatalogPromotion[] | null> => {
     try {
       const [productsResponse, promotionsResponse] = await Promise.all([
         fetch("/api/admin/catalog/products", { cache: "no-store" }),
@@ -98,7 +106,7 @@ export default function AdminPromotionsPage() {
       if (productsResponse.status === 401 || productsResponse.status === 403 ||
           promotionsResponse.status === 401 || promotionsResponse.status === 403) {
         setAuthorized(false);
-        return;
+        return null;
       }
       if (!productsResponse.ok) throw new Error(await responseError(productsResponse));
       if (!promotionsResponse.ok) throw new Error(await responseError(promotionsResponse));
@@ -116,8 +124,10 @@ export default function AdminPromotionsPage() {
       }
       setProducts(nextProducts);
       setPromotions(nextPromotions);
+      return nextPromotions;
     } catch (requestError) {
       setError(requestError instanceof Error ? requestError.message : "Error inesperado.");
+      return null;
     } finally {
       setBusy(false);
     }
@@ -130,6 +140,7 @@ export default function AdminPromotionsPage() {
 
   const reset = () => {
     setForm(blankForm());
+    setImageFile(null);
     setDiscounts({});
     setEditingId(null);
   };
@@ -139,11 +150,14 @@ export default function AdminPromotionsPage() {
     setForm({
       title: promotion.title,
       description: promotion.description,
+      imageUrl: promotion.imageUrl ?? null,
+      imageFileId: promotion.imageFileId ?? null,
       startsAt: localDateTime(new Date(promotion.startsAt)),
       endsAt: localDateTime(new Date(promotion.endsAt)),
       isActive: promotion.isActive,
       products: [],
     });
+    setImageFile(null);
     setDiscounts(Object.fromEntries(
       promotion.products.map((product) => [product.productId, String(product.discountPercent)]),
     ));
@@ -169,9 +183,17 @@ export default function AdminPromotionsPage() {
     setBusy(true);
     setError(null);
     setNotice(null);
+    const previousImageFileId = editingId
+      ? promotions.find((promotion) => promotion.id === editingId)?.imageFileId ?? null
+      : null;
+    let uploadedImage: { fileId: string; imageUrl: string } | null = null;
+    let requestMayHaveSaved = false;
     try {
+      if (imageFile) uploadedImage = await uploadCatalogImage(imageFile, "promotions");
       const input: CatalogPromotionInput = {
         ...form,
+        imageUrl: uploadedImage?.imageUrl ?? form.imageUrl ?? null,
+        imageFileId: uploadedImage?.fileId ?? form.imageFileId ?? null,
         startsAt: new Date(form.startsAt).toISOString(),
         endsAt: new Date(form.endsAt).toISOString(),
         products: selected,
@@ -186,15 +208,57 @@ export default function AdminPromotionsPage() {
           body: JSON.stringify(input),
         },
       );
+      requestMayHaveSaved = response.status >= 500;
+      if (response.status === 401 || response.status === 403) {
+        setAuthorized(false);
+        throw new Error("La sesión de administración venció o ya no tiene permisos.");
+      }
       if (!response.ok) throw new Error(await responseError(response));
+      requestMayHaveSaved = true;
       const payload: unknown = await response.json();
-      if (!isRecord(payload) || !isPromotion(payload.data)) {
+      if (!isRecord(payload)) {
         throw new Error("El servicio devolvió una promoción inválida.");
       }
-      setNotice(editingId ? "Promoción actualizada." : "Promoción creada.");
+      const savedPromotion = payload.data;
+      if (!isPromotion(savedPromotion)) {
+        throw new Error("El servicio devolvió una promoción inválida.");
+      }
+      const refreshedPromotions = await refresh();
+      const confirmedPromotion = refreshedPromotions?.find((promotion) =>
+        promotion.id === savedPromotion.id &&
+        promotion.title === input.title.trim() &&
+        promotion.imageUrl === input.imageUrl &&
+        promotion.products.length === selected.length,
+      );
+      if (!confirmedPromotion) {
+        throw new Error("El servidor aceptó la promoción, pero no pudimos confirmarla en la lista. Actualiza antes de volver a crearla.");
+      }
       reset();
-      await refresh();
+      let cleanupFailed = false;
+      if (previousImageFileId && previousImageFileId !== confirmedPromotion.imageFileId) {
+        try {
+          await deleteCatalogImage(previousImageFileId);
+        } catch {
+          cleanupFailed = true;
+          setPendingImageCleanup((current) =>
+            current.includes(previousImageFileId) ? current : [...current, previousImageFileId],
+          );
+        }
+      }
+      setNotice(cleanupFailed
+        ? "Promoción guardada y verificada. La foto anterior sigue pendiente de retirar."
+        : editingId ? "Promoción actualizada y verificada." : "Promoción creada y verificada.");
     } catch (requestError) {
+      const imageToClean = uploadedImage;
+      if (imageToClean && !requestMayHaveSaved) {
+        try {
+          await deleteCatalogImage(imageToClean.fileId);
+        } catch {
+          setPendingImageCleanup((current) =>
+            current.includes(imageToClean.fileId) ? current : [...current, imageToClean.fileId],
+          );
+        }
+      }
       setError(requestError instanceof Error ? requestError.message : "Error inesperado.");
     } finally {
       setBusy(false);
@@ -210,13 +274,38 @@ export default function AdminPromotionsPage() {
         method: "DELETE",
       });
       if (!response.ok) throw new Error(await responseError(response));
+      const refreshedPromotions = await refresh();
+      if (!refreshedPromotions || refreshedPromotions.some((item) => item.id === promotion.id)) {
+        throw new Error("El servidor aceptó la eliminación, pero no pudimos confirmarla en la lista.");
+      }
       if (editingId === promotion.id) reset();
-      setNotice("Promoción eliminada.");
-      await refresh();
+      let cleanupFailed = false;
+      if (promotion.imageFileId) {
+        try {
+          await deleteCatalogImage(promotion.imageFileId);
+        } catch {
+          cleanupFailed = true;
+          setPendingImageCleanup((current) =>
+            current.includes(promotion.imageFileId!) ? current : [...current, promotion.imageFileId!],
+          );
+        }
+      }
+      setNotice(cleanupFailed
+        ? "Promoción eliminada y verificada. Su imagen sigue pendiente de retirar."
+        : "Promoción eliminada y verificada.");
     } catch (requestError) {
       setError(requestError instanceof Error ? requestError.message : "Error inesperado.");
     } finally {
       setBusy(false);
+    }
+  };
+
+  const retryImageCleanup = async (fileId: string) => {
+    try {
+      await deleteCatalogImage(fileId);
+      setPendingImageCleanup((current) => current.filter((pendingId) => pendingId !== fileId));
+    } catch (cleanupError) {
+      setError(cleanupError instanceof Error ? cleanupError.message : "No se pudo retirar la foto.");
     }
   };
 
@@ -239,6 +328,16 @@ export default function AdminPromotionsPage() {
         <>
           {error && <p className="mb-4 rounded-lg bg-red-50 p-3 text-red-800" role="alert">{error}</p>}
           {notice && <p className="mb-4 rounded-lg bg-emerald-50 p-3 text-emerald-800" role="status">{notice}</p>}
+          {pendingImageCleanup.length > 0 && (
+            <section className="mb-4 rounded-lg border border-amber-300 bg-amber-50 p-3 text-sm text-amber-900" role="status">
+              <p>Hay fotos sin asociar que todavía no se han podido retirar del almacenamiento.</p>
+              {pendingImageCleanup.map((fileId) => (
+                <button className="mr-3 mt-2 underline" key={fileId} type="button" onClick={() => void retryImageCleanup(fileId)}>
+                  Reintentar limpieza
+                </button>
+              ))}
+            </section>
+          )}
           <section className="grid gap-6 lg:grid-cols-[minmax(0,1fr)_minmax(0,1fr)]">
             <form className="grid content-start gap-4 rounded-xl border bg-white p-5 shadow-sm" onSubmit={save}>
               <div>
@@ -251,6 +350,13 @@ export default function AdminPromotionsPage() {
               <label className="grid gap-1 text-sm font-medium">Descripción
                 <textarea className="rounded border px-3 py-2" maxLength={1000} rows={3} value={form.description} onChange={(event) => setForm({ ...form, description: event.target.value })} />
               </label>
+              <AdminCatalogImageField
+                label="Imagen de la promoción (opcional)"
+                imageUrl={form.imageUrl ?? null}
+                file={imageFile}
+                onFileChange={setImageFile}
+                onClear={() => setForm({ ...form, imageUrl: null, imageFileId: null })}
+              />
               <div className="grid gap-3 sm:grid-cols-2">
                 <label className="grid gap-1 text-sm font-medium">Empieza
                   <input className="rounded border px-3 py-2" type="datetime-local" required value={form.startsAt} onChange={(event) => setForm({ ...form, startsAt: event.target.value })} />

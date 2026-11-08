@@ -25,6 +25,8 @@ export type CatalogCategoryInput = {
 };
 
 export const CATALOG_PRODUCT_IMAGE_LIMIT = 8;
+export const DELIVERY_FEE_THRESHOLD_COP = 12_000;
+export const DELIVERY_FEE_COP = 7_000;
 
 export type CatalogProductImageInput = {
   imageUrl: string;
@@ -56,6 +58,8 @@ export type CatalogPromotionProductInput = {
 export type CatalogPromotionInput = {
   title: string;
   description: string;
+  imageUrl?: string | null;
+  imageFileId?: string | null;
   startsAt: string;
   endsAt: string;
   isActive: boolean;
@@ -75,6 +79,8 @@ export type CatalogPromotion = Omit<CatalogPromotionInput, "products"> & {
 export type CatalogAnnouncementInput = {
   title: string;
   message: string;
+  imageUrl?: string | null;
+  imageFileId?: string | null;
   linkUrl: string | null;
   linkLabel: string | null;
   startsAt: string;

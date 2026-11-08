@@ -1,8 +1,11 @@
 import type { OrderCreatedV1 } from "@mileshop/contracts";
+import {
+  DELIVERY_FEE_COP,
+  DELIVERY_FEE_THRESHOLD_COP,
+} from "@mileshop/contracts";
 
 import type { CartLine } from "./cart";
 
-export const FREE_DELIVERY_THRESHOLD_COP = 150000;
 const PENDING_CHECKOUT_KEY = "mileshop-pending-checkout-v1";
 
 export type CheckoutRequest = {
@@ -64,8 +67,8 @@ export function buildCheckoutSummary(lines: CartLine[]): CheckoutSummary {
     0,
   );
 
-  const isFreeDelivery = subtotalCop >= FREE_DELIVERY_THRESHOLD_COP;
-  const deliveryFeeCop = isFreeDelivery ? 0 : Math.max(12000, Math.round(subtotalCop * 0.08));
+  const isFreeDelivery = subtotalCop >= DELIVERY_FEE_THRESHOLD_COP;
+  const deliveryFeeCop = isFreeDelivery ? 0 : DELIVERY_FEE_COP;
 
   return {
     subtotalCop,

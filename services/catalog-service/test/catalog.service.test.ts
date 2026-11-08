@@ -46,6 +46,8 @@ test("promotions show the effective price and reserve that exact price for order
   const promotion = await service.createPromotion({
     title: "Lanzamiento",
     description: "Descuento de prueba",
+    imageUrl: "https://ik.imagekit.io/store/marketing/promotions/campaign.jpg",
+    imageFileId: "campaign-file-01",
     startsAt,
     endsAt,
     isActive: true,
@@ -53,6 +55,8 @@ test("promotions show the effective price and reserve that exact price for order
   });
 
   assert.equal(promotion.products[0]?.name, "Artículo promocional");
+  assert.equal(promotion.imageUrl, "https://ik.imagekit.io/store/marketing/promotions/campaign.jpg");
+  assert.equal(promotion.imageFileId, "campaign-file-01");
   assert.deepEqual((await service.listProducts())[0], {
     id: "promo-product",
     sku: "PROMO-01",
@@ -111,12 +115,15 @@ test("announcements are separate, scheduled, and require safe HTTPS links", asyn
   const announcement = await service.createAnnouncement({
     title: "Horario especial",
     message: "Hoy atendemos hasta las cinco.",
+    imageUrl: "https://ik.imagekit.io/store/marketing/announcements/store-hours.jpg",
+    imageFileId: "announcement-file-01",
     linkUrl: "https://example.com/horarios",
     linkLabel: "Ver horario",
     startsAt,
     endsAt,
     isActive: true,
   });
+  assert.equal(announcement.imageFileId, "announcement-file-01");
   assert.deepEqual(await service.listAnnouncements(), [announcement]);
   assert.deepEqual(await service.listPromotions(), []);
   await service.updateAnnouncement(announcement.id, {
@@ -137,6 +144,20 @@ test("announcements are separate, scheduled, and require safe HTTPS links", asyn
       message: "Este enlace debe rechazarse.",
       linkUrl: "http://example.com",
       linkLabel: "Abrir",
+      startsAt,
+      endsAt,
+      isActive: true,
+    }),
+    { code: "INVALID_COMMAND" },
+  );
+  await assert.rejects(
+    () => service.createAnnouncement({
+      title: "Imagen no segura",
+      message: "Esta imagen debe rechazarse.",
+      imageUrl: "http://example.com/image.jpg",
+      imageFileId: null,
+      linkUrl: null,
+      linkLabel: null,
       startsAt,
       endsAt,
       isActive: true,

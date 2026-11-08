@@ -1,8 +1,9 @@
 import type { CreateOrderCommand, OrderLine, OrderStatus } from "./orders.types.js";
+import {
+  DELIVERY_FEE_COP,
+  DELIVERY_FEE_THRESHOLD_COP,
+} from "@mileshop/contracts";
 
-export const FREE_DELIVERY_THRESHOLD_COP = 150_000;
-export const MINIMUM_DELIVERY_FEE_COP = 12_000;
-export const DELIVERY_FEE_RATE = 0.08;
 export const ORDER_RESERVATION_TTL_MS = 2 * 60 * 60 * 1000;
 
 export type OrderCancellationResolution =
@@ -113,9 +114,9 @@ export class OrderDomain {
       0,
     );
     const deliveryFeeCop =
-      subtotalCop >= FREE_DELIVERY_THRESHOLD_COP
+      subtotalCop >= DELIVERY_FEE_THRESHOLD_COP
         ? 0
-        : Math.max(MINIMUM_DELIVERY_FEE_COP, Math.round(subtotalCop * DELIVERY_FEE_RATE));
+        : DELIVERY_FEE_COP;
     return {
       ...record,
       lines,
@@ -138,9 +139,9 @@ export class OrderDomain {
       0,
     );
     const deliveryFeeCop =
-      subtotalCop >= FREE_DELIVERY_THRESHOLD_COP
+      subtotalCop >= DELIVERY_FEE_THRESHOLD_COP
         ? 0
-        : Math.max(MINIMUM_DELIVERY_FEE_COP, Math.round(subtotalCop * DELIVERY_FEE_RATE));
+        : DELIVERY_FEE_COP;
 
     const orderId = `order-${crypto.randomUUID()}`;
 

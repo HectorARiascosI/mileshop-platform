@@ -135,8 +135,8 @@ test("creates a valid order and stores it by orderId", async () => {
   });
 
   assert.equal(order.subtotalCop, 130000);
-  assert.equal(order.deliveryFeeCop, 12000);
-  assert.equal(order.totalCop, 142000);
+  assert.equal(order.deliveryFeeCop, 0);
+  assert.equal(order.totalCop, 130000);
   assert.equal(order.status, "AWAITING_PAYMENT_PROOF");
   assert.equal(order.lines.length, 1);
 
@@ -221,7 +221,7 @@ test("writes the created event into the outbox before publishing", async () => {
   const pending = await outbox.listPending(new Date(Date.now() + OUTBOX_RETRY_BASE_DELAY_MS + 1));
   assert.equal(pending.length, 1);
   assert.equal(pending[0]?.event.eventType, "OrderCreated.v1");
-  assert.equal(pending[0]?.event.payload.deliveryFeeCop, 12000);
+  assert.equal(pending[0]?.event.payload.deliveryFeeCop, 0);
   assert.equal(pending[0]?.attemptCount, 1);
 });
 
@@ -464,10 +464,10 @@ test("persists the catalog reservation price and recalculates order totals and e
   assert.equal(order.lines[0]?.name, "Botella térmica actualizada");
   assert.equal(order.lines[0]?.unitPriceCop, 52000);
   assert.equal(order.subtotalCop, 104000);
-  assert.equal(order.deliveryFeeCop, 12000);
-  assert.equal(order.totalCop, 116000);
+  assert.equal(order.deliveryFeeCop, 0);
+  assert.equal(order.totalCop, 104000);
   assert.equal(order.event?.payload.lines[0]?.unitPriceCop, 52000);
-  assert.equal(order.event?.payload.totalCop, 116000);
+  assert.equal(order.event?.payload.totalCop, 104000);
   assert.ok(order.reservationExpiresAt);
   assert.equal(
     order.reservationExpiresAt.getTime() - Date.parse(order.createdAt),
@@ -476,7 +476,7 @@ test("persists the catalog reservation price and recalculates order totals and e
   const persisted = await service.getOrderById(order.orderId);
   assert.equal(persisted?.lines[0]?.unitPriceCop, 52000);
   assert.equal(persisted?.reservationExpiresAt?.getTime(), order.reservationExpiresAt.getTime());
-  assert.equal(persisted?.totalCop, 116000);
+  assert.equal(persisted?.totalCop, 104000);
 });
 
 test("uses the catalog name as the persisted line snapshot", async () => {
@@ -533,8 +533,8 @@ test("builds the domain object with subtotal and order id", () => {
   });
 
   assert.equal(record.subtotalCop, 42000);
-  assert.equal(record.deliveryFeeCop, 12000);
-  assert.equal(record.totalCop, 54000);
+  assert.equal(record.deliveryFeeCop, 0);
+  assert.equal(record.totalCop, 42000);
   assert.equal(record.orderId.startsWith("order-"), true);
   assert.equal(record.lines[0]?.sku, "SKU-02");
 });
@@ -558,7 +558,21 @@ test("orderId is a UUID-based string", () => {
   assert.match(record.orderId, uuidPattern);
 });
 
-test("waives delivery at the configured free-delivery threshold", () => {
+test("charges $7,000 just below $12,000 and waives delivery at the threshold", () => {
+  const belowThreshold = OrderDomain.createOrder({
+    customerId: "customer-shipping",
+    idempotencyKey: "00000000-0000-4000-8000-000000000013",
+    lines: [{
+      productId: "p-4",
+      sku: "SKU-04",
+      name: "Producto límite",
+      quantity: 1,
+      unitPriceCop: 11_999,
+    }],
+  });
+  assert.equal(belowThreshold.deliveryFeeCop, 7_000);
+  assert.equal(belowThreshold.totalCop, 18_999);
+
   const record = OrderDomain.createOrder({
     customerId: "customer-shipping",
     idempotencyKey: "00000000-0000-4000-8000-000000000012",
@@ -568,14 +582,14 @@ test("waives delivery at the configured free-delivery threshold", () => {
         sku: "SKU-04",
         name: "Producto límite",
         quantity: 3,
-        unitPriceCop: 50000,
+        unitPriceCop: 4000,
       },
     ],
   });
 
-  assert.equal(record.subtotalCop, 150000);
+  assert.equal(record.subtotalCop, 12000);
   assert.equal(record.deliveryFeeCop, 0);
-  assert.equal(record.totalCop, 150000);
+  assert.equal(record.totalCop, 12000);
 });
 
 test("getOrderById returns null for a non-existent order", async () => {

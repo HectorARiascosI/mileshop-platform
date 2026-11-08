@@ -70,6 +70,73 @@ async function getAuthorizedCatalog(): Promise<
   return { products: payload.data };
 }
 
+async function getAuthorizedMarketing(): Promise<
+  | { promotions: unknown[]; announcements: unknown[] }
+  | { error: Response }
+> {
+  const accessToken = (await cookies()).get("accessToken")?.value?.trim();
+  if (!accessToken) {
+    return { error: jsonError("Inicia sesión con una cuenta autorizada.", 401) };
+  }
+  const promotionsEndpoint = getApiGatewayEndpoint("/admin/catalog/promotions");
+  const announcementsEndpoint = getApiGatewayEndpoint("/admin/catalog/announcements");
+  if (!promotionsEndpoint || !announcementsEndpoint) {
+    return { error: jsonError("El servicio de administración no está disponible.", 503) };
+  }
+
+  let responses: Response[];
+  try {
+    responses = await Promise.all([
+      fetchApiGateway(promotionsEndpoint, {
+        headers: { authorization: ["Bearer", accessToken].join(" ") },
+        cache: "no-store",
+        signal: AbortSignal.timeout(15_000),
+      }),
+      fetchApiGateway(announcementsEndpoint, {
+        headers: { authorization: ["Bearer", accessToken].join(" ") },
+        cache: "no-store",
+        signal: AbortSignal.timeout(15_000),
+      }),
+    ]);
+  } catch {
+    return { error: jsonError("No pudimos verificar las imágenes de las campañas.", 503) };
+  }
+  if (responses.some((response) => !response.ok)) {
+    const unauthorized = responses.some((response) => response.status === 401);
+    const forbidden = responses.some((response) => response.status === 403);
+    return {
+      error: jsonError(
+        unauthorized
+          ? "Tu sesión ya no está activa. Inicia sesión de nuevo."
+          : forbidden
+            ? "Tu cuenta no tiene permisos para administrar las campañas."
+            : "No pudimos verificar las imágenes de las campañas.",
+        unauthorized ? 401 : forbidden ? 403 : 503,
+      ),
+    };
+  }
+
+  let payloads: unknown[];
+  try {
+    payloads = await Promise.all(responses.map((response) => response.json()));
+  } catch {
+    return { error: jsonError("El servicio devolvió datos de campañas inválidos.", 502) };
+  }
+  const [promotionsPayload, announcementsPayload] = payloads;
+  if (
+    !isRecord(promotionsPayload) ||
+    !Array.isArray(promotionsPayload.data) ||
+    !isRecord(announcementsPayload) ||
+    !Array.isArray(announcementsPayload.data)
+  ) {
+    return { error: jsonError("El servicio devolvió datos de campañas inválidos.", 502) };
+  }
+  return {
+    promotions: promotionsPayload.data,
+    announcements: announcementsPayload.data,
+  };
+}
+
 function getImageKitAuthorization(): string | null {
   const privateKey = process.env.IMAGEKIT_PRIVATE_KEY?.trim();
   return privateKey ? `Basic ${Buffer.from(`${privateKey}:`).toString("base64")}` : null;
@@ -92,12 +159,13 @@ export async function POST(request: Request): Promise<Response> {
     }
   }
 
-  let file: FormDataEntryValue | null;
+  let formData: FormData;
   try {
-    file = (await request.formData()).get("file");
+    formData = await request.formData();
   } catch {
     return jsonError("No se pudo leer el archivo de imagen.", 400);
   }
+  const file = formData.get("file");
   if (!(file instanceof File) || file.size === 0) {
     return jsonError("Selecciona una foto para cargar.", 400);
   }
@@ -111,11 +179,20 @@ export async function POST(request: Request): Promise<Response> {
     return jsonError("Usa una imagen JPG, PNG, WebP o AVIF válida.", 415);
   }
 
-  const fileName = `product-${crypto.randomUUID()}.${imageType.extension}`;
+  const collectionValue = formData.get("collection");
+  const collection =
+    collectionValue === null || collectionValue === "products"
+      ? "products"
+      : collectionValue === "promotions" || collectionValue === "announcements"
+        ? collectionValue
+        : null;
+  if (!collection) return jsonError("La colección de imagen no es válida.", 400);
+
+  const fileName = `${collection}-${crypto.randomUUID()}.${imageType.extension}`;
   const form = new FormData();
   form.set("file", new Blob([bytes], { type: imageType.contentType }), fileName);
   form.set("fileName", fileName);
-  form.set("folder", "/products");
+  form.set("folder", collection === "products" ? "/products" : `/marketing/${collection}`);
   form.set("useUniqueFileName", "true");
   form.set("overwriteFile", "false");
 
@@ -169,8 +246,12 @@ export async function POST(request: Request): Promise<Response> {
 }
 
 export async function DELETE(request: Request): Promise<Response> {
-  const adminCatalog = await getAuthorizedCatalog();
+  const [adminCatalog, adminMarketing] = await Promise.all([
+    getAuthorizedCatalog(),
+    getAuthorizedMarketing(),
+  ]);
   if ("error" in adminCatalog) return adminCatalog.error;
+  if ("error" in adminMarketing) return adminMarketing.error;
 
   const authorization = getImageKitAuthorization();
   if (!authorization) {
@@ -188,11 +269,17 @@ export async function DELETE(request: Request): Promise<Response> {
     return jsonError("La referencia de la foto no es válida.", 400);
   }
 
-  if (
-    adminCatalog.products.some(
-      (product) => isRecord(product) && product.imageFileId === fileId,
-    )
-  ) {
+  const productImageIsReferenced = adminCatalog.products.some((product) =>
+    isRecord(product) &&
+    (product.imageFileId === fileId ||
+      (Array.isArray(product.images) &&
+        product.images.some((image) => isRecord(image) && image.imageFileId === fileId))),
+  );
+  const marketingImageIsReferenced = [
+    ...adminMarketing.promotions,
+    ...adminMarketing.announcements,
+  ].some((item) => isRecord(item) && item.imageFileId === fileId);
+  if (productImageIsReferenced || marketingImageIsReferenced) {
     return jsonError("La foto todavía está asociada a un producto.", 409);
   }
 
@@ -220,7 +307,13 @@ export async function DELETE(request: Request): Promise<Response> {
   } catch {
     return jsonError("El almacenamiento devolvió datos de foto inválidos.", 502);
   }
-  if (!isRecord(details) || typeof details.filePath !== "string" || !details.filePath.startsWith("/products/")) {
+  const filePath = isRecord(details) ? details.filePath : null;
+  if (
+    typeof filePath !== "string" ||
+    !["/products/", "/marketing/promotions/", "/marketing/announcements/"].some((prefix) =>
+      filePath.startsWith(prefix),
+    )
+  ) {
     return jsonError("La foto no pertenece al catálogo de MileShop.", 400);
   }
 

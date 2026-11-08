@@ -88,6 +88,7 @@ export type ManualSaleResult = {
 
 type CatalogResponse = { data: GatewayProduct[] };
 type AnnouncementResponse = { data: CatalogAnnouncement[] };
+type PromotionResponse = { data: CatalogPromotion[] };
 type FetchLike = (input: string, init?: RequestInit) => Promise<Response>;
 
 @Injectable()
@@ -125,6 +126,21 @@ export class CatalogClient {
       });
       if (!response.ok) throw new Error(`catalog-service returned ${response.status}`);
       const payload = (await response.json()) as AnnouncementResponse;
+      return payload.data;
+    } catch {
+      throw new ServiceUnavailableException("Catalog service is unavailable");
+    }
+  }
+
+  public async listActivePromotions(): Promise<CatalogPromotion[]> {
+    try {
+      const response = await this.fetcher(`${this.baseUrl}/promotions`, {
+        signal: AbortSignal.timeout(3_000),
+        headers: { accept: "application/json" },
+        cache: "no-store",
+      });
+      if (!response.ok) throw new Error(`catalog-service returned ${response.status}`);
+      const payload = (await response.json()) as PromotionResponse;
       return payload.data;
     } catch {
       throw new ServiceUnavailableException("Catalog service is unavailable");

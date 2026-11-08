@@ -208,6 +208,12 @@ function parsePromotionInput(input: unknown): PromotionInput {
   return {
     title: input.title,
     description: input.description,
+    ...("imageUrl" in input
+      ? { imageUrl: parseNullableString(input.imageUrl) }
+      : {}),
+    ...("imageFileId" in input
+      ? { imageFileId: parseNullableString(input.imageFileId) }
+      : {}),
     startsAt: input.startsAt,
     endsAt: input.endsAt,
     isActive: input.isActive,
@@ -239,6 +245,12 @@ function parseAnnouncementInput(input: unknown): AnnouncementInput {
   return {
     title: input.title,
     message: input.message,
+    ...("imageUrl" in input
+      ? { imageUrl: parseNullableString(input.imageUrl) }
+      : {}),
+    ...("imageFileId" in input
+      ? { imageFileId: parseNullableString(input.imageFileId) }
+      : {}),
     linkUrl: input.linkUrl,
     linkLabel: input.linkLabel,
     startsAt: input.startsAt,
@@ -318,6 +330,12 @@ export class CatalogController {
   @Header("Cache-Control", "no-store")
   public async announcements(): Promise<{ data: Awaited<ReturnType<CatalogService["listAnnouncements"]>> }> {
     return { data: await this.catalog.listAnnouncements() };
+  }
+
+  @Get("promotions")
+  @Header("Cache-Control", "no-store")
+  public async promotions(): Promise<{ data: Awaited<ReturnType<CatalogService["listPromotions"]>> }> {
+    return { data: await this.catalog.listPromotions() };
   }
 
   @Get("internal/admin/products")

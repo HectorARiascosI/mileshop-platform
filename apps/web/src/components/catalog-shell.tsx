@@ -5,10 +5,15 @@ import Image from "next/image";
 import { useRouter } from "next/navigation";
 import { useEffect, useState, useSyncExternalStore, type SyntheticEvent } from "react";
 
+import {
+  DELIVERY_FEE_COP,
+  DELIVERY_FEE_THRESHOLD_COP,
+} from "@mileshop/contracts";
 import type {
   CatalogAnnouncement,
   CatalogCategorySummary,
   CatalogProductImageSummary,
+  CatalogPromotion,
   CatalogProductPromotion,
 } from "@mileshop/contracts";
 import {
@@ -48,6 +53,7 @@ type CatalogShellProps = {
   products: Product[];
   unavailable: boolean;
   announcements: CatalogAnnouncement[];
+  promotions: CatalogPromotion[];
 };
 
 const STORAGE_KEY = "mileshop-cart-v1";
@@ -103,7 +109,7 @@ function getIdempotencyKey(cart: CartLine[]): string {
   return key;
 }
 
-export function CatalogShell({ products, unavailable, announcements }: CatalogShellProps) {
+export function CatalogShell({ products, unavailable, announcements, promotions }: CatalogShellProps) {
   const router = useRouter();
   const isCartHydrated = useSyncExternalStore(
     subscribeToHydration,
@@ -479,6 +485,17 @@ export function CatalogShell({ products, unavailable, announcements }: CatalogSh
           <section className="announcement-stack" aria-label="Anuncios de MileShop">
             {announcements.map((announcement) => (
               <article className="announcement-banner" key={announcement.id}>
+                {announcement.imageUrl && (
+                  <div className="announcement-image">
+                    <Image
+                      src={getOptimizedImageUrl(announcement.imageUrl, 480)}
+                      alt={`Imagen del anuncio: ${announcement.title}`}
+                      fill
+                      sizes="(max-width: 760px) 100vw, 180px"
+                      unoptimized
+                    />
+                  </div>
+                )}
                 <div>
                   <p className="announcement-eyebrow">Aviso de la tienda</p>
                   <h2>{announcement.title}</h2>
@@ -546,6 +563,55 @@ export function CatalogShell({ products, unavailable, announcements }: CatalogSh
             )}
           </div>
         </section>
+
+        {promotions.length > 0 && (
+          <section className="promotion-showcase" aria-labelledby="promotion-showcase-title">
+            <header className="promotion-showcase-heading">
+              <p className="eyebrow">Ofertas de temporada</p>
+              <h2 id="promotion-showcase-title">Promociones vigentes</h2>
+              <p>Descuentos activos aplicados directamente al precio de los productos.</p>
+            </header>
+            <div className="promotion-showcase-grid">
+              {promotions.map((promotion) => (
+                <article className="promotion-feature-card" key={promotion.id}>
+                  {promotion.imageUrl && (
+                    <div className="promotion-feature-image">
+                      <Image
+                        src={getOptimizedImageUrl(promotion.imageUrl, 960)}
+                        alt={`Imagen de la promoción: ${promotion.title}`}
+                        fill
+                        sizes="(max-width: 760px) 100vw, 50vw"
+                        unoptimized
+                      />
+                      <span>
+                        Hasta {Math.max(...promotion.products.map((product) => product.discountPercent))}% menos
+                      </span>
+                    </div>
+                  )}
+                  <div className="promotion-feature-content">
+                    <p className="promotion-feature-eyebrow">Promoción activa</p>
+                    <h3>{promotion.title}</h3>
+                    {promotion.description && <p>{promotion.description}</p>}
+                    <ul aria-label={`Productos incluidos en ${promotion.title}`}>
+                      {promotion.products.slice(0, 3).map((product) => (
+                        <li key={product.productId}>
+                          <span>{product.name}</span>
+                          <strong>{product.discountPercent}% menos</strong>
+                        </li>
+                      ))}
+                    </ul>
+                    {promotion.products.length > 3 && (
+                      <p className="promotion-more-products">
+                        Y {promotion.products.length - 3} productos más en esta campaña.
+                      </p>
+                    )}
+                    <a href="#catalogo">Ver productos con descuento</a>
+                  </div>
+                </article>
+              ))}
+            </div>
+          </section>
+        )}
 
         <section className="catalog-section" id="catalogo" aria-labelledby="catalog-title">
           <div className="catalog-heading">
@@ -980,6 +1046,11 @@ export function CatalogShell({ products, unavailable, announcements }: CatalogSh
                 <span>Envío estimado</span>
                 <strong>{checkoutSummary.isFreeDelivery ? "Gratis" : formatPrice(checkoutSummary.deliveryFeeCop)}</strong>
               </div>
+              <p className={`delivery-policy-notice${checkoutSummary.isFreeDelivery ? " is-free" : ""}`}>
+                {checkoutSummary.isFreeDelivery
+                  ? `Tu compra alcanza ${formatPrice(DELIVERY_FEE_THRESHOLD_COP)}. El envío es gratis.`
+                  : `El envío cuesta ${formatPrice(DELIVERY_FEE_COP)} en compras menores a ${formatPrice(DELIVERY_FEE_THRESHOLD_COP)}. Agrega ${formatPrice(DELIVERY_FEE_THRESHOLD_COP - checkoutSummary.subtotalCop)} para obtener envío gratis.`}
+              </p>
               <div className="checkout-total">
                 <span>Total</span>
                 <strong>{formatPrice(checkoutSummary.totalCop)}</strong>

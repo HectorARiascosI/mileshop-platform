@@ -67,8 +67,15 @@ export class GatewayController {
   }
 
   @Get("catalog/announcements")
+  @Header("Cache-Control", "no-store")
   public async announcements(): Promise<{ data: unknown }> {
     return { data: await this.catalog.listAnnouncements() };
+  }
+
+  @Get("catalog/promotions")
+  @Header("Cache-Control", "no-store")
+  public async promotions(): Promise<{ data: unknown }> {
+    return { data: await this.catalog.listActivePromotions() };
   }
 
   @Post("admin/catalog/manual-sales")

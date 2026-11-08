@@ -66,6 +66,8 @@ model Promotion {
   id          String             @id @default(cuid())
   title       String
   description String
+  imageUrl    String?
+  imageFileId String?
   startsAt    DateTime
   endsAt      DateTime
   isActive    Boolean            @default(true)
@@ -88,16 +90,18 @@ model PromotionProduct {
 }
 
 model Announcement {
-  id        String   @id @default(cuid())
-  title     String
-  message   String
-  linkUrl   String?
-  linkLabel String?
-  startsAt  DateTime
-  endsAt    DateTime
-  isActive  Boolean  @default(true)
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
+  id          String   @id @default(cuid())
+  title       String
+  message     String
+  imageUrl    String?
+  imageFileId String?
+  linkUrl     String?
+  linkLabel   String?
+  startsAt    DateTime
+  endsAt      DateTime
+  isActive    Boolean  @default(true)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
 
   @@index([isActive, startsAt, endsAt])
 }

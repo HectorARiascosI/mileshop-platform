@@ -243,6 +243,8 @@ test("admin product and stock receipt endpoints require internal auth and persis
           body: JSON.stringify({
             title: "Campaña HTTP",
             description: "",
+            imageUrl: "https://ik.imagekit.io/store/marketing/promotions/campaign.jpg",
+            imageFileId: "campaign-file-01",
             startsAt,
             endsAt,
             isActive: true,
@@ -252,6 +254,11 @@ test("admin product and stock receipt endpoints require internal auth and persis
         assert.equal(promotionResponse.status, 201);
         const promotion = (await promotionResponse.json()).data;
         assert.equal(promotion.products[0].discountPercent, 20);
+        assert.equal(promotion.imageFileId, "campaign-file-01");
+        const publicPromotions = await fetch(`${baseUrl}/promotions`);
+        assert.equal(publicPromotions.status, 200);
+        assert.equal(publicPromotions.headers.get("cache-control"), "no-store");
+        assert.equal((await publicPromotions.json()).data[0].id, promotion.id);
         const productsResponse = await fetch(`${baseUrl}/products`);
         const publicProduct = (await productsResponse.json()).data[0];
         assert.equal(publicProduct.priceCop, 40000);
@@ -264,6 +271,8 @@ test("admin product and stock receipt endpoints require internal auth and persis
           body: JSON.stringify({
             title: "Aviso HTTP",
             message: "Horario extendido este viernes.",
+            imageUrl: "https://ik.imagekit.io/store/marketing/announcements/store-hours.jpg",
+            imageFileId: "announcement-file-01",
             linkUrl: null,
             linkLabel: null,
             startsAt,
@@ -273,6 +282,7 @@ test("admin product and stock receipt endpoints require internal auth and persis
         });
         assert.equal(announcementResponse.status, 201);
         const announcement = (await announcementResponse.json()).data;
+        assert.equal(announcement.imageFileId, "announcement-file-01");
         const publicAnnouncements = await fetch(`${baseUrl}/announcements`);
         assert.equal(publicAnnouncements.status, 200);
         assert.equal((await publicAnnouncements.json()).data[0].id, announcement.id);

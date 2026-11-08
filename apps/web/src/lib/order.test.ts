@@ -58,10 +58,34 @@ test("construye el evento de pedido con datos del cliente y líneas de compra", 
   assert.equal(event.eventType, "OrderCreated.v1");
   assert.equal(event.payload.customerId, "customer-42");
   assert.equal(event.payload.subtotalCop, 130000);
-  assert.equal(event.payload.deliveryFeeCop, 12000);
-  assert.equal(event.payload.totalCop, 142000);
+  assert.equal(event.payload.deliveryFeeCop, 0);
+  assert.equal(event.payload.totalCop, 130000);
   assert.equal(event.payload.lines.length, 1);
   assert.equal(event.payload.lines[0]?.sku, "SKU-01");
+});
+
+test("cobra $7.000 solo si el subtotal es menor a $12.000", () => {
+  const belowThreshold = buildCheckoutSummary([{
+    productId: "p-1",
+    sku: "SKU-01",
+    name: "Artículo",
+    priceCop: 11_999,
+    quantity: 1,
+  }]);
+  const atThreshold = buildCheckoutSummary([{
+    productId: "p-1",
+    sku: "SKU-01",
+    name: "Artículo",
+    priceCop: 12_000,
+    quantity: 1,
+  }]);
+
+  assert.equal(belowThreshold.deliveryFeeCop, 7_000);
+  assert.equal(belowThreshold.totalCop, 18_999);
+  assert.equal(belowThreshold.isFreeDelivery, false);
+  assert.equal(atThreshold.deliveryFeeCop, 0);
+  assert.equal(atThreshold.totalCop, 12_000);
+  assert.equal(atThreshold.isFreeDelivery, true);
 });
 
 test("rechaza la creación del evento si no hay cliente identificado", () => {

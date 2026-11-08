@@ -15,6 +15,10 @@ import type {
   CatalogProductImage,
 } from "@mileshop/contracts";
 import {
+  deleteCatalogImage as deleteProductImage,
+  uploadCatalogImage as uploadProductImage,
+} from "@/lib/catalog-media";
+import {
   CATEGORY_THEME_LABELS,
   isCatalogCategory,
   isCatalogCategorySummary,
@@ -129,14 +133,6 @@ function isProduct(value: unknown): value is Product {
   );
 }
 
-function isUploadedImage(value: unknown): value is { fileId: string; imageUrl: string } {
-  return (
-    isRecord(value) &&
-    typeof value.fileId === "string" &&
-    typeof value.imageUrl === "string"
-  );
-}
-
 function isProductRelatedRecords(value: unknown): value is ProductRelatedRecords {
   return (
     isRecord(value) &&
@@ -187,34 +183,6 @@ async function responseError(response: Response, fallback: string): Promise<stri
     return fallback;
   }
   return fallback;
-}
-
-async function uploadProductImage(file: File): Promise<{ fileId: string; imageUrl: string }> {
-  const formData = new FormData();
-  formData.set("file", file);
-  const response = await fetch("/api/admin/catalog/media", {
-    method: "POST",
-    body: formData,
-  });
-  if (!response.ok) {
-    throw new Error(await responseError(response, "No se pudo cargar la foto."));
-  }
-  const payload: unknown = await response.json();
-  if (!isRecord(payload) || !isUploadedImage(payload.data)) {
-    throw new Error("El servicio devolvió una respuesta de imagen inválida.");
-  }
-  return payload.data;
-}
-
-async function deleteProductImage(fileId: string): Promise<void> {
-  const response = await fetch("/api/admin/catalog/media", {
-    method: "DELETE",
-    headers: { "content-type": "application/json" },
-    body: JSON.stringify({ fileId }),
-  });
-  if (!response.ok) {
-    throw new Error(await responseError(response, "No se pudo retirar la foto del almacenamiento."));
-  }
 }
 
 export default function AdminCatalogPage() {
